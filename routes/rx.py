@@ -8,6 +8,8 @@ from units import (
     weight_unit_label,
 )
 from athlete import get_athlete_profile
+from exercise_inventory_bridge import inventory_display_by_exid
+from provider_value_map_seed import STRENGTH_NAME_TO_EX_ID
 
 bp = Blueprint('rx', __name__)
 
@@ -52,37 +54,70 @@ def list_entries():
     status = request.args.get('status', '')
     locale_filter = request.args.get('locale', '')
 
-    query = '''SELECT cr.*, ei.video_reference, ei.where_available,
-                      ei.recovery_cost as ei_recovery_cost,
-                      ei.suggested_volume as ei_suggested_volume
-               FROM current_rx cr
-               LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
-               WHERE cr.user_id = ?'''
-    params = [uid]
-    if discipline:
-        query += ' AND cr.discipline=?'
-        params.append(discipline)
-    if status:
-        query += ' AND cr.last_outcome LIKE ?'
-        params.append(f'%{status}%')
-    if locale_filter:
-        query += ' AND ei.where_available LIKE ?'
-        params.append(f'%{locale_filter}%')
-    query += ' ORDER BY cr.discipline, cr.exercise'
-    entries = db.execute(query, params).fetchall()
+    # #814 — the display fields live in exercise_inventory keyed on the v1 short
+    # names, but plan-gen prescribes (and current_rx stores) the layer0 canonical
+    # names, so a direct `ei.exercise = cr.exercise` join misses for every
+    # layer0-renamed lift. Index the catalog two ways: by its v1 name (the direct
+    # hit) and by the EX-id that name bridges to. A layer0-named current_rx row
+    # then finds its display row by its layer0_exercise_id. ORDER BY makes the
+    # by-exid winner deterministic when an EX-id has >1 v1 alias.
+    inv_rows = db.execute(
+        'SELECT * FROM exercise_inventory ORDER BY exercise'
+    ).fetchall()
+    inv_by_name = {r['exercise']: r for r in inv_rows}
+    inv_by_exid = inventory_display_by_exid(inv_rows)
 
-    # Exercises in inventory but with no current_rx entry for this user
-    inv_query = '''SELECT ei.* FROM exercise_inventory ei
-                   WHERE NOT EXISTS (
-                       SELECT 1 FROM current_rx cr
-                       WHERE cr.exercise = ei.exercise AND cr.user_id = ?
-                   )'''
-    inv_params = [uid]
+    # current_rx rows for this user. The status filter keys off cr alone; the
+    # discipline and locale filters are applied AFTER enrichment, because a
+    # layer0-renamed row's discipline / where_available come from the bridged
+    # inventory row (cr.discipline / cr.where_available is NULL on those rows).
+    query = 'SELECT * FROM current_rx WHERE user_id = ?'
+    params = [uid]
+    if status:
+        query += ' AND last_outcome LIKE ?'
+        params.append(f'%{status}%')
+    rows = db.execute(query, params).fetchall()
+
+    def _enrich(row):
+        e = dict(row)
+        # Direct v1-name hit first; fall back to the EX-id bridge (#814).
+        inv = inv_by_name.get(e['exercise']) or inv_by_exid.get(e.get('layer0_exercise_id'))
+        e['video_reference'] = inv.get('video_reference') if inv else None
+        e['where_available'] = inv.get('where_available') if inv else None
+        e['ei_recovery_cost'] = inv.get('recovery_cost') if inv else None
+        e['ei_suggested_volume'] = inv.get('suggested_volume') if inv else None
+        # discipline / type / movement_pattern fall back to the bridged row only
+        # where the stored cr value is NULL — a layer0-named row never had them
+        # written (rx_engine's name read missed at INSERT time), while a directly
+        # matched row keeps its own stored value.
+        if inv:
+            e['discipline'] = e.get('discipline') or inv.get('discipline')
+            e['type'] = e.get('type') or inv.get('type')
+            e['movement_pattern'] = e.get('movement_pattern') or inv.get('movement_pattern')
+        return e
+
+    entries = [_enrich(r) for r in rows]
+    if discipline:
+        entries = [e for e in entries if e.get('discipline') == discipline]
     if locale_filter:
-        inv_query += ' AND ei.where_available LIKE ?'
-        inv_params.append(f'%{locale_filter}%')
-    inv_query += ' ORDER BY ei.discipline, ei.exercise'
-    inventory_only = db.execute(inv_query, inv_params).fetchall()
+        entries = [e for e in entries
+                   if locale_filter in (e.get('where_available') or '')]
+    entries.sort(key=lambda e: ((e.get('discipline') or ''), (e.get('exercise') or '')))
+
+    # Catalog: inventory exercises with no current Rx for this user — excluded by
+    # NAME or by EX-id (#814), so a lift prescribed under its layer0 name no
+    # longer double-lists here under its v1 name.
+    prescribed_names = {r['exercise'] for r in rows}
+    prescribed_exids = {r.get('layer0_exercise_id') for r in rows if r.get('layer0_exercise_id')}
+    inventory_only = [
+        r for r in inv_rows
+        if r['exercise'] not in prescribed_names
+        and STRENGTH_NAME_TO_EX_ID.get(r['exercise']) not in prescribed_exids
+    ]
+    if locale_filter:
+        inventory_only = [r for r in inventory_only
+                          if locale_filter in (r['where_available'] or '')]
+    inventory_only.sort(key=lambda r: ((r['discipline'] or ''), (r['exercise'] or '')))
 
     locales = db.execute(
         'SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale',

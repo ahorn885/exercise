@@ -74,6 +74,13 @@ _VALID_TEAM_FORMATS: frozenset[str] = frozenset({"Solo", "Unified", "Relay"})
 
 _TEMPLATE_VERSION: str = "v1"
 
+# #447 §5 — cross-training fold. A folded home-discipline gets a raw weight of
+# this fraction of the SMALLEST included race discipline, guaranteeing every
+# cross-training discipline sits strictly below every race discipline (Andy
+# 2026-06-21: "fixed low cap below race"). `_normalize_load_weights` then
+# rescales the whole set to sum 1.0, preserving the strict ordering.
+_CROSS_TRAINING_WEIGHT_FACTOR: float = 0.5
+
 
 # Pattern matches `"<base> (<suffix>)"` — used to strip sub-format
 # parentheticals (e.g. "Triathlon (Standard / Olympic)" → "Triathlon")
@@ -552,6 +559,99 @@ def _apply_modality_group_pooling(
     return diagnostics
 
 
+def _fold_cross_training_disciplines(
+    db,
+    disciplines: list["Layer2ADiscipline"],
+    cross_training_sport: str,
+) -> None:
+    """#447 §5 — fold the athlete's home-discipline sport in as cross-training.
+
+    Called only when the target race's sport differs from the profile primary
+    sport (an off-discipline race, e.g. a trail runner doing an AR). Loads the
+    home sport's disciplines, **de-dupes** against the race set (no double-count
+    for a discipline the race already covers — Andy 2026-06-21), and appends the
+    remainder as `included` cross-training disciplines at a **fixed low weight**
+    strictly below the smallest included race discipline, so race specificity
+    always dominates.
+
+    Runs AFTER `_apply_modality_group_pooling` (so the cap reads the final race
+    weights and cross-training never perturbs the race modality pools) and
+    BEFORE `_normalize_load_weights` (which rescales the whole set to sum 1.0).
+    The folded disciplines therefore do not participate in race coaching-flag /
+    training-gap / HITL computation, which run on the race set upstream — by
+    design, those stay race-specific.
+    """
+    race_weights = [
+        d.load_weight.value
+        for d in disciplines
+        if d.inclusion == "included"
+        and d.load_weight.value is not None
+        and d.load_weight.value > 0
+    ]
+    if not race_weights:
+        # Degenerate: no weighted race disciplines to cap against. Skip rather
+        # than inject an unbounded cross-training share.
+        print(
+            "_fold_cross_training_disciplines: no weighted race disciplines; "
+            f"skipping fold for cross_training_sport={cross_training_sport!r}"
+        )
+        return
+
+    cap = min(race_weights) * _CROSS_TRAINING_WEIGHT_FACTOR
+    existing_ids = {d.discipline_id for d in disciplines}
+    xt_rows = _load_disciplines(
+        db, _strip_sub_format(cross_training_sport), cross_training_sport
+    )
+    folded = 0
+    for row in xt_rows:
+        did = row["discipline_id"]
+        if did in existing_ids:
+            continue  # de-dupe — the race set already covers this discipline
+        existing_ids.add(did)
+        disciplines.append(
+            Layer2ADiscipline(
+                discipline_id=did,
+                discipline_name=row["discipline_name"],
+                endurance_profile=row.get("endurance_profile"),
+                primary_movement=row.get("primary_movement"),
+                inclusion="included",
+                role="Cross-training",
+                is_conditional=False,
+                conditional_resolution=None,
+                load_weight=WeightResult(
+                    value=cap, source="system_default", system_default=cap
+                ),
+                race_time_pct_low=(
+                    float(row["race_time_pct_low"])
+                    if row.get("race_time_pct_low") is not None
+                    else None
+                ),
+                race_time_pct_high=(
+                    float(row["race_time_pct_high"])
+                    if row.get("race_time_pct_high") is not None
+                    else None
+                ),
+                sport_specific_context=row.get("sport_specific_context"),
+                phase_load=_build_phase_load(row),
+                sleep_deprivation_relevant=False,
+                training_gap=_build_training_gap(row),
+                rationale=(
+                    f"Cross-training from your primary sport "
+                    f"({cross_training_sport}) — folded in at a minority weight to "
+                    f"maintain home-discipline fitness while the plan targets the "
+                    f"race sport. Race specificity stays on the race disciplines."
+                ),
+            )
+        )
+        folded += 1
+    # Rule #15 — log the fold decision (sport, cap, how many injected vs deduped).
+    print(
+        f"_fold_cross_training_disciplines: cross_training_sport="
+        f"{cross_training_sport!r} cap={cap:.4f} folded={folded} "
+        f"deduped={len(xt_rows) - folded}"
+    )
+
+
 def _normalize_load_weights(disciplines: list["Layer2ADiscipline"]) -> None:
     """Rescale `load_weight` in place so the included disciplines' `value`s
     sum to ≈1.0 (Layer4_Spec §4.2). `value` is the midpoint of the 0–100
@@ -765,6 +865,7 @@ def q_layer2a_discipline_classifier_payload(
     estimated_race_duration_hours: float | None = None,
     team_format: str | None = None,
     discipline_id_filter: list[str] | None = None,
+    cross_training_sport: str | None = None,
     etl_version_set: dict[str, str],
 ) -> Layer2APayload:
     """Resolve canonical disciplines for a framework sport. Spec §3.
@@ -904,6 +1005,14 @@ def q_layer2a_discipline_classifier_payload(
         race_discipline_overrides,
         athlete_discipline_overrides,
     )
+
+    # #447 §5 — fold the athlete's home sport in as cross-training when the
+    # caller flags it (race sport != profile primary sport). Injects after
+    # pooling so the low cap reads the final race weights and cross-training
+    # never perturbs the race modality pools; before normalize so the folded
+    # disciplines share in the sum-to-1.0 rescale.
+    if cross_training_sport:
+        _fold_cross_training_disciplines(db, disciplines, cross_training_sport)
 
     # Normalize load_weight onto a 0–1 distribution over the included set so
     # the Layer 4 plan_create precondition holds (Layer4_Spec §4.2:

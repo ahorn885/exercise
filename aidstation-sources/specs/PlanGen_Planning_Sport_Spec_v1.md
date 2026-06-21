@@ -115,11 +115,11 @@ Single source of truth: §3's resolution should live in **one** helper (`_resolv
 
 ## 8. Implementation delta
 
-**Status (2026-06-21):** items 1, 2, 4, 5 **shipped**; item 3 (the Layer 2A fold) **deferred** — it is the cross-layer weighting change entangled with #338 (§5.2) and needs a weighting-precedence decision + a `Layer2A_Spec` amendment first.
+**Status (2026-06-21):** all items shipped. The Layer 2A fold (item 3) landed with the decisions: **fixed low cap below the smallest race discipline** + **de-dupe overlapping disciplines** (Andy 2026-06-21). It is kept flat/below the #338 race-share signal pending a richer #338 model (see `Layer2A_Spec` §5.7).
 
 1. ✅ **`layer4/orchestrator.py`** — `_resolve_planning_sport(target_race_event, layer1_payload, user_id)` helper implements §3 (race ?? primary; Tier-3 gate unchanged) with Rule-#15 logging; `_upstream_full_cone` calls it. (`cross_training_sport` not yet computed — gated on item 3.)
 2. ✅ **`layer3a/builder.py`** — dropped the hard `primary_sport is None` requirement; a race-tier plan now builds without a profile primary sport. The non-empty 2A discipline set is the real gate.
-3. ⏳ **Cross-training fold (§5)** — *deferred.* Inject `cross_training_sport`'s disciplines into Layer 2A at a low cross-training weight, below the #338 race-share signal. New Layer 2A input + `Layer2A_Spec` amendment; cross-layer surface (trigger #3); sequence after / coordinate with #338.
+3. ✅ **Cross-training fold (§5)** — `cross_training_sport` (orchestrator) → `_fold_cross_training_disciplines` (Layer 2A): de-duped against the race set, injected as `role="Cross-training"` at a fixed cap = 0.5 × smallest race discipline, after pooling / before normalize. Documented in `Layer2A_Spec` §5.7. Kept below the #338 race-share signal pending a richer #338 model.
 4. ✅ **Removed the "override" framing** in `routes/race_events.py` (`_resolve_effective_framework_sport` docstring) and `orchestrator.py`. Behaviour at the UI mirror is unchanged.
 5. ✅ **No change** to the single-session path — already athlete-overriding by design.
 5. **No change** to the single-session path (`orchestrator.py:1342`) — already athlete-overriding by design.

@@ -3140,6 +3140,92 @@ class PhaseSynthesisResult:
     llm_call_count: int
 
 
+def _clamp_sessions_per_day(
+    sessions: list[PlanSession],
+) -> tuple[list[PlanSession], list[str]]:
+    """#351 deterministic pre-validation clamp: cap TRAINING sessions
+    (cardio/strength) at 2 per calendar day BEFORE the payload is built, so the
+    common >2/day over-emit self-heals with ZERO retries instead of tripping
+    `Layer4Payload._check_two_per_day` (`max 2 training sessions per day`) — which
+    fumbles the block and burns a fresh synthesis pass (the prod plan #47 class).
+    The #349 ValidationError→`schema_violation` wrap stays as the safety net for
+    the rarer cross-session invariants; this removes the retry cost from the
+    high-frequency case.
+
+    Drop policy (Andy 2026-06-21, `Layer4_Spec` §7.12): KEEP a cardio + one other.
+    The daily cap is on TRAINING only — recovery is exempt and ADDITIVE (≤2
+    training + ≤1 recovery, #698 Track 1), so recovery sessions are NEVER counted
+    or trimmed here; a day at/under 2 training (the normal additive-recovery day)
+    passes through untouched. On a >2-training day the kept pair is the two
+    lowest-sort training sessions under the key (non-cardio last, `hard` last,
+    then `session_index_in_day`): this keeps a cardio whenever the day has one —
+    guaranteeing the "at least one of two must be cardio" composition rule up
+    front — and prefers the non-`hard`, earlier sessions. The rest are dropped.
+    When a day has NO cardio at all (an all-strength over-emit) the two
+    lowest-index strengths are kept and the downstream `_normalize_day_composition`
+    resolves the surviving pair.
+
+    Runs BEFORE `_normalize_day_composition`, which assumes ≤2 training/day; any
+    residual two-hard / strength+strength collision on the kept pair is healed
+    there. Surviving sessions on a trimmed day are
+    renumbered to a contiguous 0..n-1 `session_index_in_day` (recovery keeps its
+    relative slot) so the contiguity invariant still holds. Conservative: only
+    ever DROPS — never invents or relocates. Pure. Returns (clamped_sessions,
+    notes); empty notes == unchanged. Logs the decision (Rule #15).
+    """
+    by_day: dict = {}
+    for s in sessions:
+        by_day.setdefault(s.date, []).append(s)
+
+    drops: set = set()  # session_ids to drop
+    updates: dict = {}  # session_id -> renumbered replacement PlanSession
+    notes: list[str] = []
+
+    for d in sorted(by_day):
+        ss = by_day[d]
+        training = [s for s in ss if s.kind in ("cardio", "strength")]
+        if len(training) <= 2:
+            continue
+        ordered = sorted(
+            training,
+            key=lambda s: (
+                s.kind != "cardio",
+                s.intensity_summary == "hard",
+                s.session_index_in_day,
+            ),
+        )
+        keep_ids = {s.session_id for s in ordered[:2]}
+        for s in training:
+            if s.session_id not in keep_ids:
+                drops.add(s.session_id)
+        notes.append(
+            f"{d}: clamped {len(training)} training -> 2 "
+            f"(kept {'+'.join(s.kind for s in ordered[:2])}, "
+            f"dropped {len(training) - 2})"
+        )
+        # the day's surviving sessions (kept training + any additive recovery,
+        # which is preserved) renumber to a contiguous 0..n-1 so the
+        # `_check_two_per_day` index-contiguity check still passes.
+        survivors = sorted(
+            (s for s in ss if s.session_id not in drops),
+            key=lambda x: x.session_index_in_day,
+        )
+        for new_idx, rs in enumerate(survivors):
+            if rs.session_index_in_day != new_idx:
+                updates[rs.session_id] = rs.model_copy(
+                    update={"session_index_in_day": new_idx}
+                )
+
+    if not notes:
+        return sessions, []
+    out: list[PlanSession] = []
+    for s in sessions:
+        if s.session_id in drops:
+            continue
+        out.append(updates.get(s.session_id, s))
+    return out, notes
+
+
 def _normalize_day_composition(
     sessions: list[PlanSession],
 ) -> tuple[list[PlanSession], list[str]]:
@@ -3754,6 +3840,19 @@ def synthesize_phase(
             ]
             final_retries_used = current_pass + 1
             continue
+
+        # #351 deterministic pre-validation clamp: cap TRAINING sessions per
+        # calendar day at 2 (recovery is exempt/additive) BEFORE validation, so a
+        # >2/day over-emit self-heals with zero retries instead of fumbling the
+        # block on `_check_two_per_day` (`max 2 training sessions per day`; the
+        # prod plan #47 class). Runs FIRST — the day-composition normalize below
+        # assumes ≤2 training/day and skips any day still holding 3+.
+        sessions, _per_day_notes = _clamp_sessions_per_day(sessions)
+        if _per_day_notes:
+            print(
+                f"synthesize_phase: {unit_tag} per-day clamp — "
+                + "; ".join(_per_day_notes)
+            )
 
         # Deterministic crash-guard: normalize every day to the hard
         # `_check_two_per_day` invariant in code BEFORE validation so a

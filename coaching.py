@@ -15,6 +15,7 @@ import requests
 
 import locations
 from routes.auth import current_user_id
+from exercise_inventory_bridge import inventory_display_by_exid
 
 # ── Base system prompt (generic, always included) ─────────────────────────────
 
@@ -340,21 +341,38 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     except Exception:
         ctx['injury_modifications'] = []
 
-    # Current Rx — all exercises with per-exercise success data and inventory metadata
+    # Current Rx — all exercises with per-exercise success data and inventory
+    # metadata. The inventory fields are keyed on the v1 short names, but a
+    # layer0-renamed lift is prescribed under its layer0 name, so a direct
+    # `ei.exercise = cr.exercise` join misses (#814). Read by EX-id as well:
+    # an inventory row's v1 name bridges to the EX-id the layer0-named row
+    # carries, so its skills/recovery/movement/discipline still enrich the
+    # coaching context.
+    inv_rows = db.execute('SELECT * FROM exercise_inventory').fetchall()
+    inv_by_name = {r['exercise']: r for r in inv_rows}
+    inv_by_exid = inventory_display_by_exid(inv_rows)
     rx = db.execute(
-        '''SELECT cr.exercise, cr.current_sets, cr.current_reps, cr.current_weight,
+        '''SELECT cr.exercise, cr.layer0_exercise_id,
+                  cr.current_sets, cr.current_reps, cr.current_weight,
                   cr.next_sets, cr.next_reps, cr.next_weight,
                   cr.last_performed, cr.last_outcome, cr.consecutive_failures,
-                  cr.sessions_since_progress,
-                  ei.skills_ar_carryover, ei.recovery_cost,
-                  ei.movement_pattern, ei.where_available, ei.discipline
+                  cr.sessions_since_progress
            FROM current_rx cr
-           LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
            WHERE cr.user_id = ?
            ORDER BY cr.last_performed DESC''',
         (uid,)
     ).fetchall()
-    ctx['current_rx'] = [dict(r) for r in rx]
+
+    def _enrich_rx(row):
+        r = dict(row)
+        inv = inv_by_name.get(r['exercise']) or inv_by_exid.get(r.get('layer0_exercise_id'))
+        for col in ('skills_ar_carryover', 'recovery_cost',
+                    'movement_pattern', 'where_available', 'discipline'):
+            r[col] = inv.get(col) if inv else None
+        r.pop('layer0_exercise_id', None)
+        return r
+
+    ctx['current_rx'] = [_enrich_rx(r) for r in rx]
     ctx['deload_flags'] = [
         {'exercise': r['exercise'],
          'sessions_since_progress': r['sessions_since_progress']}
