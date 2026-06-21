@@ -1,9 +1,11 @@
-# V5 Implementation — Layer 3D HITL Gate, Slice 1 Foundation (#213)
+# V5 Implementation — Layer 3D HITL Gate, Slice 1 (#213)
 
 **Date:** 2026-06-21
-**Branch:** `claude/v5-design-layer-3-4-0t0ybc`
-**Type:** Implementation (code + tests + migration); aggregation core only — no orchestrator/UI wiring yet
+**Branch:** `claude/v5-design-layer-3-4-0t0ybc` · **PR [#850](https://github.com/ahorn885/exercise/pull/850)**
+**Type:** Implementation (code + tests + migration). **Full Slice 1** — the aggregation core **plus** the orchestrator hook + review/acknowledge UI + plans-list badge + one-in-flight. (The revise *cascade* is Slice 3.)
 **Predecessor:** `handoffs/V5_Design_Layer3DGate_Layer4InfeasibilityRescope_213_214_2026_06_21_Closing_Handoff_v1.md` (the design pass that produced `specs/Layer3D_Spec.md`)
+
+> **Update (same session):** this handoff was first written for the aggregation-core-only foundation; the Slice 1 wiring (orchestrator hook + review UI + badge + one-in-flight + repo accessors) was then built on the same branch/PR. §1a below records the wiring; the foundation sections (§2/§3/§4) are unchanged and still accurate.
 
 ---
 
@@ -19,6 +21,19 @@ Deliverables (all committed to the branch):
 2. **DB migration** in `init_db.py` — additive `plan_versions.hitl_gate JSONB` + `'needs_review'` added to the `generation_status` CHECK.
 3. **`tests/test_layer3d_gate.py`** — +23 tests, all green.
 4. **Bookkeeping** — this handoff + `CURRENT_STATE.md` lead entry (rides the work PR per the Ops flow).
+
+## 1a. The wiring (Slice 1 remainder — built same session)
+
+- **Orchestrator hook** (`layer4/orchestrator.py`, in `orchestrate_plan_create`): after the upstream cone + phase structure, before `llm_layer4_plan_create_cached`, it loads the athlete's prior resolutions (`load_prior_resolutions`), runs `evaluate_layer3d_gate`, persists the gate (`save_hitl_gate`), and **raises `Layer3DGateBlocked` when non-green** so the plan parks for review instead of running the minutes-long, dollar-cost synthesis. Imports are **lazy inside the function** to keep the `layer4` package import graph acyclic (`plan_sessions_repo` imports `layer4.payload`). Only plan-create is gated — refresh / race-week-brief orchestrators are untouched.
+- **Advance loop** (`routes/plan_create.py`): `_advance_plan_generation_locked` catches `Layer3DGateBlocked` → flips the row to `generation_status='needs_review'` (NOT `failed`; no rollback, so the gate JSONB the orchestrator wrote in the same txn persists) and returns `{"status":"needs_review"}`. `_advance_plan_generation` short-circuits a `needs_review` row (the poller/cron never re-run the cone on it — it resumes only via [Generate plan]).
+- **Review screen** (`routes/plan_create.py` + `templates/plan_create/review.html`): `GET /plans/v2/<id>/review` lists items grouped by severity (blockers first); `POST .../review/resolve` records an acknowledge (rejects a blocker — revise-only); `POST .../review/generate` is **green-gated** (refuses unless every item is resolved) and flips `needs_review → generating`, handing off to the progress poller (which re-runs the advance loop → gate re-evaluates green with the stored resolutions → synthesis proceeds). `progress.html` + the poller (`generate_plan`) redirect to the review screen on `needs_review`.
+- **Plans-list badge** (`routes/plans.py` + `templates/plans/list.html`): a "Needs review" bucket + chip + a **Review** button (and a **Cancel** that voids via `delete_plan`). The query now includes `needs_review`. The single discovery surface (§11.1).
+- **One-plan-in-flight** (`routes/plan_create.py:new_plan` POST): refuses a new create while one plan sits at `generating`/`needs_review`, redirecting to that plan's progress/review screen (§11.1).
+- **Repo accessors** (`plan_sessions_repo.py`): `save_hitl_gate` (stamps `evaluated_at`; writes only the column — the caller owns the status transition), `load_hitl_gate` (tolerates a NULL/pre-migration column → None), `load_prior_resolutions` (`item_key → GateResolution`, resolved items only).
+- **Gate fix** (`layer3d/gate.py`): added the `Layer3DGateBlocked` signal; the §4 etl-coherence check now **excludes 2C** — 2C encodes the source table in the *value* (`{'0A':'sports=v7',...}`), a different shape from the other nodes' bare `{'0A':'v7',...}`, so a literal compare wrongly tripped `etl_version_set_mismatch` (caught by `test_layer4_orchestrator`); 2C is unused by Slice 1 aggregation anyway.
+- **Tests** (`tests/test_layer3d_wiring.py`, +15): repo round-trip; advance-loop parking + `needs_review` short-circuit; review routes (render / acknowledge / blocker-reject / generate-gating); one-in-flight. **Full suite 3200 passed / 30 skipped.**
+
+**LIVE-VERIFY owed (Andy-action — the container can only reach a cold Neon, can't drive plan-gen):** create a plan for an athlete with a known upstream HITL item (e.g. a 2D post-surgical block) → the create lands on the review screen; acknowledge clears a warning; [Generate plan] enables only when green; the plans list shows the "Needs review" badge linking back. The green suite covers the routing + gate math, not the live LLM cone.
 
 ## 2. The code — `layer3d/gate.py`
 
@@ -75,14 +90,9 @@ END $$;
 
 Per `specs/Layer3D_Spec.md` §11 + §14 gut check and the predecessor handoff §6.
 
-### 6.1 Slice 1 remainder (this is the natural next pickup — needs app/DB verify)
+### 6.1 Slice 1 remainder — ✅ DONE this session (see §1a)
 
-1. **`hitl_gate` repo accessor** (`plan_sessions_repo.py`) — read/write the `Layer3DGate` JSONB + the `generation_status` transition to/from `needs_review`. Tolerate a NULL column (deploy-safe before the migration lands).
-2. **Orchestrator hook** — call `evaluate_layer3d_gate(...)` after the upstream cone is built (the 3B/2E completion point in `layer4/orchestrator.py:_upstream_full_cone` / `orchestrate_plan_create`) and **before** Layer 4 synthesis. On non-green, park the plan at `generation_status='needs_review'` with the persisted gate instead of advancing into the `_advance_plan_generation` loop in `routes/plan_create.py`. **This is the riskiest wiring** (interacts with the budget/cache/advance-lock machinery) — flagged in the spec gut check; give it the most testing.
-3. **Review screen** — `GET /plans/v2/<id>/review` (items grouped by severity, blockers first) + `POST /plans/v2/<id>/review/resolve` (record a `GateResolution`, re-evaluate). **Slice 1 = the acknowledge path + read surface only** (no revise cascade — that's Slice 3). Coaching-voice copy.
-4. **Plans-list "Needs review" badge** — `routes/plans.py:list_plans` (the list currently filters `generation_status IN ('ready','generating')`; add `needs_review`) + `templates/plans/list.html`. The badge links to the review screen — the single discovery surface (§11.1).
-5. **One-in-flight enforcement** — `routes/plan_create.py:new_plan` POST, before `allocate_plan_version_row`: refuse a new plan-create while one sits at `generating`/`needs_review` (prompt to resume or cancel) (§11.1).
-6. **`[Save as pending & exit]` / `[Cancel]`** off-ramps (§11.1) — pending = leave at `needs_review`; cancel = void the row (D-64 atomic-write).
+All six items below shipped on this branch/PR: the `hitl_gate` repo accessor, the orchestrator hook (park at `needs_review`), the review screen (read + acknowledge), the plans-list "Needs review" badge, one-in-flight enforcement, and the `[Save as pending & exit]` (link to list, row stays `needs_review`) / `[Cancel]` (void via `delete_plan`) off-ramps. Live-verify is owed (§1a). **The next pickup is Slice 2.**
 
 ### 6.2 Slice 2 — feasibility detectors
 
@@ -119,7 +129,14 @@ Edit a Layer 1 field from the review screen → existing partial-update invalida
 | `hitl_gate` column migration | `init_db.py` | `ADD COLUMN IF NOT EXISTS hitl_gate JSONB` | grep |
 | `needs_review` in status CHECK | `init_db.py` | `'generating', 'ready', 'failed', 'needs_review'` | grep |
 | Tests green | `tests/test_layer3d_gate.py` | `def test_clean_athlete_is_green` | `pytest tests/test_layer3d_gate.py` → 23 passed |
-| CURRENT_STATE lead entry | `CURRENT_STATE.md` | `3D HITL GATE — SLICE 1 FOUNDATION` | grep |
+| Orchestrator gate hook | `layer4/orchestrator.py` | `raise Layer3DGateBlocked(gate)` | grep |
+| Advance loop parks at needs_review | `routes/plan_create.py` | `except Layer3DGateBlocked as exc:` | grep |
+| Review screen route | `routes/plan_create.py` | `def plan_review(` + `def resolve_review_item(` + `def generate_from_review(` | grep |
+| One-in-flight check | `routes/plan_create.py` | `generation_status IN ('generating', 'needs_review')` | grep |
+| Plans-list needs_review bucket | `routes/plans.py` | `gen_needs_review` | grep |
+| Repo gate accessors | `plan_sessions_repo.py` | `def save_hitl_gate` / `def load_hitl_gate` / `def load_prior_resolutions` | grep |
+| Wiring tests green | `tests/test_layer3d_wiring.py` | `class TestReviewRoutes` | full suite → 3200 passed |
+| CURRENT_STATE lead entry | `CURRENT_STATE.md` | `3D HITL GATE — SLICE 1 BUILT` | grep |
 
 ## 9. Issue reconcile
 
