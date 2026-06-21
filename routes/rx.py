@@ -217,12 +217,12 @@ def edit_entry(entry_id):
 
         db.execute('''UPDATE current_rx SET
             current_sets=?, current_reps=?, current_weight=?, current_duration=?,
-            inventory_sugg_volume=?, weight_increment=?, consecutive_failures=?,
+            weight_increment=?, consecutive_failures=?,
             sessions_since_progress=?,
             next_sets=?, next_reps=?, next_weight=?, next_duration=?,
             rx_source=? WHERE id=? AND user_id=?''',
             (cur_sets, cur_reps, cur_weight, cur_duration,
-             f.get('inventory_sugg_volume'), weight_increment,
+             weight_increment,
              0 if f.get('reset_failures') else num(f.get('consecutive_failures'), int),
              0 if f.get('reset_plateau') else (entry['sessions_since_progress'] or 0),
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],

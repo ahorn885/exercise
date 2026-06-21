@@ -32,15 +32,6 @@ PG_SCHEMA = '''
         unit_preference TEXT NOT NULL DEFAULT 'imperial',
         updated_at TIMESTAMP DEFAULT NOW()
     );
-    CREATE TABLE IF NOT EXISTS exercise_inventory (
-        id SERIAL PRIMARY KEY,
-        exercise TEXT NOT NULL UNIQUE,
-        type TEXT, discipline TEXT, equipment TEXT, muscles_worked TEXT,
-        skills_ar_carryover TEXT, where_available TEXT, source TEXT,
-        suggested_volume TEXT, substitution_group TEXT, recovery_cost TEXT,
-        movement_pattern TEXT, session_placement TEXT, form_cue TEXT, video_reference TEXT,
-        weight_increment REAL
-    );
     CREATE TABLE IF NOT EXISTS training_plans (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -110,8 +101,8 @@ PG_SCHEMA = '''
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
         exercise TEXT NOT NULL,
-        discipline TEXT, type TEXT, movement_pattern TEXT,
-        inventory_sugg_volume TEXT, current_sets INTEGER, current_reps INTEGER,
+        movement_pattern TEXT,
+        current_sets INTEGER, current_reps INTEGER,
         current_weight REAL, current_duration INTEGER, last_performed TEXT,
         last_outcome TEXT, consecutive_failures INTEGER DEFAULT 0, rx_source TEXT,
         weight_increment REAL,
@@ -283,12 +274,6 @@ PG_SCHEMA = '''
         label    TEXT NOT NULL,
         category TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS exercise_equipment (
-        exercise_id  INTEGER NOT NULL REFERENCES exercise_inventory(id),
-        equipment_id INTEGER NOT NULL REFERENCES equipment_items(id),
-        option_group INTEGER NOT NULL DEFAULT 1,
-        PRIMARY KEY (exercise_id, equipment_id)
-    );
     CREATE TABLE IF NOT EXISTS locale_equipment (
         user_id      INTEGER NOT NULL REFERENCES users(id),
         locale       TEXT NOT NULL,
@@ -299,8 +284,8 @@ PG_SCHEMA = '''
     CREATE TABLE IF NOT EXISTS injury_exercise_modifications (
         id                     SERIAL PRIMARY KEY,
         injury_id              INTEGER NOT NULL REFERENCES injury_log(id),
-        exercise_id            INTEGER NOT NULL REFERENCES exercise_inventory(id),
-        substitute_exercise_id INTEGER REFERENCES exercise_inventory(id),
+        exercise_ex_id         TEXT NOT NULL,
+        substitute_ex_id       TEXT,
         modification_type      TEXT NOT NULL DEFAULT 'modify',
         modification_notes     TEXT,
         created_at             TIMESTAMP DEFAULT NOW()
@@ -360,29 +345,69 @@ PG_SCHEMA = '''
 
 
 # ── current_rx seed — one set of "Needs initial setup" rows per user ──────────
-# Each user gets their own copy so rx_engine has something to UPSERT against
-# on their first logged session. The composite UNIQUE(user_id, exercise) lets
-# us seed the same exercise list for every user without collisions.
-# routes/auth.py:register calls this for the first-user bootstrap so Andy
-# doesn't have to wait for a cold start.
+# Each user gets their own copy so rx_engine has something to UPSERT against on
+# their first logged session, and so /rx isn't blank before they've logged.
+# Catalog unification (Slice C): the exercise list is sourced from the single
+# canonical layer0 strength catalog (the retired v1 EXERCISES seed is gone), the
+# same EX-id keyed catalog the /rx page, plan-gen, and rx_engine already read.
 
-def _seed_current_rx_for_user(executor, user_id):
-    """INSERT seeded current_rx rows for a single user. Idempotent — relies on
-    the composite UNIQUE(user_id, exercise) to skip rows that already exist."""
+
+def _layer0_strength_seed_rows(executor):
+    """`(exercise_name, movement_pattern, ex_id)` tuples for the current_rx
+    bootstrap, read from the active layer0 strength catalog.
+
+    Reuses the same strength-type filter + progression-pattern collapse as
+    `layer0_catalog.strength_catalog` so the seed list matches what /rx renders.
+    Works for both seed callers: a raw psycopg2 cursor (init_postgres — `execute`
+    returns None + yields tuples) and the app's db wrapper (routes/auth.py —
+    `execute` returns a RealDict cursor). Raises if the layer0 schema is
+    absent/empty — callers treat the seed as best-effort."""
+    from layer0_catalog import _is_strength_type
+    from layer0_progression import progression_pattern
+    res = executor.execute(
+        "SELECT exercise_id, exercise_name, exercise_type, movement_patterns "
+        "FROM layer0.exercises WHERE superseded_at IS NULL ORDER BY exercise_name"
+    )
+    fetched = res.fetchall() if res is not None else executor.fetchall()
+    rows = []
+    for r in fetched:
+        if isinstance(r, (tuple, list)):
+            ex_id, name, exercise_type, patterns = r
+        else:  # RealDict row from the app db wrapper
+            ex_id, name = r['exercise_id'], r['exercise_name']
+            exercise_type, patterns = r['exercise_type'], r['movement_patterns']
+        if not _is_strength_type(exercise_type):
+            continue
+        rows.append((name, progression_pattern(list(patterns or [])), ex_id))
+    return rows
+
+
+def _seed_current_rx_for_user(executor, user_id, seed_rows):
+    """INSERT seeded "Needs initial setup" current_rx rows for a single user from
+    `seed_rows` (the layer0 strength catalog). Idempotent and de-duping: the
+    `NOT EXISTS` guard skips any layer0 exercise the user already has by EX-id
+    (so an existing user whose rows still carry v1 short names is not given a
+    second, layer0-named copy of the same lift), and `ON CONFLICT (user_id,
+    exercise)` guards the name key. A brand-new user (empty current_rx) gets the
+    full catalog."""
     executor.executemany(
-        '''INSERT INTO current_rx (exercise, discipline, type, movement_pattern,
-           inventory_sugg_volume, rx_source, user_id)
-           VALUES (%s, %s, %s, %s, %s, 'Needs initial setup', %s)
+        '''INSERT INTO current_rx
+               (exercise, movement_pattern, layer0_exercise_id, rx_source, user_id)
+           SELECT %s, %s, %s, 'Needs initial setup', %s
+           WHERE NOT EXISTS (
+               SELECT 1 FROM current_rx c
+               WHERE c.user_id = %s AND c.layer0_exercise_id = %s)
            ON CONFLICT (user_id, exercise) DO NOTHING''',
-        [tuple(e[:5]) + (user_id,) for e in EXERCISES]
+        [(name, mp, ex_id, user_id, user_id, ex_id)
+         for (name, mp, ex_id) in seed_rows]
     )
 
 
 # ── Recommended purchases — shared catalog ───────────────────────────────────
 #
 # Each entry binds to an equipment_items.tag (so "exercises impacted" can be
-# derived live from the exercise_equipment join) and carries cost ranges +
-# priority + a short rationale tailored to the AR / endurance profile.
+# derived live from the layer0 catalog via equipment_tag_layer0) and carries
+# cost ranges + priority + a short rationale tailored to the AR / endurance profile.
 # Idempotency is keyed on `slug` — entries can be added or have their copy
 # tweaked over time without disturbing per-user state in
 # user_purchase_recommendations.
@@ -609,9 +634,9 @@ def _retire_outdoor_terrain_equipment_tags(cur):
         WHERE equipment_tag = ANY(%s)
     """, (retired_tags,))
 
-    # Step 3 — drop the 9 equipment_items rows themselves. No
-    # exercise_equipment FK risk: none of the EXERCISE_EQUIPMENT seed
-    # entries reference any of these 9 tags (verified at slice scoping).
+    # Step 3 — drop the 9 equipment_items rows themselves. (The retired
+    # exercise_equipment join that once referenced these tags is gone — the
+    # catalog is layer0 now — so there is no FK to violate.)
     cur.execute("""
         DELETE FROM equipment_items
         WHERE tag = ANY(%s)
@@ -624,7 +649,6 @@ _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS vert_ratio_pct REAL",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_ms REAL",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS gct_balance TEXT",
-    "ALTER TABLE exercise_inventory ADD COLUMN IF NOT EXISTS weight_increment REAL",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER DEFAULT 0",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS weight_increment REAL",
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_sets INTEGER",
@@ -632,9 +656,8 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx ADD COLUMN IF NOT EXISTS next_weight REAL",
     "CREATE TABLE IF NOT EXISTS locale_profiles (locale TEXT PRIMARY KEY, equipment TEXT DEFAULT '', notes TEXT DEFAULT '', updated_at TIMESTAMP DEFAULT NOW())",
     "CREATE TABLE IF NOT EXISTS equipment_items (id SERIAL PRIMARY KEY, tag TEXT NOT NULL UNIQUE, label TEXT NOT NULL, category TEXT NOT NULL)",
-    "CREATE TABLE IF NOT EXISTS exercise_equipment (exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), option_group INTEGER NOT NULL DEFAULT 1, PRIMARY KEY (exercise_id, equipment_id))",
     "CREATE TABLE IF NOT EXISTS locale_equipment (locale TEXT NOT NULL REFERENCES locale_profiles(locale), equipment_id INTEGER NOT NULL REFERENCES equipment_items(id), PRIMARY KEY (locale, equipment_id))",
-    "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_id INTEGER NOT NULL REFERENCES exercise_inventory(id), substitute_exercise_id INTEGER REFERENCES exercise_inventory(id), modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS injury_exercise_modifications (id SERIAL PRIMARY KEY, injury_id INTEGER NOT NULL REFERENCES injury_log(id), exercise_ex_id TEXT NOT NULL, substitute_ex_id TEXT, modification_type TEXT NOT NULL DEFAULT 'modify', modification_notes TEXT, created_at TIMESTAMP DEFAULT NOW())",
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE training_log ADD COLUMN IF NOT EXISTS plan_item_id INTEGER REFERENCES plan_items(id)",
     "ALTER TABLE conditions_log ADD COLUMN IF NOT EXISTS cardio_log_id INTEGER REFERENCES cardio_log(id)",
@@ -2456,12 +2479,6 @@ _PG_MIGRATIONS = [
     "  body_weight = ROUND((body_weight * 0.45359237)::numeric, 3)::real, "
     "  weight_kg_converted = TRUE "
     "  WHERE NOT weight_kg_converted",
-    # exercise_inventory.weight_increment is the prescribed bump size in lbs
-    # historically; convert to kg so the rx engine works in canonical units.
-    "ALTER TABLE exercise_inventory ADD COLUMN IF NOT EXISTS weight_increment_kg_converted BOOLEAN NOT NULL DEFAULT FALSE",
-    "UPDATE exercise_inventory SET weight_increment = ROUND((weight_increment * 0.45359237)::numeric, 3)::real, "
-    "  weight_increment_kg_converted = TRUE "
-    "  WHERE NOT weight_increment_kg_converted",
     # Slice 2b.2b — athlete-facing session-grid unit fields. Nullable; NULL =
     # "unset", so the Layer 4 session grid falls back to its spec defaults
     # (two_a_day_preference -> 'occasionally', peak_sessions_max -> 10). The
@@ -2537,40 +2554,20 @@ _PG_MIGRATIONS = [
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
         for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
     ],
-    # ── Catalog unification (Slice B2): migrate injury_exercise_modifications off
-    # the public exercise_inventory.id FK onto layer0 EX-ids. Add TEXT EX-id
-    # columns + backfill from the still-present v1 catalog via the same
-    # STRENGTH_NAME_TO_EX_ID crosswalk; make the legacy int FK column nullable so
-    # new rows (written as EX-ids) need not populate it. The legacy
-    # exercise_id / substitute_exercise_id columns + their FK to exercise_inventory
-    # are dropped with the table in the table-drop slice. Idempotent (ADD COLUMN
-    # IF NOT EXISTS + `… ex_id IS NULL` guards); on a fresh DB both tables are
-    # empty at this point so the backfill is a no-op.
+    # ── Catalog unification (Slice B2): injury_exercise_modifications keys off
+    # layer0 EX-ids (TEXT exercise_ex_id / substitute_ex_id). These ADD COLUMNs
+    # are idempotent and retained for prod DBs created before the TEXT columns
+    # existed; the Slice B2 backfill (which read the v1 catalog) and the legacy
+    # int exercise_id / substitute_exercise_id columns are dropped in the Slice C
+    # table-drop tail below. Fresh DBs get the TEXT shape straight from PG_SCHEMA.
     "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS exercise_ex_id TEXT",
     "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS substitute_ex_id TEXT",
-    "ALTER TABLE injury_exercise_modifications ALTER COLUMN exercise_id DROP NOT NULL",
-    *[
-        f"UPDATE injury_exercise_modifications SET exercise_ex_id='{ex_id}' "
-        f"WHERE exercise_ex_id IS NULL AND exercise_id IN "
-        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
-        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
-    ],
-    *[
-        f"UPDATE injury_exercise_modifications SET substitute_ex_id='{ex_id}' "
-        f"WHERE substitute_ex_id IS NULL AND substitute_exercise_id IN "
-        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
-        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
-    ],
-    # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
-    # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
-    # sessions or coaching cues, not trackable strength exercises — v1-catalog
-    # (/rx Exercises page) only; layer0 0B / plan-gen unaffected. Also pulled
-    # from the EXERCISES + EXERCISE_EQUIPMENT seeds so they don't re-seed.
-    # FK-safe order: child rows before the catalog row.
-    "DELETE FROM exercise_equipment WHERE exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing'))",
-    "DELETE FROM injury_exercise_modifications WHERE exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')) OR substitute_exercise_id IN (SELECT id FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing'))",
-    "DELETE FROM current_rx WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
-    "DELETE FROM exercise_inventory WHERE exercise IN ('1,000 Step-Up Challenge','Hanging Leg Raise in Boots','Weighted Treadmill Incline Walk','High-Rep Strength Endurance Sets','Nasal-Breathing-Only Climbing')",
+    # The #694 cull (five mis-classified v1 'Novel' rows) is retired with its
+    # tables: exercise_inventory + exercise_equipment are dropped in the Slice C
+    # tail below, and the v1 EXERCISES/EXERCISE_EQUIPMENT seeds no longer exist,
+    # so the culled names cannot re-seed. The culled names are absent from the
+    # layer0 strength catalog, so the layer0-sourced current_rx seed never
+    # re-introduces them either.
     # #681 §4 Slice 2 (cardio fidelity) — the fine layer0 discipline id of a
     # completed cardio activity (matrix-v2 §1 option C: store the fine D-id where
     # one exists, derive coarse `_plan_sport_type` via DISCIPLINE_TO_PLAN_SPORT in
@@ -2686,6 +2683,22 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
     "ON plan_versions (user_id) "
     "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
+    # ── Catalog unification (Slice C): drop the retired v1 catalog ────────────
+    # Every production read now keys off the single canonical layer0 catalog —
+    # /rx (layer0_catalog.strength_catalog), purchases (equipment_tag_layer0),
+    # injuries (exercise_ex_id → layer0), and rx_engine (layer0 EX-id). The v1
+    # exercise_inventory + exercise_equipment tables and the vestigial FK columns
+    # are dropped here; layer0 is the sole catalog. FK-safe order: drop the child
+    # table + the FK columns that reference exercise_inventory before the parent.
+    # Idempotent via IF EXISTS; on a fresh DB PG_SCHEMA never created these, so
+    # each statement is a harmless no-op.
+    "ALTER TABLE injury_exercise_modifications DROP COLUMN IF EXISTS exercise_id",
+    "ALTER TABLE injury_exercise_modifications DROP COLUMN IF EXISTS substitute_exercise_id",
+    "ALTER TABLE current_rx DROP COLUMN IF EXISTS discipline",
+    "ALTER TABLE current_rx DROP COLUMN IF EXISTS type",
+    "ALTER TABLE current_rx DROP COLUMN IF EXISTS inventory_sugg_volume",
+    "DROP TABLE IF EXISTS exercise_equipment",
+    "DROP TABLE IF EXISTS exercise_inventory",
 ]
 
 _CLOTHING_SEEDS = [
@@ -2817,257 +2830,16 @@ EQUIPMENT_CATEGORIES = [
     # venue markers.
 ]
 
-# Volume rationale for endurance athletes (cyclists, trail runners, kayakers):
-#   Strength training is supplemental — recovery cost must be managed alongside endurance work.
-#   2-3 sets per exercise is the evidence-based ceiling; 3 sets is the default here.
-#   2 sets is appropriate for novel/accessory work with higher recovery cost.
-#   Rep ranges: 6-8 for heavy compounds (strength emphasis), 8-12 for medium compounds,
-#               12-20 for accessories and isolation; max reps for bodyweight skills.
-#   Total weekly sets per movement pattern (10+) matters more than per-session count.
+# Progression / regression logic lives in calculations.py (weight increments
+# from actual_weight, rep increments from PROGRESSION_RULES, +5s on time work,
+# and the consecutive_failures regression after 3 REDUCE outcomes).
 #
-# Progression logic (see calculations.py for implementation):
-#   Weight increment is computed at workout time from actual_weight:
-#     actual_weight < 15 lb  → 2.5 lb increment  (light KB/DB; micro-plate scale)
-#     actual_weight >= 15 lb → 5.0 lb increment   (standard KB/DB or barbell)
-#   Bodyweight exercises (no weight): rep increment from PROGRESSION_RULES.
-#   Time-based: +5 sec per PROGRESS session.
-#   The weight_increment column in exercise_inventory stores an override if needed.
-#
-# Regression logic:
-#   REDUCE outcome (< 75% completion) increments a consecutive_failures counter.
-#   REPEAT (75–99%) freezes the counter — no progress, no regression.
-#   PROGRESS resets the counter to 0.
-#   After 3 consecutive REDUCE outcomes, weight/duration decreases by one step.
-#
-# Equipment required per exercise — used to filter exercises against locale profiles.
-# Tag syntax: 'a,b' = needs a AND b; 'a|b' = needs a OR b; '' = bodyweight (no restriction).
-# Tags must match keys in EQUIPMENT_CATEGORIES (defined in routes/locales.py).
-EXERCISE_EQUIPMENT = {
-    # Bike — Staple
-    'Back Squat':                        'barbell,squat_rack',
-    'Front Squat':                       'barbell,squat_rack',
-    'Goblet Squat':                      'kettlebell|dumbbells',
-    'Romanian Deadlift':                 'barbell|dumbbells',
-    'Glute Bridge / Hip Thrust':         '',
-    'Barbell Hip Thrust':                'barbell,bench_flat',
-    'Push-Up':                           '',
-    'Dip':                               'dip_bars',
-    'Plank':                             '',
-    'Side Plank':                        '',
-    'Pallof Press':                      'cable_machine|resistance_bands',
-    'Mountain Climbers':                 '',
-    'Single-Leg Calf Raise':             '',
-    'Box Jump':                          'plyo_box',
-    'Pedal Stance Deadlift':             'barbell|hex_bar',
-    # Bike — Novel
-    'Asymmetric Stab. Ball Push-Up':     'stability_ball',
-    'TRX Mtn Climber / Unstable Bar':    'trx',
-    'Side Plank + Banded Leg Raise':     'resistance_bands',
-    'Isometric Lunge Hold':              '',
-    'Elevated Reverse Lunge':            'bench_flat',
-    'Renegade Row (Plank + DB Row)':     'dumbbells',
-    # Foot — Staple
-    'Weighted Box Step-Up':              'plyo_box,dumbbells',
-    'Bulgarian Split Squat':             'bench_flat',
-    'Nordic Hamstring Curl':             '',
-    'Walking Lunge':                     '',
-    'Single-Leg Deadlift':               'dumbbells|kettlebell|barbell',
-    'Pull-Up':                           'pull_up_bar',
-    'Single-Leg Glute Bridge':           '',
-    'Dead Bug':                          '',
-    'Bird Dog':                          '',
-    'Glute Kickback (Banded)':           'resistance_bands',
-    'Fire Hydrant (Banded)':             'resistance_bands',
-    'Clamshell (Banded)':                'resistance_bands',
-    'Oblique Press (Contralateral)':     '',
-    'Copenhagen Plank':                  'bench_flat',
-    'Step-Down (Eccentric)':             'bench_flat',
-    'Good Morning':                      'barbell|dumbbells',
-    'Back Extension / Rev. Hyper':       'ghd',
-    'Banded Pull-Through':               'resistance_bands',
-    'Kettlebell Swing (Two-Hand)':       'kettlebell',
-    'Single-Arm KB Swing':               'kettlebell',
-    'KB Clean & Press':                  'kettlebell',
-    'KB Snatch':                         'kettlebell',
-    'Farmer Carry':                      'dumbbells|kettlebell',
-    'Suitcase Carry':                    'dumbbells|kettlebell',
-    'Rack Carry':                        'dumbbells|kettlebell',
-    'Overhead Carry':                    'dumbbells|kettlebell',
-    'Bear Crawl':                        '',
-    'Sled Push':                         'sled',
-    'Sled Pull (Hand-Over-Hand)':        'sled',
-    'Lunge to Rotation (Slam Ball/DB)':  'slam_ball|med_ball|dumbbells',
-    # Foot — Novel
-    'Hillbounding':                      '',
-    '4-Side Box Step-Up/Off':            'plyo_box',
-    'Single-Leg Stance Eyes Closed':     '',
-    'Towel Pull-Up':                     'pull_up_bar',
-    'Side Split Lunges (Deep)':          '',
-    'Rapid Calf Raises':                 '',
-    # Water — Staple
-    'Seated Cable Row':                  'cable_machine',
-    'Bent-Over Barbell Row':             'barbell',
-    'Lat Pulldown':                      'lat_pulldown',
-    'Straight-Arm Lat Pulldown':         'lat_pulldown',
-    'Dumbbell Chest Press':              'dumbbells,bench_flat',
-    'Plank with Rotation':               '',
-    'Forearm Wrist Curls':               'dumbbells|barbell|ez_bar',
-    'Deadlift (Standard)':               'barbell|hex_bar',
-    'Face Pull':                         'cable_machine|resistance_bands',
-    'Band Pull-Apart':                   'resistance_bands',
-    'KB Sumo Deadlift':                  'kettlebell',
-    'Battle Ropes':                      'battle_ropes',
-    # Water — Novel
-    'Half-Kneeling 1-Arm Cable Row':     'cable_machine',
-    'Cable Woodchop (High-to-Low)':      'cable_machine',
-    'Cable Woodchop (Low-to-High)':      'cable_machine',
-    'Med Ball Wall Throws (Rotational)': 'med_ball',
-    'KB Swing on Inverted BOSU':         'kettlebell,bosu',
-    'Russian Twist (Feet Elevated)':     'dumbbells|med_ball',
-    'Single-Arm DB Row (Staggered)':     'dumbbells',
-    'Med Ball Torso Rotation (Seated)':  'med_ball',
-    # Cross — Staple
-    'KB Halo':                           'kettlebell',
-    'Push Press':                        'barbell|dumbbells|kettlebell',
-    'Sumo Deadlift High Pull':           'barbell|dumbbells|kettlebell',
-    'KB Windmill':                       'kettlebell',
-    'Turkish Get-Up':                    'kettlebell|dumbbells',
-    'Sandbag / Pack Carry (Bear Hug)':   'sandbag',
-    'Ab Wheel Rollout':                  'ab_wheel',
-    'Hanging Knee Raise':                'pull_up_bar',
-    'Wall Sit':                          '',
-    'Seated Glute Squeeze (Isometric)':  '',
-    # Cross — Novel
-    'Sandbag Get-Up':                    'sandbag',
-    'Pistol Squat':                      '',
-    'Hangboard Max Hangs':               'hangboard',
-    '7/3 Repeaters (Hangboard)':         'hangboard',
-    'Front Lever Progression':           'pull_up_bar|rings',
-    'Rice Bucket':                       'rice_bucket',
-    'L-Sit Pull-Up':                     'pull_up_bar|rings',
-    'Treadwall Intervals':               'treadwall',
-    'Stability Ball Seated Shoulder Press': 'stability_ball,dumbbells',
-    'Stability Ball Single-Arm DB Press':   'stability_ball,dumbbells',
-    'Stability Ball Hamstring Curl':        'stability_ball',
-    # Mobility — no equipment needed
-    'Standing Hip Flexor Stretch':       '',
-    'Standing Figure-4 Stretch':         '',
-    'Wall Calf Stretch':                 '',
-    'Wall Chest / Doorway Stretch':      '',
-}
-
-# where_available locale codes (comma-separated when multiple apply):
-#   home     = user's home gym (barbell, KB, DB, bands, pull-up bar)
-#   hotel    = hotel room / hotel gym (bodyweight; floor space available)
-#   partner  = partner's home (bodyweight / minimal equipment assumed)
-#   airport  = airport / transit (standing or seated; no floor exercises)
-# Blank = gym-only or requires equipment not at any listed locale.
-
-EXERCISES = [
-    # (exercise, discipline, type, movement_pattern, suggested_volume, where_available)
-    ('Back Squat',                        'Bike',  'Staple', 'Squat',        '3x6-8',             'home'),
-    ('Front Squat',                       'Bike',  'Staple', 'Squat',        '3x6-8',             'home'),
-    ('Goblet Squat',                      'Bike',  'Staple', 'Squat',        '3x8-12',            'home'),
-    ('Romanian Deadlift',                 'Bike',  'Staple', 'Hinge',        '3x8-10',            'home'),
-    ('Glute Bridge / Hip Thrust',         'Bike',  'Staple', 'Hinge',        '3x12-15',           'home,hotel,partner'),
-    ('Barbell Hip Thrust',                'Bike',  'Staple', 'Hinge',        '3x8-10',            'home'),
-    ('Push-Up',                           'Bike',  'Staple', 'Push',         '3x15-20',           'home,hotel,partner'),
-    ('Dip',                               'Bike',  'Staple', 'Push',         '3x8-12',            'home'),
-    ('Plank',                             'Bike',  'Staple', 'Core',         '3x30-60s',          'home,hotel,partner'),
-    ('Side Plank',                        'Bike',  'Staple', 'Core',         '3x30s ea',          'home,hotel,partner'),
-    ('Pallof Press',                      'Bike',  'Staple', 'Core',         '3x10 ea',           'home'),
-    ('Mountain Climbers',                 'Bike',  'Staple', 'Core',         '3x30s',             'home,hotel,partner'),
-    ('Single-Leg Calf Raise',             'Bike',  'Staple', 'Squat',        '3x15 ea',           'home,hotel,partner,airport'),
-    ('Box Jump',                          'Bike',  'Staple', 'Plyo',         '3x5-8',             'home'),
-    ('Pedal Stance Deadlift',             'Bike',  'Novel',  'Hinge',        '2-3x5-10',          'home'),
-    ('Asymmetric Stab. Ball Push-Up',     'Bike',  'Novel',  'Push',         '3x10',              'home'),
-    ('TRX Mtn Climber / Unstable Bar',    'Bike',  'Novel',  'Core',         '3x20',              'home'),
-    ('Side Plank + Banded Leg Raise',     'Bike',  'Novel',  'Core',         '3x10 ea',           'home'),
-    ('Isometric Lunge Hold',              'Bike',  'Novel',  'Lunge',        '2-3x30-90s',        'home,hotel,partner,airport'),
-    ('Elevated Reverse Lunge',            'Bike',  'Novel',  'Lunge',        '3x8-10 ea',         'home,hotel,partner'),
-    ('Renegade Row (Plank + DB Row)',      'Bike',  'Novel',  'Pull',         '3x8 ea',            'home'),
-    ('Weighted Box Step-Up',              'Foot',  'Staple', 'Lunge',        '3x10 ea',           'home'),
-    ('Bulgarian Split Squat',             'Foot',  'Staple', 'Lunge',        '3x8-10 ea',         'home,hotel,partner'),
-    ('Nordic Hamstring Curl',             'Foot',  'Staple', 'Hinge',        '3x4-6, 2x/wk',     'home,hotel,partner'),
-    ('Walking Lunge',                     'Foot',  'Staple', 'Lunge',        '3x12 ea',           'home,hotel,partner'),
-    ('Single-Leg Deadlift',               'Foot',  'Staple', 'Hinge',        '3x8-10 ea',         'home,hotel,partner'),
-    ('Pull-Up',                           'Foot',  'Staple', 'Pull',         '3x max',            'home'),
-    ('Single-Leg Glute Bridge',           'Foot',  'Staple', 'Hinge',        '3x20 ea',           'home,hotel,partner'),
-    ('Dead Bug',                          'Foot',  'Staple', 'Core',         '3x60s',             'home,hotel,partner'),
-    ('Bird Dog',                          'Foot',  'Staple', 'Core',         '3x10 ea',           'home,hotel,partner'),
-    ('Glute Kickback (Banded)',            'Foot',  'Staple', 'Hinge',        '3x20 ea',           'home'),
-    ('Fire Hydrant (Banded)',              'Foot',  'Staple', 'Core',         '3x15 ea',           'home'),
-    ('Clamshell (Banded)',                'Foot',  'Staple', 'Core',         '3x15 ea',           'home'),
-    ('Oblique Press (Contralateral)',      'Foot',  'Staple', 'Core',         '3x60s alt.',        'home,hotel,partner'),
-    ('Copenhagen Plank',                  'Foot',  'Staple', 'Core',         '3x15-30s ea',       'home,hotel,partner'),
-    ('Step-Down (Eccentric)',              'Foot',  'Staple', 'Squat',        '3x10 ea',           'home,hotel,partner'),
-    ('Good Morning',                      'Foot',  'Staple', 'Hinge',        '3x8-10',            'home,hotel,partner'),
-    ('Back Extension / Rev. Hyper',       'Foot',  'Staple', 'Hinge',        '3x12-15',           'home'),
-    ('Banded Pull-Through',               'Foot',  'Staple', 'Hinge',        '3x12-15',           'home'),
-    ('Kettlebell Swing (Two-Hand)',        'Foot',  'Staple', 'Hinge',        '3-5x10-15',         'home'),
-    ('Single-Arm KB Swing',               'Foot',  'Staple', 'Hinge',        '3x10 ea',           'home'),
-    ('KB Clean & Press',                  'Foot',  'Staple', 'Push',         '3x6-8 ea',          'home'),
-    ('KB Snatch',                         'Foot',  'Staple', 'Hinge',        '3x5-8 ea',          'home'),
-    ('Farmer Carry',                      'Foot',  'Staple', 'Carry',        '3-4x40-60m',        'home'),
-    ('Suitcase Carry',                    'Foot',  'Staple', 'Carry',        '3x40-60m ea',       'home'),
-    ('Rack Carry',                        'Foot',  'Staple', 'Carry',        '3x40-60m',          'home'),
-    ('Overhead Carry',                    'Foot',  'Staple', 'Carry',        '3x30-40m ea',       'home'),
-    ('Bear Crawl',                        'Foot',  'Staple', 'Core',         '3x20-30m',          'home,hotel,partner'),
-    ('Sled Push',                         'Foot',  'Staple', 'Squat',        '4-6x30-40m',        ''),
-    ('Sled Pull (Hand-Over-Hand)',         'Foot',  'Staple', 'Pull',         '4-6x20-30m',        ''),
-    ('Lunge to Rotation (Slam Ball/DB)',   'Foot',  'Staple', 'Lunge',        '3x8-10 ea',         'home'),
-    ('Hillbounding',                      'Foot',  'Novel',  'Plyo',         '6-10x30s',          ''),
-    ('4-Side Box Step-Up/Off',            'Foot',  'Novel',  'Lunge',        'Build to 4 circuits','home'),
-    ('Single-Leg Stance Eyes Closed',     'Foot',  'Novel',  'Balance',      '3x30s ea, daily',   'home,hotel,partner,airport'),
-    ('Towel Pull-Up',                     'Foot',  'Novel',  'Pull',         '3x max',            'home'),
-    ('Side Split Lunges (Deep)',           'Foot',  'Novel',  'Squat',        '3x8 ea',            'home,hotel,partner,airport'),
-    ('Rapid Calf Raises',                 'Foot',  'Novel',  'Plyo',         '3x30s',             'home,hotel,partner,airport'),
-    ('Seated Cable Row',                  'Water', 'Staple', 'Pull',         '3x10-12',           ''),
-    ('Bent-Over Barbell Row',             'Water', 'Staple', 'Pull',         '3x6-8',             'home'),
-    ('Lat Pulldown',                      'Water', 'Staple', 'Pull',         '3x10-12',           ''),
-    ('Straight-Arm Lat Pulldown',         'Water', 'Staple', 'Pull',         '3x12-15',           ''),
-    ('Dumbbell Chest Press',              'Water', 'Staple', 'Push',         '3x10-12',           'home'),
-    ('Plank with Rotation',               'Water', 'Staple', 'Core',         '3x10 ea',           'home,hotel,partner'),
-    ('Forearm Wrist Curls',               'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
-    ('Deadlift (Standard)',               'Water', 'Staple', 'Hinge',        '3x6-8',             'home'),
-    ('Face Pull',                         'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
-    ('Band Pull-Apart',                   'Water', 'Staple', 'Pull',         '3x15-20',           'home'),
-    ('KB Sumo Deadlift',                  'Water', 'Staple', 'Hinge',        '3x8-10',            'home'),
-    ('Battle Ropes',                      'Water', 'Staple', 'Conditioning', '3-6x30s on/off',    ''),
-    ('Half-Kneeling 1-Arm Cable Row',     'Water', 'Novel',  'Pull',         '3x8-10 ea',         ''),
-    ('Cable Woodchop (High-to-Low)',       'Water', 'Novel',  'Rotation',     '3x10-12 ea',        ''),
-    ('Cable Woodchop (Low-to-High)',       'Water', 'Novel',  'Rotation',     '3x10-12 ea',        ''),
-    ('Med Ball Wall Throws (Rotational)', 'Water', 'Novel',  'Rotation',     '3x10 ea',           ''),
-    ('KB Swing on Inverted BOSU',         'Water', 'Novel',  'Hinge',        '3x10-12',           'home'),
-    ('Russian Twist (Feet Elevated)',      'Water', 'Novel',  'Rotation',     '3x20',              'home,hotel,partner'),
-    ('Single-Arm DB Row (Staggered)',      'Water', 'Novel',  'Pull',         '3x8-10 ea',         'home'),
-    ('Med Ball Torso Rotation (Seated)',   'Water', 'Novel',  'Rotation',     '3x15 ea',           ''),
-    ('KB Halo',                           'Cross', 'Staple', 'Core',         '2-3x8 ea dir.',     'home'),
-    ('Push Press',                        'Cross', 'Staple', 'Push',         '3x5-8',             'home'),
-    ('Sumo Deadlift High Pull',           'Cross', 'Staple', 'Pull',         '3x6-8',             'home'),
-    ('KB Windmill',                       'Cross', 'Staple', 'Core',         '3x5-8 ea',          'home'),
-    ('Turkish Get-Up',                    'Cross', 'Staple', 'Core',         '3x3-5 ea',          'home'),
-    ('Sandbag / Pack Carry (Bear Hug)',    'Cross', 'Staple', 'Carry',        '3x40-60m',          'home'),
-    ('Ab Wheel Rollout',                  'Cross', 'Staple', 'Core',         '3x8-12',            'home'),
-    ('Hanging Knee Raise',                'Cross', 'Staple', 'Core',         '3x10-15',           'home'),
-    ('Sandbag Get-Up',                    'Cross', 'Novel',  'Core',         '5 reps per side',   'home'),
-    ('Pistol Squat',                      'Cross', 'Novel',  'Squat',        '3x5-8 ea',          'home,hotel,partner,airport'),
-    ('Hangboard Max Hangs',               'Cross', 'Novel',  'Grip',         '3-5x7-10s',         'home'),
-    ('7/3 Repeaters (Hangboard)',         'Cross', 'Novel',  'Grip',         '3-5 sets to fail',  'home'),
-    ('Front Lever Progression',           'Cross', 'Novel',  'Pull',         '3x5-10s holds',     'home'),
-    ('Rice Bucket',                       'Cross', 'Novel',  'Grip',         '3-5 min daily',     'home'),
-    ('L-Sit Pull-Up',                     'Cross', 'Novel',  'Pull',         '3x max',            'home'),
-    ('Treadwall Intervals',               'Cross', 'Novel',  'Conditioning', '6x30s on/off',      ''),
-    ('Stability Ball Seated Shoulder Press','Water','Novel', 'Push',         '3x8-10',            'home'),
-    ('Stability Ball Single-Arm DB Press','Cross', 'Novel',  'Push',         '3x8-10 ea',         'home'),
-    ('Stability Ball Hamstring Curl',     'Foot',  'Novel',  'Hinge',        '3x10-12',           'home'),
-    ('Wall Sit',                          'Cross', 'Staple', 'Squat',        '3x30-90s',          'home,hotel,partner,airport'),
-    ('Seated Glute Squeeze (Isometric)',   'Cross', 'Staple', 'Hinge',        '5x10s squeeze',     'home,hotel,partner,airport'),
-    ('Standing Hip Flexor Stretch',       'Foot',  'Staple', 'Mobility',     '2-3x30-60s each',   'home,hotel,partner,airport'),
-    ('Standing Figure-4 Stretch',         'Foot',  'Staple', 'Mobility',     '2-3x30-60s each',   'home,hotel,partner,airport'),
-    ('Wall Calf Stretch',                 'Foot',  'Staple', 'Mobility',     '2x30s each leg',    'home,hotel,partner,airport'),
-    ('Wall Chest / Doorway Stretch',      'Water', 'Staple', 'Mobility',     '2-3x30s each',      'home,hotel,partner,airport'),
-]
+# The v1 EXERCISES + EXERCISE_EQUIPMENT seed constants were retired with the
+# exercise_inventory / exercise_equipment tables (catalog unification, Slice
+# C). The single canonical catalog is layer0.exercises: the /rx page reads it
+# via layer0_catalog, the current_rx bootstrap seeds from it
+# (_layer0_strength_seed_rows), and purchases derives impacted-exercise counts
+# from it via equipment_tag_layer0.
 
 
 # #826 — the curated science-provenance sources now live in the canonical
@@ -3112,17 +2884,17 @@ def init_postgres():
     # Seed current_rx for user 1 only — pre-bootstrap, the table stays empty
     # (NOT NULL on user_id post-2D would reject NULL inserts anyway). Andy's
     # rows are seeded inline by routes/auth.py:register on first-user bootstrap.
+    # The seed list now comes from the canonical layer0 strength catalog (Slice
+    # C). Best-effort + isolated: a missing/empty layer0 schema (e.g. a bare DB
+    # built before the ETL has run) must not abort the rest of init.
     cur.execute('SELECT 1 FROM users WHERE id = 1')
     if cur.fetchone():
-        _seed_current_rx_for_user(cur, 1)
-    # Seed exercise_inventory
-    cur.executemany(
-        '''INSERT INTO exercise_inventory
-           (exercise, discipline, type, movement_pattern, suggested_volume, where_available)
-           VALUES (%s, %s, %s, %s, %s, %s)
-           ON CONFLICT (exercise) DO NOTHING''',
-        EXERCISES
-    )
+        try:
+            _seed_current_rx_for_user(cur, 1, _layer0_strength_seed_rows(cur))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"[init_db] current_rx seed skipped: {e!r}")  # Rule #15
     # Seed provider_value_map (#681 §4) from the consolidated seed module. The
     # table is the runtime-canonical store; the seed module is its git authoring
     # source, so ON CONFLICT DO UPDATE re-syncs the table to the seed each deploy.
@@ -3162,12 +2934,6 @@ def init_postgres():
     )
     print(f"[init_db] seeded evidence_sources: "  # Rule #15
           f"{len(EVIDENCE_SOURCE_SEEDS)} rows")
-    # Seed exercise equipment tags (always update — safe to re-run)
-    for exercise, tags in EXERCISE_EQUIPMENT.items():
-        cur.execute(
-            'UPDATE exercise_inventory SET equipment=%s WHERE exercise=%s',
-            (tags, exercise)
-        )
     # Phase 1 — Seed equipment_items catalog (idempotent)
     for category_name, items in EQUIPMENT_CATEGORIES:
         for tag, label in items:
@@ -3176,28 +2942,15 @@ def init_postgres():
                 'ON CONFLICT (tag) DO NOTHING',
                 (tag, label, category_name)
             )
-    # Phase 2 — Build lookup dicts
+    # Phase 2 — Build the equipment lookup for the purchase-recommendations seed
     cur.execute('SELECT id, tag FROM equipment_items')
     tag_to_id = {row[1]: row[0] for row in cur.fetchall()}
-    cur.execute('SELECT id, exercise FROM exercise_inventory')
-    ex_to_id  = {row[1]: row[0] for row in cur.fetchall()}
     # Phase 2b — Seed shared purchase_recommendations catalog (UPSERT on slug)
     _seed_purchase_recommendations(cur, tag_to_id)
-    # Phase 3 — Seed exercise_equipment (idempotent)
-    for exercise_name, tag_str in EXERCISE_EQUIPMENT.items():
-        ex_id = ex_to_id.get(exercise_name)
-        if ex_id is None or not tag_str:
-            continue
-        for group_num, group in enumerate(tag_str.split('|'), start=1):
-            for tag in [t.strip() for t in group.split(',') if t.strip()]:
-                eq_id = tag_to_id.get(tag)
-                if eq_id:
-                    cur.execute(
-                        'INSERT INTO exercise_equipment '
-                        '(exercise_id, equipment_id, option_group) VALUES (%s, %s, %s) '
-                        'ON CONFLICT DO NOTHING',
-                        (ex_id, eq_id, group_num)
-                    )
+    # Phase 3 — (removed) the exercise_equipment join seed retired with the v1
+    # catalog (Slice C): exercise↔equipment now lives in layer0
+    # (layer0.exercises.equipment_required); purchases counts impacted exercises
+    # via equipment_tag_layer0 against that canonical catalog.
     # Phase 4 — (removed) the legacy locale_profiles.equipment → locale_equipment
     # backfill retired with Track 1: the locale_equipment table is dropped and
     # every locale now stores equipment as layer0 canonical names in
