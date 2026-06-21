@@ -3667,3 +3667,52 @@ class TestOrchestratePlanCreateReturnValue:
         # And the upstream pipeline fired completely once.
         for m in mocks:
             assert m.call_count == 1
+
+    def test_threads_layer3_source_citations_onto_payload(self):
+        """#826 — when Layer 3A/3B cite evidence-source slugs, the orchestrator
+        surfaces them onto the returned Layer4Payload (per-layer) so the
+        completing pass can persist provenance links. Empty citations leave the
+        payload unchanged (see the verbatim test); here they're populated."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_create_layer4_payload()
+        l3a = _fake_layer3a_payload().model_copy(
+            update={"source_citations": ["zone2-aerobic-base"]}
+        )
+        l3b = _fake_layer3b_payload().model_copy(
+            update={"source_citations": ["tapering-peak", "polarized-intensity"]}
+        )
+        stack = _plan_create_patches(layer4_return=sentinel)
+        # Swap the Layer 3A (index 7) + 3B (index 8) returns for ones carrying
+        # citations; keep the rest of the 10-site stack intact.
+        stack = stack[:7] + [
+            patch(
+                "layer4.orchestrator.llm_layer3a_athlete_state_cached",
+                return_value=l3a,
+            ),
+            patch(
+                "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
+                return_value=l3b,
+            ),
+        ] + stack[9:]
+        _enter_all(stack)
+        try:
+            result = orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=date(2026, 6, 1),
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+        assert result.evidence_source_citations == {
+            "layer3a": ["zone2-aerobic-base"],
+            "layer3b": ["tapering-peak", "polarized-intensity"],
+        }

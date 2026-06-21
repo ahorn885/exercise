@@ -51,13 +51,30 @@ def test_evidence_sources_kind_constraint_is_three_kinds():
 
 
 def test_baseline_seeds_well_formed():
-    seeds = init_db.EVIDENCE_SOURCE_BASELINE_SEEDS
-    assert len(seeds) >= 3
+    import evidence_catalog
+    seeds = evidence_catalog.seed_rows()
+    assert len(seeds) >= 10  # 5 baseline + the non-baseline catalog
     slugs = set()
     allowed = {"study", "guideline", "expert_coach"}
-    for slug, kind, title, summary, citation, url in seeds:
+    baseline_count = 0
+    for slug, kind, title, summary, citation, url, is_baseline in seeds:
         assert slug and slug not in slugs, f"duplicate/empty slug: {slug!r}"
         slugs.add(slug)
         assert kind in allowed, f"bad kind for {slug}: {kind}"
         assert title, f"empty title for {slug}"
-        assert citation, f"baseline source {slug} should carry a citation"
+        assert citation, f"source {slug} should carry a citation"
+        if is_baseline:
+            baseline_count += 1
+    assert baseline_count >= 3, "expected a baseline methodology set"
+    # init_db re-exports the catalog rows for seeding.
+    assert init_db.EVIDENCE_SOURCE_SEEDS == seeds
+
+
+def test_citable_catalog_matches_seeded_slugs():
+    """The prompt allowlist must be exactly the seeded slugs — the
+    constrained-citation guarantee that the model is only told about sources
+    that exist in the store."""
+    import evidence_catalog
+    catalog_slugs = {c["slug"] for c in evidence_catalog.citable_catalog()}
+    seed_slugs = {r[0] for r in evidence_catalog.seed_rows()}
+    assert catalog_slugs == seed_slugs == evidence_catalog.all_slugs()
