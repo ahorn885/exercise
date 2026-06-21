@@ -524,6 +524,39 @@ def compute_seam_review_cache_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_week_seam_review_cache_key(
+    *,
+    call_cache_key: str,
+    week_seam_index: int,
+    prior_week_sessions: list[PlanSession],
+    next_week_sessions: list[PlanSession],
+    model: str,
+    max_tokens: int,
+    extended_thinking_budget: int,
+) -> str:
+    """Per §9.2 (D-77 Slice 3) — cache key for an iteration-1 INTRA-PHASE
+    week-seam review. Mirrors `compute_seam_review_cache_key`: the iter-1 review
+    is a pure function of the two weeks' synthesized session outputs plus the
+    upstream inputs already folded into `call_cache_key` (layer2a/2d, discipline
+    mix, periodization mode, race format, event date — and, via the per-block
+    chain that produced those sessions, the per-week planned multipliers) plus
+    the reviewer model + token config. `week_seam_index` is the global,
+    monotonic intra-phase seam index (disjoint from the phase-seam `seam_index`
+    namespace). Only the per-call-variable week session lists are hashed here.
+    Iteration-2 reviews are NOT cached (they follow the rare flagged path)."""
+    components = [
+        call_cache_key,
+        "week_seam",
+        str(week_seam_index),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in prior_week_sessions])),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in next_week_sessions])),
+        model,
+        str(max_tokens),
+        str(extended_thinking_budget),
+    ]
+    return _sha256_hex("||".join(components))
+
+
 def compute_seam_resynth_block_cache_key(
     *,
     call_cache_key: str,
