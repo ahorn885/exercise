@@ -15,7 +15,7 @@ Progression rules (PROGRESSION_RULES):
 Weight increment runtime rule (overrides weight_incr when actual_weight is known):
   actual_weight < 7 kg   → 1.25 kg increment  (light KB/DB; micro-plate scale)
   actual_weight >= 7 kg  → 2.5 kg increment   (standard KB/DB or barbell)
-  explicit weight_increment arg   → use that value instead (per-exercise override stored in exercise_inventory)
+  explicit weight_increment arg   → use that value instead (per-user override stored in current_rx.weight_increment)
 
 Outcome rules (calculate_outcome_from_sets, per-set):
   PROGRESS ↑ — every set met target reps AND target weight (and duration if applicable)
@@ -68,7 +68,7 @@ def _resolve_weight_incr(weight_increment_override, actual_weight, pattern_defau
     """Return the kg increment to use for progression/regression.
 
     Priority:
-      1. Explicit per-exercise override (stored in exercise_inventory.weight_increment)
+      1. Explicit per-user override (stored in current_rx.weight_increment)
       2. Runtime rule from actual_weight: < 7 kg → 1.25, >= 7 kg → 2.5
       3. Pattern default from PROGRESSION_RULES (fallback when weight unknown)
     """
