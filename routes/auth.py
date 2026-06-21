@@ -386,12 +386,14 @@ def register():
         )
         new_user_id = cur.lastrowid
         # Seed the new user's current_rx so /rx isn't blank on their first
-        # session. Idempotent via composite UNIQUE(user_id, exercise) —
-        # safe to re-run from the next cold-start init pass too.
+        # session, from the canonical layer0 strength catalog (Slice C). De-duped
+        # by EX-id + idempotent via UNIQUE(user_id, exercise) — safe to re-run
+        # from the next cold-start init pass too.
         try:
-            from init_db import _seed_current_rx_for_user
-            is_pg = bool(os.environ.get('DATABASE_URL'))
-            _seed_current_rx_for_user(db, new_user_id, is_postgres=is_pg)
+            from init_db import (_seed_current_rx_for_user,
+                                 _layer0_strength_seed_rows)
+            _seed_current_rx_for_user(db, new_user_id,
+                                      _layer0_strength_seed_rows(db))
         except Exception:
             # Don't block registration on a seed failure — init will retry.
             pass

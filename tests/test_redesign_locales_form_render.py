@@ -293,12 +293,14 @@ def _ew(start, end, override_type, **kw):
     import types as _types
     from datetime import date as _date
     return _types.SimpleNamespace(
+        id=kw.get('id', 1),
         start_date=_date.fromisoformat(start),
         end_date=_date.fromisoformat(end),
         override_type=override_type,
         unavailable_locale=kw.get('unavailable_locale'),
         away_locale=kw.get('away_locale'),
         brought_craft=kw.get('brought_craft', ()),
+        volume_pct=kw.get('volume_pct'),
         notes=kw.get('notes', ''),
     )
 
@@ -388,3 +390,40 @@ def test_event_window_draft_stash_is_consumed_once():
         assert draft['notes'] == 'work travel'      # stripped
         # Consumed once — a second pop in the same session returns nothing.
         assert _pop_event_window_draft() is None
+
+
+# ─── Slice 6b (#593) — volume / in-transit window capture ────────────────────
+
+
+def test_event_windows_form_offers_volume_types_and_percent():
+    """The add-window form offers the two volume constraint types + the
+    reduced-volume percent control (Slice 6b)."""
+    html = _render('profile/event_windows.html',
+                   windows=[], locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away',
+                                   'reduced_volume', 'no_training'),
+                   craft_catalog={}, return_to=None, return_to_label=None,
+                   draft=None)
+    assert 'value="reduced_volume"' in html
+    assert 'value="no_training"' in html
+    assert 'name="volume_pct"' in html
+    assert '50% — half day' in html
+    assert 'style="' not in html and 'onclick=' not in html  # strict CSP
+
+
+def test_event_windows_list_renders_volume_labels():
+    """Saved volume windows render readable labels (with the percent for
+    reduced_volume) in the list table."""
+    html = _render('profile/event_windows.html',
+                   windows=[
+                       _ew('2026-07-03', '2026-07-03', 'reduced_volume',
+                           volume_pct=0.5),
+                       _ew('2026-07-10', '2026-07-11', 'no_training'),
+                   ],
+                   locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away',
+                                   'reduced_volume', 'no_training'),
+                   craft_catalog={}, return_to=None, return_to_label=None,
+                   draft=None)
+    assert 'Reduced volume' in html and '50%' in html
+    assert 'No training' in html

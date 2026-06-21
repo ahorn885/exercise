@@ -226,15 +226,19 @@ DO NOTHING`, `ON CONFLICT(...) DO UPDATE SET ...`.
 1. **Schema** — execute `PG_SCHEMA` (everything wrapped in
    `IF NOT EXISTS`, so re-running is a no-op).
 2. **Migrations** — run `_PG_MIGRATIONS` in order.
-3. **Catalog seeds** — populate `exercise_inventory`, `equipment_items`,
-   `exercise_equipment`, `training_modalities`, `training_methods` from
-   the Python lists at the top of `init_db.py`. Seeders are
-   UPSERT-on-unique-key, so editing the lists propagates on next cold
-   start without disturbing user data.
-4. **Per-user `current_rx` seed** — `_seed_current_rx_for_user(user_id)`
-   ensures every user's `current_rx` table has a baseline row for every
-   exercise in `exercise_inventory`. Called from `auth.register` for new
-   users; called for user 1 during init for existing installs.
+3. **Catalog seeds** — populate `equipment_items`, `training_modalities`,
+   `training_methods` from the Python lists at the top of `init_db.py`.
+   Seeders are UPSERT-on-unique-key, so editing the lists propagates on next
+   cold start without disturbing user data. (The exercise catalog itself is
+   **not** seeded here — it lives in `layer0.exercises`, the single canonical
+   catalog; the retired v1 `exercise_inventory` / `exercise_equipment` seeds
+   were dropped in the catalog unification.)
+4. **Per-user `current_rx` seed** — `_seed_current_rx_for_user(user_id,
+   seed_rows)` gives every user a baseline "Needs initial setup" row for each
+   active strength exercise in the canonical `layer0` catalog
+   (`_layer0_strength_seed_rows`), de-duped by EX-id. Called from
+   `auth.register` for new users; called for user 1 during init for existing
+   installs.
 5. **Purchase recommendations seed** — UPSERT-on-`slug` from the
    `PURCHASE_RECOMMENDATIONS` Python list.
 
@@ -266,7 +270,6 @@ turned on whether a table is queried directly by id:
 | `plan_reviews` | `training_plans` | parent-JOIN |
 | `coaching_chat` | `training_plans` | denormalized `user_id` |
 | `locale_equipment` | `locale_profiles` | denormalized `user_id` (composite key) |
-| `exercise_equipment` | shared catalogs | unscoped (shared) |
 
 Tables queried by id (e.g. `plan_items` via `/plans/<plan_id>/items/<id>`)
 get a denormalized `user_id` so the scope check is a column comparison
@@ -461,9 +464,9 @@ Per-exercise rows within a session. The richest table — carries the
 prescription, the actuals, the computed outcome, and the projected next
 session.
 
-- Columns: `id`, `user_id`, `date`, `exercise` (TEXT — denormalized
-  from `exercise_inventory` for stability across catalog edits),
-  `exercise_id` (FK), `sub_group`, `recovery_cost`, `target_*`,
+- Columns: `id`, `user_id`, `date`, `exercise` (TEXT — the logged exercise
+  name, stable across catalog edits; the canonical key is the layer0 EX-id),
+  `sub_group`, `recovery_cost`, `target_*`,
   `actual_*`, `rpe`, `rest_sec`, `outcome`, `est_1rm`, `volume`,
   `body_weight`, `next_*`, `progression_level`, `notes`,
   `garmin_activity_id`, `plan_item_id`, `session_id`, `created_at`.
@@ -515,9 +518,11 @@ performance — the recipe the next session is projected from.
 - Writes: `rx_engine.apply_session_outcome()` (UPSERT scoped on
   `(user_id, exercise)`), `routes/rx.py` (manual edits + deload),
   `routes/natural_log.py` (NLP edits flow through `rx_engine`).
-- Seed: `init_db._seed_current_rx_for_user(user_id)` populates rows for
-  every catalog exercise on registration. Idempotent via the
-  composite UNIQUE.
+- Seed: `init_db._seed_current_rx_for_user(user_id, seed_rows)` populates a
+  "Needs initial setup" row for every active strength exercise in the canonical
+  `layer0` catalog on registration. Idempotent via the composite UNIQUE plus an
+  EX-id `NOT EXISTS` guard (no double-listing for users whose rows still carry
+  v1 short names).
 
 ### Cardio
 
@@ -624,10 +629,12 @@ Active and resolved injuries per user.
 
 Per-exercise overrides while an injury is active.
 
-- Columns: `id`, `injury_id` (FK), `exercise_id` (FK to
-  `exercise_inventory`), `substitute_exercise_id` (FK, optional —
-  swap target), `modification_type` (`modify` or `swap`),
-  `modification_notes`, `created_at`.
+- Columns: `id`, `injury_id` (FK), `exercise_ex_id` (TEXT — layer0 EX-id of
+  the affected exercise), `substitute_ex_id` (TEXT, optional — layer0 EX-id of
+  the swap target), `modification_type` (`modify` or `swap`),
+  `modification_notes`, `created_at`. (The legacy int `exercise_id` /
+  `substitute_exercise_id` FKs to `exercise_inventory` were dropped with that
+  table in the catalog unification; rows now key off the canonical layer0 EX-id.)
 - Scoping: parent-JOIN through `injury_log.user_id`. Routes that touch
   these rows always join: `injury_id IN (SELECT id FROM injury_log
   WHERE user_id = ?)`.
@@ -740,17 +747,13 @@ Shared catalog of equipment items (DB, KB, pull-up bar, kayak, etc.).
 - Seeded from `EQUIPMENT_CATEGORIES` Python list at the top of
   `init_db.py`. UPSERT-on-tag.
 
-#### `exercise_equipment`
+#### `exercise_equipment` *(retired — catalog unification)*
 
-Many-to-many between `exercise_inventory` and `equipment_items`.
-**Shared (no `user_id`).**
-
-- Columns: `exercise_id` (FK), `equipment_id` (FK), `option_group` (an
-  exercise can have alternative equipment options — same
-  `option_group` means "one of these is enough"; different groups mean
-  "you need at least one from each").
-- Used to derive: "exercises this purchase unlocks" on `/purchases/<id>`,
-  and "what exercises does this user's home setup support."
+The many-to-many between the v1 `exercise_inventory` and `equipment_items` was
+**dropped** when layer0 became the sole catalog. The exercise↔equipment relation
+now lives in `layer0.exercises.equipment_required`, and "exercises this purchase
+unlocks" on `/purchases` is derived from that canonical catalog via
+`equipment_tag_layer0` (the `equipment_items.tag` → layer0 token crosswalk).
 
 #### `locale_profiles`
 
@@ -785,7 +788,7 @@ edits to the seed list propagate without disturbing per-user state.
 
 - Columns: `id`, `slug` (UNIQUE), `label`, `equipment_id` (FK to
   `equipment_items` — lets "exercises this unlocks" be derived live
-  via `exercise_equipment`), `est_cost_low`, `est_cost_high`,
+  from the layer0 catalog via `equipment_tag_layer0`), `est_cost_low`, `est_cost_high`,
   `priority`, `rationale`, `sort_order`, `active`.
 - Seeded from `PURCHASE_RECOMMENDATIONS` in `init_db.py` on every cold
   start.
@@ -926,21 +929,17 @@ These tables have **no `user_id`** column. Edits propagate to all users.
 Seeded from Python lists in `init_db.py` on cold start (UPSERT on
 unique key).
 
-#### `exercise_inventory`
+#### `exercise_inventory` *(retired — catalog unification)*
 
-Master exercise list. Every exercise referenced in `current_rx`,
-`training_log`, or anywhere else points back here via `exercise_id`
-or by name.
+The v1 master exercise list was **dropped** when `layer0.exercises` became the
+single canonical catalog. Per-user tables (`current_rx`, `training_log`,
+`injury_exercise_modifications`) now key off the layer0 EX-id (`TEXT`), and
+display reads come from layer0 via `layer0_catalog.strength_catalog`.
 
-- Columns: `id`, `exercise` (UNIQUE), `type`, `discipline`,
-  `equipment`, `muscles_worked`, `skills_ar_carryover`,
-  `where_available`, `source`, `suggested_volume`,
-  `substitution_group`, `recovery_cost`, `movement_pattern`,
-  `session_placement`, `form_cue`, `video_reference`,
-  `weight_increment`.
-- Adding a new exercise: append to `EXERCISE_INVENTORY` in `init_db.py`,
-  cold start, then `_seed_current_rx_for_user` will add a baseline row
-  per user on next bootstrap.
+- Adding a new exercise: add it to the layer0 catalog through an
+  `etl/migrations/layer0/` migration (governed by the Layer 0 integrity gate).
+  The `current_rx` bootstrap (`_layer0_strength_seed_rows` →
+  `_seed_current_rx_for_user`) then picks it up on next cold start.
 
 #### `training_modalities`
 
@@ -970,7 +969,6 @@ that touches X, look here."
 | `users` | `auth`, `profile`, `admin` | — |
 | `password_resets` | `auth` | — |
 | `athlete_profile` | `profile`, `admin` (via cascade) | `athlete.py`, `coaching.py:get_coaching_context` |
-| `exercise_inventory` | `injuries`, `natural_log`, `references`, `rx`, `training` | `rx_engine.py` |
 | `training_sessions` | `garmin`, `natural_log`, `training`, `admin` | — |
 | `training_log` | `dashboard`, `garmin`, `natural_log`, `training`, `admin` | `coaching.py`, `rx_engine.py` |
 | `training_log_sets` | `garmin`, `natural_log`, `training`, `admin` | — |
@@ -990,7 +988,6 @@ that touches X, look here."
 | `coaching_preferences` | `coaching`, `profile`, `admin` | `coaching.py` |
 | `feedback_log` | `profile`, `admin` | `coaching.py` |
 | `equipment_items` | `locales`, `purchases`, `references` | — |
-| `exercise_equipment` | `purchases`, `references` | — |
 | `locale_profiles` | `coaching`, `dashboard`, `locales`, `plans`, `references`, `rx` | `coaching.py` |
 | `locale_equipment` | `locales`, `purchases`, `references`, `admin` | `coaching.py` |
 | `purchase_recommendations` | `purchases` | — |
@@ -1270,9 +1267,9 @@ back to the tables it touches.
    is left NULL today; reserved for any payload future actions want
    to record. The audit row is intentionally **not** in the cascade
    chain so it survives target deletion.
-5. Shared catalogs (`exercise_inventory`, `equipment_items`,
-   `purchase_recommendations`, `training_modalities`, `training_methods`,
-   `exercise_equipment`) untouched.
+5. Shared catalogs (`equipment_items`, `purchase_recommendations`,
+   `training_modalities`, `training_methods`) and the canonical `layer0`
+   exercise catalog untouched.
 6. Commit; success flash. The deleted user's session cookie, if it
    still existed, gets cleared on the next request by
    `_require_login`'s hydration check.

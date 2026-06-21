@@ -331,20 +331,18 @@ def apply_session_outcome(db, exercise, date, sets,
              rx_source, exercise, user_id)
         )
     else:
-        # The denormalized discipline/type/inventory_sugg_volume columns are
-        # vestigial (dropped in the table-drop slice) — no longer sourced from
-        # the retired v1 catalog. Display reads off the layer0 EX-id now.
-        discipline = ex_type = sugg_vol = None
+        # The denormalized discipline/type/inventory_sugg_volume columns are gone
+        # (catalog unification, Slice C) — display reads off the layer0 EX-id now.
         db.execute(
             '''INSERT INTO current_rx
-                 (exercise, layer0_exercise_id, discipline, type, movement_pattern,
-                  inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
+                 (exercise, layer0_exercise_id, movement_pattern,
+                  current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
                   next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (exercise, layer0_exercise_id, discipline, ex_type, movement_pattern,
-             sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (exercise, layer0_exercise_id, movement_pattern,
+             new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source, user_id)

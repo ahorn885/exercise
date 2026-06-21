@@ -116,6 +116,19 @@ def _hub_context(db, uid, tab, **extra):
         ).fetchone()
         activity_count = ((cardio_n['n'] if cardio_n else 0) or 0) \
             + ((strength_n['n'] if strength_n else 0) or 0)
+    # Surface the OAuth round-trip outcome the provider callbacks append to the
+    # return_to URL (`?<slug>_connected=1` / `?<slug>_oauth_error=…`). Mirrors
+    # the onboarding Step-2 connect screen; without it a failed Wahoo/Strava/…
+    # handshake bounced the athlete back here to a hub that looked unchanged,
+    # giving no signal the attempt failed.
+    just_connected_label = None
+    oauth_error_label = None
+    for p in oauth_providers:
+        slug = p['slug']
+        if just_connected_label is None and request.args.get(f'{slug}_connected') == '1':
+            just_connected_label = p['label']
+        if oauth_error_label is None and request.args.get(f'{slug}_oauth_error'):
+            oauth_error_label = p['label']
     ctx = dict(
         tab=tab,
         oauth_providers=oauth_providers,
@@ -126,6 +139,8 @@ def _hub_context(db, uid, tab, **extra):
         provider_total=len(oauth_providers) + len(STUB_PROVIDERS) + 1,
         recent_activities=recent_activities,
         activity_count=activity_count,
+        just_connected_label=just_connected_label,
+        oauth_error_label=oauth_error_label,
     )
     ctx.update(extra)
     return ctx
