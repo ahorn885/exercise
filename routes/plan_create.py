@@ -83,6 +83,7 @@ from plan_sessions_repo import (
 )
 from race_events_repo import load_target_race_event_payload
 from plan_naming import target_race_name, generated_plan_name
+from plan_notifications import notify_plan_terminal
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from plan_conditions_repo import load_plan_conditions_by_version
@@ -505,6 +506,14 @@ def _mark_plan_failed(
             f"_mark_plan_failed: refresh failure-log write skipped for "
             f"plan_version_id={plan_version_id} (non-fatal): {_rl_exc}"
         )
+    # #259/#260 — plan-failed email + in-app dashboard badge, ONCE across the
+    # poller/cron race (atomic claim on `notified_at` inside the helper). The
+    # failure is already committed above; the helper swallows every fault so a
+    # notification problem can't turn this failure path back into a 500.
+    notify_plan_terminal(
+        db, user_id, plan_version_id,
+        {'generation_status': 'failed', 'generation_error': message},
+    )
     return {"status": "failed", "error": message}
 
 
@@ -672,6 +681,14 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             (plan_version_id, uid),
         )
         db.commit()
+        # #259/#260 — fire the plan-ready email + arm the in-app dashboard badge
+        # ONCE across the poller/cron race (atomic claim on `notified_at` inside
+        # the helper). Runs AFTER the row is durable + `ready`; the helper
+        # swallows every fault so a notification problem can't break generation.
+        notify_plan_terminal(
+            db, uid, plan_version_id,
+            {**plan_version, 'generation_status': 'ready'},
+        )
         if is_refresh:
             # #208 — record the successful refresh (diff vs parent + attribution)
             # in the refresh log, mirroring the synchronous route's success path.
@@ -1155,6 +1172,19 @@ def unarchive_plan(plan_version_id: int):
     db.commit()
     flash("Plan restored.", 'success')
     return redirect(url_for('plans.list_plans'))
+
+
+@bp.route('/<int:plan_version_id>/notification/dismiss', methods=['POST'])
+def dismiss_notification(plan_version_id: int):
+    """Dismiss the in-app plan-ready/plan-failed dashboard badge (#259/#260) by
+    stamping `notification_seen_at`. Scoped to `(id, user_id)` so a crafted POST
+    for another athlete's plan is a no-op. Redirects back to the referrer (the
+    badge renders on the dashboard) with a dashboard fallback."""
+    from plan_notifications import mark_plan_notification_seen
+    db = get_db()
+    uid = current_user_id()
+    mark_plan_notification_seen(db, uid, plan_version_id)
+    return redirect(request.referrer or url_for('dashboard.index'))
 
 
 @bp.route('/<int:plan_version_id>/delete', methods=['POST'])

@@ -2533,6 +2533,28 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS notes",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coaching_voice_preferences",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS previous_coaching",
+    # Plan-lifecycle notifications (#259/#260) — email + in-app badge when plan
+    # generation reaches a terminal status (`ready`/`failed`) in
+    # `_advance_plan_generation`. Both the progress-screen poller AND the
+    # every-minute cron drive that transition, so the notification is fired
+    # under an ATOMIC claim on `notified_at`: the first writer to flip it from
+    # NULL to NOW() wins and sends the one email; a racing second pass matches 0
+    # rows and no-ops. This is the double-send guard the issue calls for — keyed
+    # on the row, not a per-process flag, so it holds across the poller/cron
+    # race. `notification_seen_at` is the in-app dismissal stamp: the dashboard
+    # badge shows rows with `notified_at` set AND `notification_seen_at` NULL, so
+    # gating on `notified_at IS NOT NULL` keeps legacy `ready`-by-default rows
+    # (which never went through the notification path) from suddenly badging.
+    # Both nullable; the claim/read SQL (plan_notifications.py) tolerates their
+    # absence so the code is deploy-safe even before this column lands.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ",
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS notification_seen_at TIMESTAMPTZ",
+    # Partial index backing the dashboard badge read (the unseen-notification
+    # SELECT is user-scoped + filtered to the small set of fired-but-unseen
+    # rows); keeps the per-render context cost negligible like `active_nudges`.
+    "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
+    "ON plan_versions (user_id) "
+    "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
 ]
 
 _CLOTHING_SEEDS = [
