@@ -251,6 +251,16 @@ def index():
 
     has_plan_version = _has_plan_version(db, uid)
 
+    # #259/#260 — in-app plan-ready/plan-failed badge. Best-effort: any read
+    # fault degrades to an empty list so the dashboard renders rather than 500s
+    # (mirrors the `active_nudges` context processor in app.py).
+    try:
+        from plan_notifications import get_unseen_plan_notifications
+        plan_notifications = get_unseen_plan_notifications(db, uid)
+    except Exception as e:  # noqa: BLE001 — badge must never break the dashboard
+        print(f'dashboard: get_unseen_plan_notifications failed: {e}')
+        plan_notifications = []
+
     supplement_summary = _supplement_summary(db, uid, today_v2, today_d)
 
     weather = _get_weather(db)
@@ -291,4 +301,5 @@ def index():
                            clothing_recs=clothing_recs,
                            unconditioned_cardio=unconditioned_cardio,
                            supplement_summary=supplement_summary,
+                           plan_notifications=plan_notifications,
                            has_plan_version=has_plan_version)

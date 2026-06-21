@@ -105,6 +105,48 @@ def persist_race_week_brief_result(db: Any, payload: Layer4Payload) -> None:
         )
 
 
+def write_race_week_brief_log(
+    db: Any,
+    *,
+    user_id: int,
+    plan_version_id: int | None,
+    days_to_event: int | None,
+    duration_ms: int | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    llm_call_count: int | None,
+    success: bool,
+    failure_reason: str | None,
+) -> None:
+    """INSERT one `race_week_brief_log` row for a generation attempt (#732
+    slice 4).
+
+    Written for BOTH outcomes: a success row carries the per-attempt cost
+    telemetry from the returned `Layer4Payload`; a failure row carries
+    `success=FALSE` + `failure_reason` with the telemetry columns NULL (no
+    payload was produced). Caller owns the transaction boundary — this helper
+    does NOT commit.
+    """
+    db.execute(
+        """INSERT INTO race_week_brief_log
+               (user_id, plan_version_id, days_to_event, duration_ms,
+                input_tokens, output_tokens, llm_call_count, success,
+                failure_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            plan_version_id,
+            days_to_event,
+            duration_ms,
+            input_tokens,
+            output_tokens,
+            llm_call_count,
+            success,
+            failure_reason,
+        ),
+    )
+
+
 def load_race_week_brief(
     db: Any, plan_version_id: int
 ) -> tuple[RaceWeekBrief, RacePlan | None] | None:

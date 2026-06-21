@@ -31,6 +31,7 @@ from race_week_brief_repo import (
     load_race_week_brief,
     persist_race_week_brief,
     persist_race_week_brief_result,
+    write_race_week_brief_log,
 )
 
 
@@ -199,6 +200,57 @@ class TestPersistRaceWeekBrief:
         assert params[3] == "continuous_multi_day"
         assert params[5] is not None
         assert json.loads(params[5])["race_name"] == "Test Expedition 2026"
+
+
+# ─── write_race_week_brief_log ──────────────────────────────────────────────
+
+
+class TestWriteRaceWeekBriefLog:
+    def test_success_row_carries_telemetry(self):
+        conn = _FakeConn()
+
+        write_race_week_brief_log(
+            conn,
+            user_id=_USER_ID,
+            plan_version_id=_PLAN_VERSION_ID,
+            days_to_event=7,
+            duration_ms=8200,
+            input_tokens=4500,
+            output_tokens=2500,
+            llm_call_count=1,
+            success=True,
+            failure_reason=None,
+        )
+
+        assert len(conn.calls) == 1
+        sql, params = conn.calls[0]
+        assert "INSERT INTO race_week_brief_log" in sql
+        # (user_id, plan_version_id, days_to_event, duration_ms, input_tokens,
+        #  output_tokens, llm_call_count, success, failure_reason)
+        assert params == (_USER_ID, _PLAN_VERSION_ID, 7, 8200, 4500, 2500, 1, True, None)
+        assert not conn.committed  # caller owns the txn
+
+    def test_failure_row_has_null_telemetry_and_reason(self):
+        conn = _FakeConn()
+
+        write_race_week_brief_log(
+            conn,
+            user_id=_USER_ID,
+            plan_version_id=None,
+            days_to_event=None,
+            duration_ms=None,
+            input_tokens=None,
+            output_tokens=None,
+            llm_call_count=None,
+            success=False,
+            failure_reason="no_active_plan",
+        )
+
+        _, params = conn.calls[0]
+        assert params[0] == _USER_ID
+        assert params[1] is None  # plan_version_id unknown on failure
+        assert params[7] is False  # success
+        assert params[8] == "no_active_plan"  # failure_reason
 
 
 # ─── load_race_week_brief ───────────────────────────────────────────────────

@@ -1,0 +1,38 @@
+{#
+  #826 — the always-visible "science behind your plan" panel. A reusable
+  partial so the same surface appears on the plan view, the race-week brief, and
+  the race-day plan (all key off the same `plan_version`). Pass `evidence` — the
+  list of source dicts from `evidence_repo.load_plan_evidence`. Renders nothing
+  when there is no evidence linked yet, so callers can include it unconditionally.
+
+  Each source carries `kind` (study | guideline | expert_coach), `title`,
+  `summary`, `citation`, and optional `url`. Citations are constrained to real,
+  curated sources upstream, so everything shown here is safe to surface.
+#}
+{% set _kind_labels = {'study': 'Study', 'guideline': 'Guideline', 'expert_coach': 'Expert coach'} %}
+{% if evidence %}
+<div class="card card-pad sec science-card">
+  <p class="eyebrow accent">● The science behind your plan</p>
+  <p class="rail-note">
+    Every plan we build rests on established training-science. Here's the
+    research and coaching methodology behind this one.
+  </p>
+  <ul class="science-list">
+    {% for src in evidence %}
+    <li class="science-item">
+      <div class="science-item-head">
+        <span class="chip">{{ _kind_labels.get(src.kind, src.kind) }}</span>
+        <span class="science-title">{{ src.title }}</span>
+      </div>
+      {% if src.summary %}<p class="science-summary">{{ src.summary }}</p>{% endif %}
+      {% if src.citation %}
+      <p class="science-cite">
+        {% if src.url %}<a href="{{ src.url }}" target="_blank" rel="noopener noreferrer">{{ src.citation }}</a>
+        {% else %}{{ src.citation }}{% endif %}
+      </p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}

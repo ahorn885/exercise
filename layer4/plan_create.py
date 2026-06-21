@@ -46,6 +46,7 @@ from layer4.hashing import (
     compute_block_cache_key,
     compute_seam_resynth_block_cache_key,
     compute_seam_review_cache_key,
+    compute_seam_review_iter2_cache_key,
     compute_week_seam_review_cache_key,
 )
 from layer4.payload import (
@@ -449,7 +450,10 @@ def _aggregate_block_results(
 #                  re-synth registers as progress and resumes instead of stalling
 #                  — no route SQL change needed.
 #   [1000, 2000) — iter-1 PHASE-seam-review cache rows (base + seam_idx).
-#   [2000, ...)  — iter-1 WEEK-seam-review cache rows (base + week_seam_idx),
+#   [2000, 3000) — iter-2 (re-synthesis-driven) PHASE-seam-review cache rows
+#                  (base + seam_idx). Like iter-1, kept >= _SEAM_CACHE_PHASE_IDX_BASE
+#                  so it stays OFF the [0, 1000) stall-backstop progress band.
+#   [3000, ...)  — iter-1 WEEK-seam-review cache rows (base + week_seam_idx),
 #                  the D-77 Slice 3 intra-phase reviewer. Disjoint from the
 #                  phase-seam rows; like them, NOT counted by the stall-backstop
 #                  progress counter (it counts [0, _SEAM_CACHE_PHASE_IDX_BASE)),
@@ -457,7 +461,8 @@ def _aggregate_block_results(
 _SEAM_RESYNTH_BLOCK_IDX_BASE = 500
 _SEAM_RESYNTH_BLOCK_IDX_STRIDE = 100
 _SEAM_CACHE_PHASE_IDX_BASE = 1000
-_WEEK_SEAM_CACHE_PHASE_IDX_BASE = 2000
+_SEAM_ITER2_CACHE_PHASE_IDX_BASE = 2000
+_WEEK_SEAM_CACHE_PHASE_IDX_BASE = 3000
 
 
 def _seam_resynth_block_phase_idx(seam_idx: int, week_in_phase: int) -> int:
@@ -1281,31 +1286,80 @@ def _run_pattern_a_engine(
             else carryover_sessions_by_phase_index.get(seam_idx + 1, [])
         )
 
-        call_2 = review_seam(
-            seam_index=seam_idx,
-            prior_phase_spec=prior_phase,
-            next_phase_spec=next_phase,
-            prior_phase_sessions=prior_sessions_iter2,
-            next_phase_sessions=next_sessions_iter2,
-            layer2a_payload=layer2a_payload,
-            layer2d_payload=layer2d_payload,
-            discipline_mix=discipline_mix,
-            mode=mode_str,
-            start_phase=start_phase_str,
-            race_format=race_format_str,
-            event_date=event_date,
-            seam_iteration=2,
-            prior_seam_issues=call_1.seam_issues,
-            model=model_seam_reviewer,
-            temperature=0.15,
-            max_tokens=seam_max_tokens,
-            extended_thinking_budget=seam_thinking_budget,
-            caller=seam_caller,
-        )
+        # §9.2 iter-2 seam cache: now that the seam-driven re-synth blocks above
+        # are themselves cached, the iter-2 review is a pure function of the
+        # re-synthesized session outputs + the iter-1 issues threaded into its
+        # prompt, so a resumed pass replays it from cache instead of re-firing
+        # the LLM call. Disjoint phase_idx band (>= _SEAM_ITER2_CACHE_PHASE_IDX_BASE)
+        # keeps it off the iter-1 rows; a hit contributes ZERO tokens/latency and
+        # does not count an LLM call (§9.6), mirroring iter-1.
+        iter2_cached = False
+        call_2: SeamReviewCallResult | None = None
+        iter2_cache_key: str | None = None
+        if seam_cache_enabled:
+            iter2_cache_key = compute_seam_review_iter2_cache_key(
+                call_cache_key=call_cache_key,  # type: ignore[arg-type]
+                seam_index=seam_idx,
+                prior_phase_sessions=prior_sessions_iter2,
+                next_phase_sessions=next_sessions_iter2,
+                prior_seam_issues=call_1.seam_issues,
+                seam_direction=direction,
+                model=model_seam_reviewer,
+                max_tokens=seam_max_tokens,
+                extended_thinking_budget=seam_thinking_budget,
+            )
+            entry2 = cache.backend.get(
+                iter2_cache_key, _SEAM_ITER2_CACHE_PHASE_IDX_BASE + seam_idx
+            )
+            if entry2 is not None:
+                cache.metrics.record_hit(cache_entry_point, is_phase=True)
+                call_2 = _hydrate_seam_call_result(json.loads(entry2.payload_json))
+                iter2_cached = True
+            else:
+                cache.metrics.record_miss(cache_entry_point, is_phase=True)
+
+        if call_2 is None:
+            call_2 = review_seam(
+                seam_index=seam_idx,
+                prior_phase_spec=prior_phase,
+                next_phase_spec=next_phase,
+                prior_phase_sessions=prior_sessions_iter2,
+                next_phase_sessions=next_sessions_iter2,
+                layer2a_payload=layer2a_payload,
+                layer2d_payload=layer2d_payload,
+                discipline_mix=discipline_mix,
+                mode=mode_str,
+                start_phase=start_phase_str,
+                race_format=race_format_str,
+                event_date=event_date,
+                seam_iteration=2,
+                prior_seam_issues=call_1.seam_issues,
+                model=model_seam_reviewer,
+                temperature=0.15,
+                max_tokens=seam_max_tokens,
+                extended_thinking_budget=seam_thinking_budget,
+                caller=seam_caller,
+            )
+            if seam_cache_enabled and iter2_cache_key is not None:
+                cache.backend.put(
+                    cache_key=iter2_cache_key,
+                    phase_idx=_SEAM_ITER2_CACHE_PHASE_IDX_BASE + seam_idx,
+                    user_id=user_id,
+                    entry_point=cache_entry_point,
+                    phase_name=f"__seam_iter2_{seam_idx}__",
+                    payload_json=json.dumps(
+                        _serialize_seam_call_result(call_2),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+
         total_input_tokens += call_2.input_tokens
         total_output_tokens += call_2.output_tokens
         total_latency_ms += call_2.latency_ms
-        llm_call_count += 1
+        # A cache hit fired no LLM call (§9.6); only a fresh iter-2 call counts.
+        if not iter2_cached:
+            llm_call_count += 1
 
         # Per-seam cap = 2; if iteration 2 still flags, emit
         # seam_unresolved. Otherwise the record is the final verdict.
