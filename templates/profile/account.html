@@ -27,17 +27,25 @@
       <dt>Display name</dt><dd>{{ user_row.display_name or '—' }}</dd>
       <dt>Email</dt>
       <dd>
-        {{ user_row.email or '—' }}
-        {% if user_row.email %}
-          {% if user_row.email_verified %}
-            <span class="chip good">✓ Confirmed</span>
-          {% else %}
-            <span class="chip">Unconfirmed</span>
-            <form method="post" action="{{ url_for('auth.resend_verification') }}" class="acct-verify-resend">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-ghost btn-sm">Send confirmation link</button>
-            </form>
+        <form method="post" action="{{ url_for('profile.change_email') }}" class="acct-email-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="email" name="email" value="{{ user_row.email or '' }}"
+                 placeholder="you@example.com" autocomplete="email"
+                 class="form-control form-control-sm">
+          <button type="submit" class="btn btn-ghost btn-sm">Save email</button>
+          {% if user_row.email %}
+            {% if user_row.email_verified %}
+              <span class="chip good">✓ Confirmed</span>
+            {% else %}
+              <span class="chip">Unconfirmed</span>
+            {% endif %}
           {% endif %}
+        </form>
+        {% if user_row.email and not user_row.email_verified %}
+          <form method="post" action="{{ url_for('auth.resend_verification') }}" class="acct-verify-resend">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Send confirmation link</button>
+          </form>
         {% endif %}
       </dd>
       <dt>Last login</dt><dd class="mono dim">{{ user_row.last_login or '—' }}</dd>

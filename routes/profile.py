@@ -23,7 +23,7 @@ from database import get_db
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
     current_user_id, _hash_password, _check_password, _password_strength_errors,
-    generate_api_token,
+    generate_api_token, send_verification_email,
 )
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
@@ -1156,6 +1156,52 @@ def change_password():
     )
     db.commit()
     flash('Password changed.', 'success')
+    return redirect(url_for('profile.account_settings'))
+
+
+@bp.route('/email', methods=['POST'])
+def change_email():
+    """Add / change / clear the account email (#251). A new address lands
+    UNCONFIRMED and triggers a verification link; an athlete can also clear it
+    (sets NULL). Rejected if another account already uses the address — we
+    never attach the same email to two accounts (no-silent-merge, design #5).
+    """
+    db = get_db()
+    uid = current_user_id()
+    new_email = (request.form.get('email') or '').strip() or None
+    current = db.execute('SELECT email FROM users WHERE id=?', (uid,)).fetchone()
+    current_email = current['email'] if current else None
+
+    if (new_email or '').lower() == (current_email or '').lower():
+        flash('That\'s already your email.', 'info')
+        return redirect(url_for('profile.account_settings'))
+
+    if new_email:
+        if '@' not in new_email or '.' not in new_email.split('@')[-1]:
+            flash('Enter a valid email address.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+        taken = db.execute(
+            'SELECT 1 FROM users WHERE LOWER(email) = LOWER(?) AND id <> ?',
+            (new_email, uid),
+        ).fetchone()
+        if taken:
+            flash('That email is already registered to another account.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+
+    # A changed address is unverified until confirmed; clearing it resets the
+    # flag too (no email = nothing to be verified).
+    db.execute('UPDATE users SET email=?, email_verified=FALSE WHERE id=?',
+               (new_email, uid))
+    db.commit()
+
+    if new_email:
+        try:
+            send_verification_email(db, uid, new_email)
+        except Exception:
+            pass
+        flash(f'Email updated to {new_email}. Check your inbox to confirm it.', 'success')
+    else:
+        flash('Email removed.', 'info')
     return redirect(url_for('profile.account_settings'))
 
 
