@@ -269,6 +269,22 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 
 ## 13. Open items / forward references
 
+> **Build status — Slice 2 (#214, 2026-06-21).** Both feasibility detectors are
+> built (`layer3d/gate.py`): `detect_injury_pool_empty` (§5.2 blocker) +
+> `detect_schedule_volume_under_target` (§5.3 warning), wired into
+> `evaluate_layer3d_gate`. Two implementation notes against this design text:
+> (1) §5.2 checks the pool Layer 4 actually synthesizes from
+> (`per_phase.compute_feasible_pool_ids` — resolved strength-type exercises minus
+> tier-0 minus 2D exclusions), not the raw 2C `effective_pool` named here, so the
+> gate's verdict matches what synthesis can build; it fires plan-globally (the
+> pool isn't phase-scoped and Layer 4 prescribes strength every phase) when
+> injuries drop a viable pool (≥3) below the floor. (2) The §5.2 **"only cardio
+> modality banned"** sub-case is **deferred** — the 2D payload has no
+> per-discipline modality-ban signal (`DisciplineRisk` is a risk grade + suggested
+> substitutes, never an "untrainable" verdict), so it needs a 2D schema field
+> rather than a heuristic; tracked as a follow-up. The Layer 4 defensive raise
+> (`per_phase.assert_strength_pool_feasible` → `Layer4ShapeInfeasibleError`) is built.
+
 - **3C cross-node conflict detection (next slice).** The query/rules node that compares the five 2A–2E payloads against each other (e.g. discipline included in 2A × no equipment in 2C × no injury in 2D → "included without supporting equipment"). Not built. When it lands it becomes one more `map_3c_items()` source feeding §5 step 3 — no aggregator contract change. Tracked as its own issue under epic #211.
 - **Normalized `plan_hitl_items` table** — v2, if per-item querying/analytics is needed. v1 uses the JSONB column (§10).
 - **Revise-cascade wiring depth** — v1 routes the athlete to the Layer 1 edit surface and leans on the existing invalidation cascade; the exact re-run scope per item source is implementation-slice detail (named, not fully spec'd here).

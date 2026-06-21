@@ -11,7 +11,7 @@ function (§3).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -19,6 +19,8 @@ from layer3d.gate import (
     GateResolution,
     Layer3DGateError,
     compute_gate_status,
+    detect_injury_pool_empty,
+    detect_schedule_volume_under_target,
     evaluate_layer3d_gate,
     make_item_key,
     map_2a_items,
@@ -29,6 +31,7 @@ from layer3d.gate import (
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
+    ExerciseRisk,
     GoalViability,
     Layer2ADiscipline,
     Layer2APayload,
@@ -43,6 +46,7 @@ from layer4.context import (
     PeriodizationShape,
     PhaseLoadBands,
     RationaleMetadata,
+    ResolvedExercise,
     SupplementIntegrationPayload,
     TrainingGapsSummary,
     UnresolvedFlag,
@@ -554,3 +558,234 @@ def test_hitl_required_with_no_items_does_not_fabricate(caplog):
     assert gate.gate_status == "green"
     assert gate.items == []
     assert any("2D hitl_required=True" in r.message for r in caplog.records)
+
+
+# ─── §5.2 / §5.3 feasibility detectors (#214, Slice 2) ───────────────────────
+
+
+def _resolved(ex_id: str, *, exercise_type: str = "strength", tier: int = 1) -> ResolvedExercise:
+    return ResolvedExercise(
+        exercise_id=ex_id,
+        exercise_name=ex_id,
+        exercise_type=exercise_type,
+        discipline_ids=["D-trail"],
+        sport_relevance_notes={},
+        priority_per_discipline={},
+        tier=tier,  # type: ignore[arg-type]
+        terrain_required=[],
+        contraindicated_parts=[],
+        contraindicated_conditions=[],
+        accommodations=[],
+    )
+
+
+def _l2c_pool(ex_ids: list[str], *, exercise_type: str = "strength") -> Layer2CPayload:
+    return Layer2CPayload(
+        locale_id="home",
+        etl_version_set=dict(_EVS),
+        effective_pool=list(ex_ids),
+        discipline_coverage=[],
+        exercises_resolved=[_resolved(e, exercise_type=exercise_type) for e in ex_ids],
+        coaching_flags=[],
+    )
+
+
+def _excluded(ex_id: str) -> ExerciseRisk:
+    return ExerciseRisk(
+        exercise_id=ex_id,
+        exercise_name=ex_id,
+        discipline_ids=["D-trail"],
+        verdict="exclude",
+        accommodations=[],
+        evidence=[],
+    )
+
+
+def _l2d_excl(excluded_ids: list[str]) -> Layer2DPayload:
+    return Layer2DPayload(
+        etl_version_set=dict(_EVS),
+        excluded_exercises=[_excluded(e) for e in excluded_ids],
+        accommodated_exercises=[],
+        clean_exercise_ids=[],
+        discipline_risk_profiles=[],
+        coaching_flags=[],
+        hitl_required=False,
+        hitl_items=[],
+    )
+
+
+def _layer1_avail(*, n_days: int = 4, day_minutes: int = 60, weekly_hours_target=None) -> dict:
+    return {
+        "daily_availability_windows": [
+            {"enabled": True, "window_duration": day_minutes, "second_window_duration": None}
+            for _ in range(n_days)
+        ],
+        "identity": {"weekly_hours_target": weekly_hours_target},
+    }
+
+
+_PHASE_TOTALS = {
+    "Base": (10.0, 14.0),
+    "Build": (12.0, 16.0),
+    "Peak": (13.0, 17.0),
+    "Taper": (6.0, 9.0),
+}
+
+
+def _l2a_with_totals() -> Layer2APayload:
+    return _layer2a(disciplines=[_discipline()]).model_copy(
+        update={"weekly_total_hours_by_phase": dict(_PHASE_TOTALS)}
+    )
+
+
+def _phase_structure():
+    from layer4.phase_structure import phase_structure_from_3b
+
+    return phase_structure_from_3b(_layer3b(), date(2026, 6, 1), total_weeks=12)
+
+
+# §5.2 — injury-empties-the-pool blocker
+
+
+def test_injury_pool_blocks_when_injury_empties_a_viable_pool():
+    # 4 strength exercises pre-injury (viable); 2D excludes 2 → 2 usable (< 3).
+    l2c = {"home": _l2c_pool(["EX1", "EX2", "EX3", "EX4"])}
+    items = detect_injury_pool_empty(l2c, _l2d_excl(["EX1", "EX2"]))
+    assert len(items) == 1
+    it = items[0]
+    assert it.severity == "blocker"
+    assert it.source == "3D_feasibility"
+    assert it.source_item_id == "injury_pool_empty"
+    assert it.can_acknowledge is False
+    assert it.revise_target == "profile.injuries"
+    assert it.evidence["usable_strength_count"] == 2
+    assert it.evidence["pre_injury_strength_count"] == 4
+    assert it.evidence["floor"] == 3
+    assert set(it.evidence["excluded_exercise_ids"]) == {"EX1", "EX2"}
+
+
+def test_injury_pool_ok_when_enough_remain():
+    l2c = {"home": _l2c_pool(["EX1", "EX2", "EX3", "EX4"])}
+    assert detect_injury_pool_empty(l2c, _l2d_excl(["EX1"])) == []  # 3 left == floor
+
+
+def test_injury_pool_no_block_when_pool_never_viable():
+    # Only 2 strength exercises even before injuries → sport/equipment limit,
+    # not an injury emptying → out of #214 scope (no blocker).
+    l2c = {"home": _l2c_pool(["EX1", "EX2"])}
+    assert detect_injury_pool_empty(l2c, _l2d_excl(["EX1"])) == []
+
+
+def test_injury_pool_ignores_non_strength_and_tier0_rows():
+    # A cardio row + a tier-0 (equipment-infeasible) row don't count toward the
+    # strength pool, so excluding 2 of the 4 *strength* rows still empties it.
+    l2c = {
+        "home": Layer2CPayload(
+            locale_id="home",
+            etl_version_set=dict(_EVS),
+            effective_pool=["S1", "S2", "S3", "S4", "C1", "T0"],
+            discipline_coverage=[],
+            exercises_resolved=[
+                _resolved("S1"), _resolved("S2"), _resolved("S3"), _resolved("S4"),
+                _resolved("C1", exercise_type="aerobic / endurance"),
+                _resolved("T0", tier=0),
+            ],
+            coaching_flags=[],
+        )
+    }
+    items = detect_injury_pool_empty(l2c, _l2d_excl(["S1", "S2"]))
+    assert len(items) == 1
+    assert items[0].evidence["usable_strength_count"] == 2  # S3, S4 only
+
+
+# §5.3 — schedule-volume-under-target warning
+
+
+def test_schedule_volume_warns_for_worst_phase():
+    ps = _phase_structure()
+    phases_in_plan = {p.phase_name for p in ps.phases}
+    item = detect_schedule_volume_under_target(
+        ps, _l2a_with_totals(), _layer1_avail(n_days=4, day_minutes=60)
+    )  # 4 h/wk available; every phase low (10/12/13/6) is above it
+    assert item is not None
+    assert item.severity == "warning"
+    assert item.source_item_id == "schedule_volume_under_target"
+    assert item.can_acknowledge is True
+    assert item.revise_target == "profile.availability"
+    assert item.evidence["available_hours"] == 4.0
+    assert item.evidence["worst_phase"] == "Peak"  # largest shortfall (13 - 4)
+    # Every phase the allocation actually produced is under the 4 h/wk schedule.
+    flagged = {p["phase"] for p in item.evidence["phases_under_target"]}
+    assert flagged == phases_in_plan
+
+
+def test_schedule_volume_ok_when_capacity_meets_target():
+    item = detect_schedule_volume_under_target(
+        _phase_structure(), _l2a_with_totals(), _layer1_avail(n_days=7, day_minutes=120)
+    )  # 14 h/wk available ≥ every phase low
+    assert item is None
+
+
+def test_schedule_volume_none_without_availability():
+    assert detect_schedule_volume_under_target(_phase_structure(), _l2a_with_totals(), {}) is None
+
+
+# Integration through evaluate_layer3d_gate
+
+
+def test_gate_blocked_on_injury_pool_empty():
+    gate = _evaluate(
+        layer2c_payloads={"home": _l2c_pool(["EX1", "EX2", "EX3", "EX4"])},
+        layer2d_payload=_l2d_excl(["EX1", "EX2", "EX3"]),  # 1 left < 3
+    )
+    assert gate.gate_status == "blocked"
+    assert any(it.source_item_id == "injury_pool_empty" for it in gate.items)
+
+
+def test_gate_needs_review_then_green_on_schedule_acknowledge():
+    common = dict(
+        layer2a_payload=_l2a_with_totals(),
+        layer1_payload=_layer1_avail(n_days=4, day_minutes=60),
+        plan_start_date=date(2026, 6, 1),
+        total_weeks=12,
+    )
+    gate = _evaluate(**common)
+    assert gate.gate_status == "needs_review"
+    warns = [it for it in gate.items if it.source_item_id == "schedule_volume_under_target"]
+    assert len(warns) == 1
+    res = {
+        warns[0].item_key: GateResolution(
+            kind="acknowledged", resolved_at=datetime(2026, 6, 2, 9, 0, 0)
+        )
+    }
+    gate2 = _evaluate(**common, prior_resolutions=res)
+    assert gate2.gate_status == "green"
+
+
+# §10.2 Layer 4 defensive raise (layer4.per_phase.assert_strength_pool_feasible)
+
+
+def test_defensive_raise_fires_on_injury_emptied_pool():
+    from layer4.errors import Layer4ShapeInfeasibleError
+    from layer4.per_phase import assert_strength_pool_feasible
+
+    l2c = {"home": _l2c_pool(["EX1", "EX2", "EX3", "EX4"])}
+    with pytest.raises(Layer4ShapeInfeasibleError) as exc:
+        assert_strength_pool_feasible(l2c, _l2d_excl(["EX1", "EX2"]), "Base")
+    assert exc.value.code == "cumulative_load_injury_infeasible"
+    assert exc.value.evidence["phase_name"] == "Base"
+    assert exc.value.evidence["usable_strength_count"] == 2
+
+
+def test_defensive_raise_silent_when_pool_feasible():
+    from layer4.per_phase import assert_strength_pool_feasible
+
+    l2c = {"home": _l2c_pool(["EX1", "EX2", "EX3", "EX4"])}
+    assert assert_strength_pool_feasible(l2c, _l2d_excl(["EX1"]), "Base") is None
+
+
+def test_defensive_raise_silent_when_pool_never_viable():
+    from layer4.per_phase import assert_strength_pool_feasible
+
+    l2c = {"home": _l2c_pool(["EX1", "EX2"])}  # < floor pre-injury → not this blocker
+    assert assert_strength_pool_feasible(l2c, _l2d_excl(["EX1"]), "Base") is None

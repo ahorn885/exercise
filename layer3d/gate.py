@@ -6,15 +6,19 @@ nodes already emit (and that were, until now, produced and silently discarded)
 into one typed `GateItem` list, applies the athlete's prior acknowledge/revise
 resolutions, and computes a `gate_status` that gates Layer 4 synthesis.
 
-**Slice 1 (this module).** Aggregation of the already-emitted upstream items
-(2A `prompt_required` / `unresolved_flags`, 2D `hitl_items`, 2E `hitl_items` +
+**Slice 1.** Aggregation of the already-emitted upstream items (2A
+`prompt_required` / `unresolved_flags`, 2D `hitl_items`, 2E `hitl_items` +
 `supplement_integration.contraindication_hitl_items`, 3B `hitl_surface`) +
 severity normalization (§5.1) + the resolution/status rules (§6.3) + the
-gate-status computation (§5 step 6). The two pre-synthesis feasibility detectors
-(§5.2 injury-empties-the-pool blocker; §5.3 schedule-volume-under-target
-warning) and the 3C source are deferred to later slices; the algorithm is
-written so they drop in at the marked call sites with no `Layer3DGate` /
-`GateItem` contract change (§13).
+gate-status computation (§5 step 6).
+
+**Slice 2 (#214).** The two pre-synthesis feasibility detectors:
+`detect_injury_pool_empty` (§5.2 — injury exclusions empty the strength pool →
+blocker) and `detect_schedule_volume_under_target` (§5.3 — available hours below
+the phase band → warning). Layer 4 keeps a defensive
+`Layer4ShapeInfeasibleError` raise (`layer4.per_phase.assert_strength_pool_feasible`)
+for the same injury condition. The §5.2 "only cardio modality banned" sub-case
+and the 3C source remain deferred (no contract change when they land — §13).
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -266,6 +270,147 @@ def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
     return items
 
 
+# ─── Feasibility detectors (§5.2 / §5.3) ─────────────────────────────────────
+
+# v1 strength-pool floor (Andy 2026-06-21): a workable strength session needs ≥3
+# distinct exercises; a post-exclusion pool below this can't fill one. Mirrors
+# `layer4.per_phase._STRENGTH_POOL_FLOOR` (the defensive-raise side) — keep synced.
+_STRENGTH_POOL_FLOOR = 3
+
+
+def detect_injury_pool_empty(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+    *,
+    floor: int = _STRENGTH_POOL_FLOOR,
+) -> list[GateItem]:
+    """§5.2 injury-empties-the-pool blocker — the one #214 detector that survives
+    as a hard stop. Strength is prescribed in every phase (Layer 4's
+    `_STRENGTH_SESSIONS_PER_WEEK` is Base/Build 2, Peak/Taper 1 — never 0), so
+    every plan needs a usable strength pool; there is no "this plan skips
+    strength" case in the implemented periodization, which is why this fires
+    plan-globally rather than per-phase.
+
+    The pool checked is `compute_feasible_pool_ids` — the resolved strength pool
+    Layer 4 actually synthesizes from (strength-type `exercises_resolved` across
+    locales, minus tier-0 infeasible, minus 2D exclusions) — NOT the raw 2C
+    `effective_pool` the spec names loosely, so the gate's verdict matches what
+    synthesis can build. The blocker fires only when 2D exclusions are what
+    emptied it: viable pre-injury (≥ floor), sub-floor after. A pool already
+    sub-floor pre-injury is a sport/equipment limit (the synthesizer reverts to a
+    free-string schema), not an injury — out of #214 scope.
+
+    The §5.2 "only cardio modality banned" sub-case is NOT implemented: the 2D
+    payload carries no per-discipline modality-ban signal (`DisciplineRisk` has a
+    risk *grade* + suggested substitutes, never an "untrainable" verdict), so
+    detecting it would need a new 2D field — tracked as a follow-up, not invented
+    from a fragile heuristic here.
+
+    `compute_feasible_pool_ids` is imported lazily so this pure query node doesn't
+    pull the synthesis package at import time (mirrors the orchestrator's lazy
+    gate import)."""
+    from layer4.per_phase import compute_feasible_pool_ids
+
+    pool_after = set(compute_feasible_pool_ids(layer2c_payloads, layer2d_payload))
+    if len(pool_after) >= floor:
+        return []
+    pool_before = set(compute_feasible_pool_ids(layer2c_payloads, None))
+    if len(pool_before) < floor:
+        return []  # never viable pre-injury → not an injury emptying (out of scope)
+    emptying_ids = sorted(pool_before - pool_after)
+    return [
+        GateItem(
+            item_key=make_item_key("3D_feasibility", "injury_pool_empty", "strength_pool"),
+            source="3D_feasibility",
+            source_item_id="injury_pool_empty",
+            severity="blocker",
+            title="Injuries leave too few usable strength exercises",
+            message=(
+                f"After your injury exclusions, only {len(pool_after)} strength "
+                f"exercise(s) remain usable — a workable strength session needs at "
+                f"least {floor}. The plan can't build safe strength work from this "
+                f"pool. Relax an injury input or drop a discipline that forces the "
+                f"excluded movements."
+            ),
+            resolution_options=[],
+            revise_target="profile.injuries",
+            can_acknowledge=False,
+            evidence={
+                "usable_strength_count": len(pool_after),
+                "pre_injury_strength_count": len(pool_before),
+                "floor": floor,
+                "excluded_exercise_ids": emptying_ids,
+            },
+        )
+    ]
+
+
+def detect_schedule_volume_under_target(
+    phase_structure: Any,
+    layer2a_payload: Layer2APayload,
+    layer1_payload: dict[str, Any],
+) -> GateItem | None:
+    """§5.3 schedule-volume-under-target warning. Compares the athlete's bounded
+    available weekly hours (`weekly_capacity_hours` — Σ enabled §K windows, capped
+    by `weekly_hours_target`) against each phase's framework total LOW band
+    (`Layer2APayload.weekly_total_hours_by_phase[phase]` — the `(low, high)` the
+    block targets, exactly what the §5.3 message renders). Emits ONE warning for
+    the worst (largest-shortfall) phase; the rest ride `evidence` (§9: no
+    per-phase spam).
+
+    Never blocks, never raises — Layer 4 already clamps prescribed volume to
+    capacity (`phase_volume_bands_hours` `min(capacity, band)`), so the plan is
+    built to the hours the athlete has; the gate's only job is to make that trim
+    non-silent. `weekly_capacity_hours` is imported lazily (pure-node hygiene).
+
+    `phase_structure` is a `layer4.payload.PhaseStructure` (typed `Any` to keep
+    this query node free of a synthesis-side import)."""
+    from layer4.validator import weekly_capacity_hours
+
+    available = weekly_capacity_hours(layer1_payload)
+    if available is None:
+        return None  # no §K availability / hours target → nothing to compare
+    totals = layer2a_payload.weekly_total_hours_by_phase or {}
+    under: list[tuple[str, float, float]] = []
+    seen: set[str] = set()
+    for ph in phase_structure.phases:
+        if ph.phase_name in seen:
+            continue
+        band = totals.get(ph.phase_name)
+        if not band:
+            continue
+        low, high = float(band[0]), float(band[1])
+        if available < low:
+            under.append((ph.phase_name, low, high))
+            seen.add(ph.phase_name)
+    if not under:
+        return None
+    worst_phase, worst_low, worst_high = max(under, key=lambda t: t[1] - available)
+    return GateItem(
+        item_key=make_item_key("3D_feasibility", "schedule_volume_under_target", "schedule"),
+        source="3D_feasibility",
+        source_item_id="schedule_volume_under_target",
+        severity="warning",
+        title="Your schedule is below the plan's target hours",
+        message=(
+            f"Your schedule gives about {available:g} h/week; this block targets "
+            f"{worst_low:g}–{worst_high:g} h. The plan will be built to the time you "
+            f"have, but expect it to under-prepare you for the demand — add training "
+            f"days or a longer runway if you can."
+        ),
+        resolution_options=["Add training days", "Extend the timeline"],
+        revise_target="profile.availability",
+        can_acknowledge=True,
+        evidence={
+            "available_hours": available,
+            "worst_phase": worst_phase,
+            "phases_under_target": [
+                {"phase": p, "target_low": lo, "target_high": hi} for p, lo, hi in under
+            ],
+        },
+    )
+
+
 # ─── Resolution / status rules (§6.3) + gate-status (§5 step 6) ───────────────
 
 
@@ -395,13 +540,23 @@ def evaluate_layer3d_gate(
     items += map_3b_items(layer3b_payload)
     # 3C deferred (§13). When built: items += map_3c_items(layer3c_payload)
 
-    # 4. Feasibility detectors (§5.2/§5.3) — deferred to the next slice; they
-    #    need the phase structure × 2A bands × 2D exclusions × §K availability.
-    #    The call sites land here with no contract change:
-    #      phase_structure = phase_structure_from_3b(layer3b_payload, ...)
-    #      items += detect_injury_pool_empty(phase_structure, ...)   # blocker(s)
-    #      item = detect_schedule_volume_under_target(phase_structure, ...)
-    #      if item: items.append(item)
+    # 4. Feasibility detectors (§5.2/§5.3). The injury-pool blocker is plan-global
+    #    (the strength pool isn't phase-scoped). The schedule-volume warning needs
+    #    the phase structure, recomputed here from the same (3B, start_date,
+    #    total_weeks) the orchestrator used (pure → matches); skipped when the
+    #    caller didn't supply a start date (e.g. a non-plan-create probe).
+    items += detect_injury_pool_empty(layer2c_payloads, layer2d_payload)
+    if plan_start_date is not None:
+        from layer4.phase_structure import phase_structure_from_3b
+
+        phase_structure = phase_structure_from_3b(
+            layer3b_payload, plan_start_date, total_weeks=total_weeks
+        )
+        vol_item = detect_schedule_volume_under_target(
+            phase_structure, layer2a_payload, layer1_payload
+        )
+        if vol_item is not None:
+            items.append(vol_item)
 
     # De-dup by item_key (§9: a 2E contraindication item that duplicates a
     # hitl_items entry surfaces once; also guards any accidental collision).

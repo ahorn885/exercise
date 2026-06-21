@@ -49,7 +49,7 @@ from layer4.context import (
     ResolvedExercise,
     TrainingSubstitutionPayload,
 )
-from layer4.errors import Layer4OutputError
+from layer4.errors import Layer4OutputError, Layer4ShapeInfeasibleError
 from layer4.payload import (
     CardioBlock,
     CardioDrill,
@@ -578,6 +578,61 @@ def compute_feasible_pool_ids(
             f"tier0_infeasible_dropped={dropped_tier0}"
         )
     return sorted(pool)
+
+
+# §10.2 defensive backstop — workable strength-session floor (Andy 2026-06-21,
+# "< 3 distinct usable exercises"). Mirrors `layer3d.gate._STRENGTH_POOL_FLOOR`;
+# the 3D gate (Layer3D_Spec §5.2 `injury_pool_empty`) is the real pre-synthesis
+# check, this is the missed-precheck raise — keep the two floors in sync.
+_STRENGTH_POOL_FLOOR = 3
+
+
+def assert_strength_pool_feasible(
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload | None,
+    phase_name: str,
+    *,
+    floor: int = _STRENGTH_POOL_FLOOR,
+) -> None:
+    """§10.2 defensive raise. Strength is prescribed in every phase
+    (`validator._STRENGTH_SESSIONS_PER_WEEK` is Base/Build 2, Peak/Taper 1 — never
+    0), so every phase needs a usable strength pool. Raise
+    `Layer4ShapeInfeasibleError('cumulative_load_injury_infeasible')` when 2D
+    exclusions are what dropped the synthesizer's strength pool
+    (`compute_feasible_pool_ids`) below `floor`: viable pre-injury (≥ floor),
+    sub-floor after. A pool already sub-floor pre-injury is a sport/equipment
+    limit (the synthesizer's free-string fallback handles it), not this blocker.
+
+    Detection authority is the 3D gate (`Layer3D_Spec.md` §5.2), which parks the
+    plan at `needs_review` before Layer 4 runs; this only fires if the gate was
+    bypassed (mirrors `layer3d.gate.detect_injury_pool_empty` so the two agree)."""
+    pool_after = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    if len(pool_after) >= floor:
+        return
+    pool_before = compute_feasible_pool_ids(layer2c_payloads, None)
+    if len(pool_before) < floor:
+        return
+    excluded_ids = sorted(set(pool_before) - set(pool_after))
+    # Rule #15 — log the decision detail (captured by the drain → /admin/logs).
+    print(
+        f"assert_strength_pool_feasible: SHAPE INFEASIBLE {phase_name} — "
+        f"usable_strength={len(pool_after)} (pre_injury={len(pool_before)}, "
+        f"floor={floor}); emptied_by={excluded_ids}; 3D gate should have parked this"
+    )
+    raise Layer4ShapeInfeasibleError(
+        "cumulative_load_injury_infeasible",
+        detail=(
+            f"{phase_name}: {len(pool_after)} usable strength exercise(s) after 2D "
+            f"exclusions (floor {floor})"
+        ),
+        evidence={
+            "phase_name": phase_name,
+            "usable_strength_count": len(pool_after),
+            "pre_injury_strength_count": len(pool_before),
+            "floor": floor,
+            "excluded_exercise_ids": excluded_ids,
+        },
+    )
 
 
 # #698 Track 1 (Slice 2) — the recovery/mobility analog of
@@ -3653,6 +3708,12 @@ def synthesize_phase(
         # week-seam stitcher (Slice 3), not a token bump, is its scaling path.
         effective_max_tokens = max_tokens
     feasible_pool_ids = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    # §10.2 defensive backstop — raise on an injury-emptied strength pool BEFORE
+    # the (minutes-long, $) LLM call; the 3D gate (Layer3D_Spec §5.2) should have
+    # parked this at `needs_review` already, so this only fires if it was bypassed.
+    assert_strength_pool_feasible(
+        layer2c_payloads, layer2d_payload, phase_spec.phase_name
+    )
     if len(feasible_pool_ids) > _FEASIBLE_POOL_ENUM_WARN_THRESHOLD:
         import logging
         logging.getLogger(__name__).warning(

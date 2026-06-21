@@ -28,3 +28,27 @@ class Layer4InputError(Layer4Error):
 class Layer4OutputError(Layer4Error):
     """Synthesizer could not produce an accepted plan within retry cap AND the
     best-effort fallback could not be assembled. Rare in v1."""
+
+
+class Layer4ShapeInfeasibleError(Layer4Error):
+    """Defensive backstop (§10.2) for the one surviving #214 blocker: synthesis
+    was reached on a shape the 3D HITL gate should have parked — injury (2D)
+    exclusions emptied a phase's strength pool below the workable floor.
+
+    Detection authority is the 3D gate (`Layer3D_Spec.md` §5.2,
+    `injury_pool_empty`), which parks the plan at `needs_review` before Layer 4
+    runs; this fires only if that pre-check was bypassed (mirrors the §4
+    "caller pre-checks; Layer 4 raises defensively" pattern). `code` carries the
+    stable routing class (`cumulative_load_injury_infeasible`); `evidence` carries
+    the phase, the post-exclusion usable-exercise count, and the triggering 2D
+    exclusion ids. When raised, no sessions are written; the `plan_versions` row
+    is rolled back per D-64 §6.2 atomic-write semantics."""
+
+    def __init__(
+        self,
+        code: str,
+        detail: str | None = None,
+        evidence: dict | None = None,
+    ) -> None:
+        self.evidence = evidence or {}
+        super().__init__(code, detail)
