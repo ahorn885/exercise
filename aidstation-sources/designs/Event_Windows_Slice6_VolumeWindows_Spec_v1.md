@@ -9,7 +9,7 @@
 ## 1. Purpose + scope
 
 Let the athlete declare date-bounded **volume windows** — travel days where they train less or not at all — and have plan-gen make that week **lighter**, deterministically, rather than placing a normal session on a day they can't use:
-- **`reduced_volume`** — the day contributes a reduced share of capacity (fixed 50%, §3); a lighter session can still land there.
+- **`reduced_volume`** — the day contributes a reduced share of capacity (an **athlete-set percentage per window**, §3); a lighter session can still land there.
 - **`no_training`** — the day contributes zero capacity and is removed from the week's placement pool; nothing lands there.
 
 The athlete's request (Andy, on #593): on a travel day they "train less or not at all"; the plan should scale the week down so they don't have to manually skip a session.
@@ -42,9 +42,10 @@ Extend `athlete_event_windows` (idempotent `_PG_MIGRATIONS` migration), no new t
 | Column | Type | Notes |
 |---|---|---|
 | `override_type` | TEXT | gains `reduced_volume` \| `no_training` (now: `indoor_only` \| `locale_unavailable` \| `away` \| `reduced_volume` \| `no_training`) |
+| `volume_pct` | NUMERIC NULL | the retained fraction of that day's capacity for `reduced_volume`, **athlete-set per window** (0 < pct < 1). NULL for every other type. `no_training` is 0% + removed from the day pool (stored as the discrete type, not pct=0, so it reads cleanly). |
 
-- **No `volume_pct` column** (decision 2026-06-21 — "Simplicity first", no dial). `reduced_volume` is a **fixed 50% of that day's capacity share**, defined as a module constant in `session_grid.py`. `no_training` is 0% + removed from the day pool. If graded travel days are ever wanted, the constant becomes a column then — not now.
-- `OVERRIDE_TYPES` (`athlete_event_windows_repo.py:39`) gains the two values; `add_event_window` validation (`athlete_event_windows_repo.py:150`) **clears all locale fields** (`unavailable_locale`, `away_locale`, `brought_craft`) for both new types (they carry no location — mirrors the `indoor_only` clear at `athlete_event_windows_repo.py:186`).
+- **Per-window slider** (decision 2026-06-21 — Andy chose the dial over a fixed constant). The athlete sets `volume_pct` when they declare a `reduced_volume` window (a percent/fraction control on the capture form, §5). A sensible default (e.g. 0.5) pre-fills the control but the athlete can override per window — a half-day travel day vs a near-full day differ.
+- `OVERRIDE_TYPES` (`athlete_event_windows_repo.py:39`) gains the two values; `add_event_window` validation (`athlete_event_windows_repo.py:150`) requires `volume_pct ∈ (0,1)` iff `reduced_volume` (NULL otherwise) and **clears all locale fields** (`unavailable_locale`, `away_locale`, `brought_craft`) for both new types (they carry no location — mirrors the `indoor_only` clear at `athlete_event_windows_repo.py:186`).
 - No CHECK constraint (project no-CHECK convention); enforced in app code.
 
 ---
@@ -54,7 +55,7 @@ Extend `athlete_event_windows` (idempotent `_PG_MIGRATIONS` migration), no new t
 This is the **first override that touches counts** (Slices 1–2 deliberately left counts on the home environment — Slice 1 §4 ¶3). The feasibility cascade is untouched; the new element is a **per-week capacity reduction** computed before the grid runs.
 
 1. **Load + union the windows for the plan span** (existing `_build_event_window_overlay`, `orchestrator.py:770`). Volume windows are collected alongside the feasibility windows; on overlapping dates the union carries *both* a feasibility reduction (from indoor/locale/away) *and* a capacity reduction (from reduced/no-training). Reuses the Slice-1 overlapping-windows union edge case.
-2. **Per affected week, compute the capacity factor.** Each day contributes `1.0` normally, `0.5` if `reduced_volume`, `0.0` if `no_training`. The week's **capacity factor** = (sum of day contributions) ÷ (normal enabled-day count). Example: a 6-enabled-day week with one `no_training` day → factor `5/6 ≈ 0.83`; with one `reduced_volume` day → factor `5.5/6 ≈ 0.92`.
+2. **Per affected week, compute the capacity factor.** Each day contributes `1.0` normally, the window's **`volume_pct`** if `reduced_volume`, `0.0` if `no_training`. The week's **capacity factor** = (sum of day contributions) ÷ (normal enabled-day count). Example: a 6-enabled-day week with one `no_training` day → factor `5/6 ≈ 0.83`; with one `reduced_volume` day at `volume_pct=0.5` → factor `5.5/6 ≈ 0.92`; the athlete could instead set that day to `0.25` → `5.25/6 ≈ 0.875`.
 3. **Scale the week's target hours, then run the existing grid.** Multiply the windowed week's per-discipline target hours by the capacity factor and call `_allocate_discipline` (`session_grid.py:383`) **unchanged** — fewer hours in → fewer/shorter sessions out, by the math already in place. No new "trim" step; no priority list. `no_training` days are additionally removed from the week's enabled-day pool so nothing is placed on them.
 4. **Synthesis places the smaller set.** `per_phase._format_event_window_overlay` (`per_phase.py:1612`) renders a volume directive for the windowed dates: *"Days X–Y: in-transit — no training (day unavailable) | reduced volume (light session only). The week has already been scaled lighter; place the listed sessions on the available days."* The LLM places (its existing job) across the available days. **Because the count was scaled to the reduced capacity, the available days always suffice** — the model never hunts for a missing slot. A session that lands on a `reduced_volume` day composes lighter through the existing intensity machinery; no bespoke logic.
 
@@ -66,19 +67,20 @@ This is the **first override that touches counts** (Slices 1–2 deliberately le
 
 ## 5. Change surface (≤5 substantive files)
 
-1. **`athlete_event_windows_repo.py`** — add the two `override_type` values + locale-field clearing.
-2. **`init_db.py`** — idempotent migration registering the two new `override_type` values if any enum/constraint mirrors them (bookkeeping-adjacent; no new column).
-3. **`layer4/session_grid.py`** — the per-week capacity factor + the `_REDUCED_VOLUME_FACTOR = 0.5` constant; scale target hours before `_allocate_discipline`; drop `no_training` days from the enabled-day pool. **The one genuinely new code** (small — a multiply + a day-pool filter; no new arithmetic engine).
+1. **`athlete_event_windows_repo.py`** — add the two `override_type` values + `volume_pct` validation/clearing + load it onto the window record.
+2. **`init_db.py`** — idempotent migration adding the `volume_pct` column + registering the two new `override_type` values if any enum/constraint mirrors them.
+3. **`layer4/session_grid.py`** — the per-week capacity factor (reads each window's `volume_pct` for `reduced_volume`, 0 for `no_training`); scale target hours before `_allocate_discipline`; drop `no_training` days from the enabled-day pool. **The one genuinely new code** (small — a multiply + a day-pool filter; no new arithmetic engine).
 4. **`layer4/orchestrator.py`** — collect volume windows in `_build_event_window_overlay`; pass the per-week capacity factor + off-limit days into the grid call. Rule #15 log of the factor + resulting count delta.
 5. **`layer4/per_phase.py`** — render the volume directive in `_format_event_window_overlay` (Trigger-#1-adjacent wording; the overlay block already exists from Slice 1, so this is an added clause, not a new prompt — see §11).
-- **Caching:** `compute_event_windows_hash` (`hashing.py:186`) already digests all window fields generically; the two new `override_type` values ride the existing digest and fold into both plan keys automatically (no new hash).
-- **Tests** (not counted): extend `tests/test_layer4_event_windows.py` + `tests/test_athlete_event_windows_repo.py` with the success-criterion scenarios.
+- **Capture UI** — add the `volume_pct` percent control to the event-window add/edit form, shown only when `override_type=reduced_volume` (thin; reuses the existing window form. May ride file 1's route or a 6th thin template — flag at build if it pushes the ceiling).
+- **Caching:** `compute_event_windows_hash` (`hashing.py:186`) digests all window fields generically; add `volume_pct` to the flattened dict (one line) so a slider change invalidates the overlapping synthesis; the two new `override_type` values ride the existing digest and fold into both plan keys automatically.
+- **Tests** (not counted): extend `tests/test_layer4_event_windows.py` + `tests/test_athlete_event_windows_repo.py` with the success-criterion scenarios (incl. distinct `volume_pct` values).
 
 ---
 
 ## 6. Caching
 
-`compute_event_windows_hash` already keys on `override_type + dates (+ all window fields)`; the two new types ride the existing digest → a volume-window edit invalidates exactly the overlapping synthesis (success criterion (d)); no-windows stays byte-identical (success criterion (a)).
+`compute_event_windows_hash` already keys on `override_type + dates (+ all window fields)`; the two new types plus `volume_pct` ride the digest → a volume-window edit (including a slider change) invalidates exactly the overlapping synthesis (success criterion (d)); no-windows stays byte-identical (success criterion (a)).
 
 ---
 
@@ -111,13 +113,13 @@ Per windowed week, print inputs + decision:
 ---
 
 ## 10. Why this is small
-The cascade, the overlay rendering, the union path, the hash, the grid's hours→count math, and the LLM placement contract are **all reused**. The only genuinely new code is: two enum values (§3) and a **per-week capacity multiply + a `no_training` day-pool filter** in `session_grid.py` (§4). No reallocation engine, no trim-to-fit, no priority list, no new constraint the LLM can fail — that's the whole point of the deterministic-reduction model.
+The cascade, the overlay rendering, the union path, the hash, the grid's hours→count math, and the LLM placement contract are **all reused**. The only genuinely new code is: two enum values + a `volume_pct` column (§3), a thin capture control, and a **per-week capacity multiply + a `no_training` day-pool filter** in `session_grid.py` (§4). No reallocation engine, no trim-to-fit, no priority list, no new constraint the LLM can fail — that's the whole point of the deterministic-reduction model.
 
 ---
 
 ## 11. Open items / sign-off
 - **Resolution model — SETTLED** (Andy 2026-06-21): deterministic capacity reduction into the existing grid; no LLM reallocation / trim-to-fit. **Spec'd.**
-- **`reduced_volume` factor — CONFIRM (Andy).** Proposed fixed **0.5** (a travel day is worth ~half a normal day). Single constant, no dial. Confirm the value.
+- **`reduced_volume` factor — SETTLED** (Andy 2026-06-21): a **per-window slider** (`volume_pct`, 0–1), athlete-set, default-filled (~0.5). Adds the `volume_pct` column (§3) + the capture control (§5). **Spec'd.**
 - **Trigger #1 wording — OWED at build.** The volume directive added to the existing event-window overlay block (`per_phase._format_event_window_overlay`). It extends a shipped prompt rather than authoring a new one, but the clause wording still needs sign-off at build (matches Slice 1's Trigger-#1 treatment).
 - **Validator band under windowed weeks — accepted limitation now; clean fix deferred** (feed the validator the same capacity factor for covered weeks). (§4)
 - **DDL apply** — register the two `override_type` values via `init_db._PG_MIGRATIONS` (owed Andy's hands / `layer0-apply`-adjacent).

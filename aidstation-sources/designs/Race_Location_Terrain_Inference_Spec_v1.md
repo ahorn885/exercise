@@ -40,10 +40,7 @@ When the athlete enters a **race location**, use an LLM call to infer the **gene
 
 **No new table.** Reuse `race_events` (`init_db.py:1378–1430`): location is already Mapbox-anchored (`event_locale_name/_mapbox_id/_place_name/_lat/_lng`) and terrain already lives in `race_terrain JSONB` (`init_db.py:1403`, typed as `list[RaceTerrainEntry]` — `terrain_id` / `pct_of_race` / optional `discipline_id`, `layer4/context.py:290`).
 
-The inference **writes a suggestion**, not the committed field. Two storage options (open item §12):
-- **(A) Transient suggestion** — compute on demand at the editor render, never persisted; the athlete's accept writes `race_terrain` exactly as a manual entry would. Simplest; re-renders re-call unless cached (§6).
-- **(B) Persisted suggestion column** — add `race_terrain_suggested JSONB NULL` + `race_terrain_suggested_at TIMESTAMP NULL` so the suggestion is stored once, shown until the athlete acts, and never re-called. Costs one idempotent ALTER.
-- **Recommendation: (B)** — it makes the "don't re-invoke" guarantee (criterion (e)) trivial and persists the inference rationale for the crowd-sourcing tie-in later (§10). One small ALTER; no plan-gen contract touched (suggestion column is read only by the editor).
+The inference **writes a suggestion**, not the committed field. **Storage — SETTLED (Andy 2026-06-21): persisted suggestion column.** Add `race_terrain_suggested JSONB NULL` + `race_terrain_suggested_at TIMESTAMP NULL` (idempotent ALTER) so the suggestion is computed once, stored, shown until the athlete acts, and never re-called. This makes the "don't re-invoke" guarantee (criterion (e)) trivial and persists the inference rationale for the crowd-sourcing tie-in later (§10). No plan-gen contract touched — the suggestion column is read only by the editor; the athlete's accept writes the committed `race_terrain` exactly as a manual entry would.
 
 ---
 
@@ -51,14 +48,14 @@ The inference **writes a suggestion**, not the committed field. Two storage opti
 
 A single tool-call inference, mirroring the established harness (`llm_invocation.invoke_tool_call` + capped retry + `ThinkingToolCallError`, `llm_invocation.py:50`; caller/exception-mapping pattern as `layer3b/builder.py:180`).
 
-**Inputs (all already on the race record):** race `name`, location (`event_locale_name`, `event_locale_place_name`, `event_locale_lat/lng`), `distance_km`, `total_elevation_gain_m`, `race_format`, free-text `notes`/`race_url` context, `event_date` (season), and **the Layer-0 terrain vocabulary** (the valid `TRN-xxx` ids + display names from `layer0.terrain_types`) so the model can only choose real ids.
+**Inputs (all already on the race record):** race `name`, location (`event_locale_name`, `event_locale_place_name`, `event_locale_lat/lng`), `distance_km`, `total_elevation_gain_m`, `race_format`, free-text `notes`/`race_url` context, `event_date` (season), **the race's discipline set** (so the model scopes terrain per discipline — sourced from the Layer 2A discipline mix where available, else `race_format`/notes), and **the Layer-0 terrain vocabulary** (the valid `TRN-xxx` ids + display names from `layer0.terrain_types`) so the model can only choose real ids.
 
-**Output tool schema — `record_race_terrain_inference`:**
-- `terrain_breakdown: [{ terrain_id: "TRN-\d{3}", pct_of_race: 0–100, rationale: str }]`
+**Output tool schema — `record_race_terrain_inference` (per-discipline breakdown — Andy 2026-06-21):**
+- `terrain_breakdown: [{ discipline_id: str, terrain_id: "TRN-\d{3}", pct_of_race: 0–100, rationale: str }]` — each entry is **scoped to a discipline** (populates the existing optional `RaceTerrainEntry.discipline_id`, `layer4/context.py:290`). For a single-discipline race every entry carries that one discipline.
 - `confidence: "high" | "medium" | "low"` (low expected for AR/unstable venues — drives UI framing)
-- `summary: str` — the one-line coaching nudge ("this race is mostly technical singletrack with sustained climbing; train for it"), in the project coaching voice (direct, no hype).
+- `summary: str` — the one-line coaching nudge ("the run legs are mostly technical singletrack with sustained climbing; the bike is gravel — train for it"), in the project coaching voice (direct, no hype).
 
-**Validation (reuse Layer 2B's, `layer2b/builder.py`):** every `terrain_id` matches `TRN-\d{3}` and exists in `layer0.terrain_types`; `pct_of_race ∈ [0,100]`; sum ∈ [80,120] (the 2B bound). Off-vocabulary or out-of-bounds → treat as inference failure → empty editor (criterion (d)). Capped retry (cap=2, the house default) on a schema-violation tool call.
+**Validation (reuse Layer 2B's, `layer2b/builder.py`):** every `terrain_id` matches `TRN-\d{3}` and exists in `layer0.terrain_types`; every `discipline_id` is one of the race's disciplines; `pct_of_race ∈ [0,100]`; **the pct sum within each discipline ∈ [80,120]** (the 2B bound, applied per-discipline now). Off-vocabulary, unknown discipline, or out-of-bounds → treat as inference failure → empty editor (criterion (d)). Capped retry (cap=2, the house default) on a schema-violation tool call.
 
 **Weather:** call the **existing** `get_expected_conditions(lat, lng, event_date)` (`weather_client.py`) alongside; render its `summary_line()` as the conditions half of the nudge. Not part of the LLM call — deterministic reuse.
 
@@ -73,7 +70,7 @@ A single tool-call inference, mirroring the established harness (`llm_invocation
 
 ## 6. Caching / invalidation
 
-- **Don't re-invoke:** key the inference on the location inputs (`mapbox_id` or rounded `lat/lng` + `event_date` season + `distance`/`elevation`/`format`). With storage option (B), the persisted `race_terrain_suggested` + a stored input-hash means a re-save with unchanged inputs skips the call (criterion (e)); changing the location re-infers.
+- **Don't re-invoke:** key the inference on the location inputs (`mapbox_id` or rounded `lat/lng` + `event_date` season + `distance`/`elevation`/`format`). The persisted `race_terrain_suggested` + a stored input-hash means a re-save with unchanged inputs skips the call (criterion (e)); changing the location re-infers.
 - **Downstream invalidation is unchanged:** once accepted into `race_terrain`, the existing race-event/Layer-2B cache invalidation applies (the suggestion column is not read by plan-gen, so it never participates in plan keys).
 
 ---
@@ -87,7 +84,7 @@ At inference: `race_terrain_inference: race=<id> loc=<place_name>@<lat,lng> conf
 - **No coordinates** (location not Mapbox-anchored) → skip inference + weather; empty editor. Logged `fallback: no_coords`.
 - **Standardized race** (Boston) → high confidence; the future crowd path (§10) would converge these.
 - **Adventure race** (changes yearly) → low confidence; UI frames it as "starting point, verify." This is where inference is most valuable (no per-venue data) **and** least certain — the review gate matters most here.
-- **Multi-discipline race** → the model may scope terrain `pct` per discipline via the existing optional `RaceTerrainEntry.discipline_id`; v1 may keep it discipline-agnostic and let the athlete split (simplest) — open item §12.
+- **Multi-discipline race** → the model scopes terrain `pct` **per discipline** via `RaceTerrainEntry.discipline_id` (Andy 2026-06-21); each discipline's entries sum to ~100 independently. A single-discipline race is just the degenerate case (all entries one discipline).
 - **LLM returns off-vocabulary / pct way off** → inference failure → empty editor (never persist garbage). Logged.
 - **Athlete already entered terrain manually** → no suggestion overwrite; inference only fires on empty/unconfirmed terrain.
 
@@ -110,13 +107,13 @@ The issue's strategic frame: for **standardized** races the inferred → athlete
 ---
 
 ## 11. Why this is small
-The race model, the manual terrain editor, the LLM invocation harness, the terrain vocabulary + 2B validation, the weather client, and the entire downstream consumption **all exist**. The only new pieces are: one LLM inference call (§4), a race-logging-time trigger + a pre-fill on the existing editor (§5), and (optionally) one suggestion column (§3). Plan-gen is untouched.
+The race model, the manual terrain editor, the LLM invocation harness, the terrain vocabulary + 2B validation, the weather client, and the entire downstream consumption **all exist**. The only new pieces are: one LLM inference call (§4), a race-logging-time trigger + a pre-fill on the existing editor (§5), and one persisted suggestion column (§3). Plan-gen is untouched.
 
 ## 12. Open items / sign-off
 - **Trigger #1 — PROMPT BODY OWED (Andy).** §4 fixes inputs / output schema / validation / intent; the **prompt wording** needs sign-off before build (mandatory Stop-and-ask Trigger #1).
-- **Storage — DECISION OWED.** Transient suggestion (A) vs persisted `race_terrain_suggested` column (B). **Recommendation: (B).** (§3)
+- **Storage — SETTLED (Andy 2026-06-21):** persisted `race_terrain_suggested` (+ `_at`) column. **Spec'd.** (§3)
+- **Per-discipline terrain — SETTLED (Andy 2026-06-21):** the breakdown is scoped per `discipline_id`; pct sums to ~100 within each discipline. **Spec'd.** (§4/§8)
 - **Trigger timing — DECISION OWED.** Synchronous-at-save (short timeout) vs lazy-at-editor-render — driven by inference latency; both non-blocking. (§5)
-- **Per-discipline terrain — CONFIRM.** v1 discipline-agnostic breakdown (athlete splits) vs model scoping `pct` per `discipline_id`. **Recommendation: discipline-agnostic v1.** (§8)
 - **Confidence framing copy** — the low-confidence "verify this" wording (coaching voice) — at build with the prompt body.
 
 ## 13. Gut check
