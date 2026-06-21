@@ -224,3 +224,102 @@ class TestWahooConnectLinksIdentity:
         resp = client.get(f'/wahoo/oauth/callback?code=C&state={state}')
         assert resp.status_code == 302
         assert 'wahoo_oauth_error=already_linked' in resp.headers['Location']
+
+
+# ── Strava no-session sign-in (the no-email path) ─────────────────────────
+
+class TestStravaSignin:
+    def _token_resp(self, athlete):
+        return _FakeResp({'access_token': 'AT', 'refresh_token': 'RT',
+                          'expires_at': 1_900_000_000, 'athlete': athlete})
+
+    def test_start_bounces_to_login_when_flag_off(self, monkeypatch):
+        import routes.strava as strava
+        monkeypatch.setattr(strava, 'current_user_id', lambda: None)
+        monkeypatch.delenv('PROVIDER_OAUTH_SIGNIN', raising=False)
+        client = _make_app(strava.bp).test_client()
+        resp = client.get('/strava/oauth/start')
+        assert resp.status_code == 302
+        assert resp.headers['Location'].startswith('/login')
+
+    def test_callback_creates_passwordless_account_without_email(self, monkeypatch):
+        import routes.strava as strava
+        captured = {}
+        monkeypatch.setattr(strava, 'current_user_id', lambda: None)
+        monkeypatch.setattr(strava, 'get_db', lambda: object())
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('STRAVA_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(strava.requests, 'post', lambda *a, **k: self._token_resp(
+            {'id': 42, 'firstname': 'Alex', 'lastname': 'P'}))
+        monkeypatch.setattr(strava.pi, 'get_identity', lambda db, p, u: None)
+        monkeypatch.setattr(strava.pi, 'create_signin_user',
+                            lambda db, **kw: captured.update(kw) or (123, 'alex'))
+        monkeypatch.setattr(strava, '_persist_strava_auth',
+                            lambda *a, **k: captured.setdefault('persisted', a[1]))
+        client = _make_app(strava.bp).test_client()
+
+        start = client.get('/strava/oauth/start')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/strava/oauth/callback?code=C&state={state}')
+
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/onboarding/connect'
+        assert captured['provider'] == 'strava'
+        assert captured['provider_user_id'] == '42'
+        assert captured['email'] is None  # Strava exposes no email
+        assert captured['display_name'] == 'Alex P'
+        assert captured['persisted'] == 123
+
+    def test_callback_logs_in_existing_identity(self, monkeypatch):
+        import routes.strava as strava
+        seen = {}
+        monkeypatch.setattr(strava, 'current_user_id', lambda: None)
+        monkeypatch.setattr(strava, 'get_db', lambda: object())
+        monkeypatch.setenv('PROVIDER_OAUTH_SIGNIN', '1')
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('STRAVA_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(strava.requests, 'post', lambda *a, **k: self._token_resp(
+            {'id': 42}))
+        monkeypatch.setattr(strava.pi, 'get_identity',
+                            lambda db, p, u: {'id': 9, 'user_id': 77})
+        monkeypatch.setattr(strava.pi, 'bump_last_login',
+                            lambda db, iid: seen.setdefault('bumped', iid))
+        monkeypatch.setattr(strava.pi, 'get_username', lambda db, uid: 'alex')
+        monkeypatch.setattr(strava.pi, 'create_signin_user',
+                            lambda *a, **k: pytest.fail('must not create on match'))
+        monkeypatch.setattr(strava, '_persist_strava_auth',
+                            lambda *a, **k: seen.setdefault('persisted', a[1]))
+        client = _make_app(strava.bp).test_client()
+
+        start = client.get('/strava/oauth/start')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/strava/oauth/callback?code=C&state={state}')
+
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/dash'
+        assert seen['bumped'] == 9
+        assert seen['persisted'] == 77
+
+    def test_connect_path_links_identity(self, monkeypatch):
+        import routes.strava as strava
+        captured = {}
+        monkeypatch.setattr(strava, 'current_user_id', lambda: 7)
+        monkeypatch.setattr(strava, 'get_db', lambda: object())
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('STRAVA_CLIENT_SECRET', 'secret')
+        monkeypatch.setattr(strava.requests, 'post', lambda *a, **k: self._token_resp(
+            {'id': 42}))
+        monkeypatch.setattr(strava, '_persist_strava_auth',
+                            lambda *a, **k: captured.setdefault('persisted', a[1]))
+        monkeypatch.setattr(strava.pi, 'link_identity',
+                            lambda db, uid, prov, puid, **k:
+                            captured.update(link=(uid, prov, puid)) or (True, 'linked'))
+        client = _make_app(strava.bp).test_client()
+        start = client.get('/strava/oauth/start?return_to=/connections')
+        state = _state_from_location(start.headers['Location'])
+        resp = client.get(f'/strava/oauth/callback?code=C&state={state}')
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/connections?strava_connected=1'
+        assert captured['persisted'] == 7
+        assert captured['link'] == (7, 'strava', '42')
