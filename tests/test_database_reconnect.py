@@ -153,3 +153,55 @@ def test_executemany_reconnects_and_retries(monkeypatch):
 
     assert calls["n"] == 1
     assert conn._conn is fresh
+
+
+class _RowcountCursor:
+    """Minimal psycopg2-cursor stand-in carrying a rowcount."""
+    def __init__(self, rowcount):
+        self.rowcount = rowcount
+
+    def execute(self, sql, params=None):
+        pass
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+
+class _RowcountConn:
+    def __init__(self, rowcount):
+        self._rowcount = rowcount
+
+    def cursor(self, cursor_factory=None):
+        return _RowcountCursor(self._rowcount)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def test_compatcursor_exposes_rowcount():
+    # Regression: _CompatCursor must surface the wrapped cursor's rowcount.
+    # Without it, UPDATE/DELETE callers that branch on rows-affected
+    # (provider_identity.link_identity/unlink_identity, provider_auth.disconnect,
+    # account_merge) raised AttributeError — the prod 500 on the first provider
+    # OAuth connect.
+    compat = database._CompatCursor(_RowcountCursor(3))
+    assert compat.rowcount == 3
+
+
+def test_pgconn_execute_returns_rowcount():
+    # End-to-end through the real execute() path that 500'd: the returned
+    # cursor's rowcount reflects the underlying psycopg2 cursor.
+    conn = database._PgConn(_RowcountConn(1))
+    cur = conn.execute(
+        "UPDATE provider_identity SET provider_user_id = ? WHERE id = ?", ("x", 1)
+    )
+    assert cur.rowcount == 1
