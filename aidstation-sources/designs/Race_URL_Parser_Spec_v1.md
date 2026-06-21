@@ -83,7 +83,7 @@ Single tool-call on the reduced page text via the established harness (`invoke_t
 | `location_text` | → Mapbox (§5) | free string; **not** written directly — fed to the picker |
 | `framework_sport` | `framework_sport` | free string; Layer 2A re-validates at save |
 | `included_discipline_ids` | `included_discipline_ids` | optional; only canonical ids that resolve for the sport; miss → omit (= bridge defaults) |
-| `race_terrain` | `race_terrain` | **the fold's primary terrain source.** Per-discipline `[{discipline_id, terrain_id: "TRN-\d{3}", pct_of_race}]`, reusing `RaceTerrainEntry`. Validated like Layer 2B (TRN in vocab; per-discipline pct sum ∈ [80,120]); off-vocab → drop terrain, let the location fallback fill it (§4.4) |
+| `race_terrain` (+ `terrain_pct_basis`) | `race_terrain` | **the fold's primary terrain source.** Per-discipline `[{discipline_id, terrain_id, pct_of_race}]`, reusing `RaceTerrainEntry`. **Which terrains is extracted honestly; the proportions are coarse round estimates** flagged `terrain_pct_basis = stated\|estimated` — pages rarely quantify the split, so a precise sum-100 would be fabrication (Andy 2026-06-21). Validated like Layer 2B (TRN in vocab; per-group pct sum ∈ [80,120]); off-vocab → drop terrain → location fallback (§4.4) |
 | `rules_notes` | `notes` | the high-value extraction: mandatory kit, cutoffs, checkpoint/support rules, gear inspection — the brief reads `notes` in full (#439). Capped to 10 000 chars |
 | `confidence` | UI framing | `high\|medium\|low` — low frames "verify this" |
 | `summary` | UI banner | one line, coaching voice: what was found + what to fill by hand |
@@ -120,7 +120,7 @@ After the parse + the athlete's event pick, **if `race_terrain` is still empty**
 
 ## 7. Rule #15 logging
 
-At parse: `race_url_parse: url=<normalized> fetch=<200|status|timeout|non_html|oversize|blocked_host> bytes=<n> reduced_chars=<n> fields=[name,event_date,race_format,...] distance_options=<n> terrain=<page|fallback|none> dropped=[<field>:<reason>,...] conf=<high|med|low> retries=<n>`. On the degrade path: `race_url_parse fallback: <fetch_failed:STATUS|non_html:CT|oversize|empty_text|llm_error:CODE>`. On the terrain-fallback path, #592's own `race_terrain_inference` line fires. So a wrong/empty pre-fill is diagnosable — the log distinguishes "page didn't have it", "we couldn't read the page", and "filled from the location fallback".
+At parse: `race_url_parse: url=<normalized> fetch=<200|status|timeout|non_html|oversize|blocked_host> bytes=<n> reduced_chars=<n> fields=[name,event_date,race_format,...] distance_options=<n> terrain=<page|fallback|none> terrain_basis=<stated|estimated|n/a> dropped=[<field>:<reason>,...] conf=<high|med|low> retries=<n>`. On the degrade path: `race_url_parse fallback: <fetch_failed:STATUS|non_html:CT|oversize|empty_text|llm_error:CODE>`. On the terrain-fallback path, #592's own `race_terrain_inference` line fires. So a wrong/empty pre-fill is diagnosable — the log distinguishes "page didn't have it", "we couldn't read the page", and "filled from the location fallback".
 
 ---
 

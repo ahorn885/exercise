@@ -60,6 +60,7 @@ A single tool-call inference mirroring the established harness (`llm_invocation.
 
 **Output tool schema — `record_race_terrain_inference` (per-discipline breakdown):**
 - `terrain_breakdown: [{ discipline_id: str, terrain_id: "TRN-\d{3}", pct_of_race: 0–100, rationale: str }]` — each entry scoped to a discipline (populates the optional `RaceTerrainEntry.discipline_id`). Single-discipline race → every entry carries that one discipline.
+  - **`pct_of_race` is a COARSE estimate (round numbers), always (Andy 2026-06-21).** Unlike the URL parse, this inference reasons from *geography*, not a course description, so it can never know precise proportions — the breakdown is inherently an estimate. The editor frames it "likely terrain — verify" (equivalent to the URL parser's `terrain_pct_basis="estimated"`, which is the constant case here); the `rationale` states what each share is based on. Never emit false-precise splits.
 - `confidence: "high" | "medium" | "low"` (low expected for AR/unstable venues — drives UI framing).
 - `summary: str` — the one-line coaching nudge, project voice (direct, no hype).
 
@@ -127,7 +128,7 @@ The race model, the manual terrain editor, the LLM harness, the terrain vocabula
 
 ## 13. Gut check
 - **Best argument against:** terrain is a small manual entry today, and the fold means this only fires on the gap the page didn't fill — so for standardized races (clean pages) it may rarely run, and for AR races (its best case) it's least certain. It earns its keep as the **terrain backfill** that keeps the auto-fill flow yielding terrain even when the page is thin, and as the **cold-start signal** for #856.
-- **Biggest risk:** a confidently-wrong low-confidence suggestion the athlete rubber-stamps → the plan trains for the wrong terrain. Mitigations: the review gate, explicit low-confidence framing, precedence (page wins when available), and Rule #15 logging of suggested-vs-accepted. The conditions half is safe (deterministic normals).
+- **Biggest risk:** a confidently-wrong low-confidence suggestion the athlete rubber-stamps → the plan trains for the wrong terrain. Mitigations: the review gate, explicit low-confidence framing, **coarse round proportions** (never false-precise — the inference can't know exact splits from geography), precedence (page wins when available), and Rule #15 logging of suggested-vs-accepted. The conditions half is safe (deterministic normals).
 - **What's genuinely clean:** scoping it as a *subordinate middle step that only populates `race_terrain`* means zero plan-gen risk; dropping the persisted column removes the only schema change v1 put on the onboarding path.
 - **What might be missing:** the precedence handoff (page-terrain vs gap) must be unambiguous in the orchestration so this never double-writes or overrides — the `skipped: page_terrain_present` log line (§7) is the guard that it's working.
 
