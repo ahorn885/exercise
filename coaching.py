@@ -328,12 +328,14 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     try:
         mods = db.execute(
             '''SELECT iem.modification_type, iem.modification_notes,
-                      il.body_part, ei.exercise as exercise_name,
-                      ei_sub.exercise as substitute_name
+                      il.body_part, lx.exercise_name as exercise_name,
+                      lx_sub.exercise_name as substitute_name
                FROM injury_exercise_modifications iem
                JOIN injury_log il ON il.id = iem.injury_id
-               JOIN exercise_inventory ei ON ei.id = iem.exercise_id
-               LEFT JOIN exercise_inventory ei_sub ON ei_sub.id = iem.substitute_exercise_id
+               LEFT JOIN layer0.exercises lx
+                      ON lx.exercise_id = iem.exercise_ex_id AND lx.superseded_at IS NULL
+               LEFT JOIN layer0.exercises lx_sub
+                      ON lx_sub.exercise_id = iem.substitute_ex_id AND lx_sub.superseded_at IS NULL
                WHERE il.user_id = ? AND il.status IN ('Active','Managing')''',
             (uid,)
         ).fetchall()
