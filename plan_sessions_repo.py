@@ -99,7 +99,9 @@ def allocate_plan_version_row(
     return int(row["id"])
 
 
-def persist_layer4_sessions(db: Any, payload: Layer4Payload) -> None:
+def persist_layer4_sessions(
+    db: Any, payload: Layer4Payload, *, on_conflict_update: bool = False
+) -> None:
     """Persist every `PlanSession` in `payload.sessions` to `plan_sessions`.
 
     Each row carries the full `PlanSession.model_dump(mode='json')` as
@@ -115,6 +117,15 @@ def persist_layer4_sessions(db: Any, payload: Layer4Payload) -> None:
     `payload.sessions` may be empty (e.g., a no-op Pattern B refresh in
     edge cases); the helper is a no-op in that case.
 
+    `on_conflict_update` (#732 slice 2) switches the write from a plain
+    INSERT to an upsert keyed on the natural key `(plan_version_id, date,
+    session_index_in_day)`. Plan-create / plan-refresh INSERT under a freshly
+    allocated version (no collision possible), so they leave this False. The
+    race-week brief mutates the athlete's *existing* active plan version in
+    place — the merged Taper window it writes collides with the live Taper
+    rows already under that version — so it sets this True to REPLACE those
+    rows rather than fail on the UNIQUE.
+
     DEFENSIVE INVARIANT: every row is written under `payload.plan_version_id`,
     NOT the per-session `session.plan_version_id`. The two should already match
     (the orchestrator stamps sessions; the cache rebinders re-stamp on a hit),
@@ -126,6 +137,16 @@ def persist_layer4_sessions(db: Any, payload: Layer4Payload) -> None:
     per-session id physically unable to reach the table from ANY path; a
     mismatch is logged so an upstream stamping gap stays visible, not masked.
     """
+    conflict_clause = (
+        """
+                ON CONFLICT (plan_version_id, date, session_index_in_day)
+                DO UPDATE SET
+                    session_id = EXCLUDED.session_id,
+                    user_id = EXCLUDED.user_id,
+                    payload_json = EXCLUDED.payload_json"""
+        if on_conflict_update
+        else ""
+    )
     for session in payload.sessions:
         if session.plan_version_id != payload.plan_version_id:
             print(
@@ -143,7 +164,8 @@ def persist_layer4_sessions(db: Any, payload: Layer4Payload) -> None:
             """INSERT INTO plan_sessions
                    (plan_version_id, user_id, session_id, date,
                     session_index_in_day, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?)"""
+            + conflict_clause,
             (
                 payload.plan_version_id,
                 payload.user_id,
