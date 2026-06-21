@@ -8,6 +8,7 @@ from units import (
     weight_unit_label,
 )
 from athlete import get_athlete_profile
+from layer0_catalog import strength_catalog_by_exid
 
 bp = Blueprint('rx', __name__)
 
@@ -48,41 +49,62 @@ def _decorate_entry(entry, unit_pref):
 def list_entries():
     db = get_db()
     uid = current_user_id()
-    discipline = request.args.get('discipline', '')
+    pattern = request.args.get('pattern', '')
     status = request.args.get('status', '')
     locale_filter = request.args.get('locale', '')
 
-    query = '''SELECT cr.*, ei.video_reference, ei.where_available,
-                      ei.recovery_cost as ei_recovery_cost,
-                      ei.suggested_volume as ei_suggested_volume
-               FROM current_rx cr
-               LEFT JOIN exercise_inventory ei ON ei.exercise = cr.exercise
-               WHERE cr.user_id = ?'''
-    params = [uid]
-    if discipline:
-        query += ' AND cr.discipline=?'
-        params.append(discipline)
-    if status:
-        query += ' AND cr.last_outcome LIKE ?'
-        params.append(f'%{status}%')
-    if locale_filter:
-        query += ' AND ei.where_available LIKE ?'
-        params.append(f'%{locale_filter}%')
-    query += ' ORDER BY cr.discipline, cr.exercise'
-    entries = db.execute(query, params).fetchall()
+    # Single canonical catalog: layer0, keyed by EX-id (the id current_rx and
+    # plan-gen both carry). Replaces the v1 `exercise_inventory` display read +
+    # the #814 name↔EX-id bridge — one source of truth, no name drift. Display
+    # is organized by the layer0-native movement-pattern group + exercise_type;
+    # the v1 `discipline` (a cardio concept) / `type` (Staple/Novel) /
+    # `suggested_volume` are dropped, and `where_available` is derived from gear.
+    cat_by_exid = strength_catalog_by_exid(db)
 
-    # Exercises in inventory but with no current_rx entry for this user
-    inv_query = '''SELECT ei.* FROM exercise_inventory ei
-                   WHERE NOT EXISTS (
-                       SELECT 1 FROM current_rx cr
-                       WHERE cr.exercise = ei.exercise AND cr.user_id = ?
-                   )'''
-    inv_params = [uid]
+    # current_rx rows for this user. The status filter keys off cr alone; the
+    # pattern and locale filters are applied AFTER enrichment, since a row's
+    # movement-pattern group + where_available come from its layer0 catalog row.
+    query = 'SELECT * FROM current_rx WHERE user_id = ?'
+    params = [uid]
+    if status:
+        query += ' AND last_outcome LIKE ?'
+        params.append(f'%{status}%')
+    rows = db.execute(query, params).fetchall()
+
+    def _enrich(row):
+        e = dict(row)
+        cat = cat_by_exid.get(e.get('layer0_exercise_id'))
+        if cat:
+            e['exercise_type'] = cat['exercise_type']
+            e['movement_pattern'] = e.get('movement_pattern') or cat['movement_pattern']
+            e['where_available'] = cat['where_available']
+        else:
+            # bucket-3 / un-resolved row: no layer0 home, keep its stored values.
+            e['exercise_type'] = None
+            e['where_available'] = None
+        return e
+
+    entries = [_enrich(r) for r in rows]
+    if pattern:
+        entries = [e for e in entries if e.get('movement_pattern') == pattern]
     if locale_filter:
-        inv_query += ' AND ei.where_available LIKE ?'
-        inv_params.append(f'%{locale_filter}%')
-    inv_query += ' ORDER BY ei.discipline, ei.exercise'
-    inventory_only = db.execute(inv_query, inv_params).fetchall()
+        entries = [e for e in entries
+                   if locale_filter in (e.get('where_available') or '')]
+    entries.sort(key=lambda e: ((e.get('movement_pattern') or ''), (e.get('exercise') or '')))
+
+    # Browse: layer0 strength exercises with no current Rx for this user,
+    # excluded by EX-id (a prescribed lift never double-lists here).
+    prescribed_exids = {r['layer0_exercise_id'] for r in rows if r['layer0_exercise_id']}
+    inventory_only = [
+        c for c in cat_by_exid.values()
+        if c['layer0_exercise_id'] not in prescribed_exids
+    ]
+    if locale_filter:
+        inventory_only = [c for c in inventory_only
+                          if locale_filter in (c['where_available'] or '')]
+    inventory_only.sort(key=lambda c: ((c['movement_pattern'] or ''), (c['exercise'] or '')))
+    # Distinct movement-pattern groups present, for the filter dropdown.
+    patterns = sorted({c['movement_pattern'] for c in cat_by_exid.values() if c['movement_pattern']})
 
     locales = db.execute(
         'SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale',
@@ -100,7 +122,7 @@ def list_entries():
 
     return render_template('rx/list.html', entries=entries_view,
                            inventory_only=inventory_only,
-                           discipline=discipline, status=status,
+                           pattern=pattern, patterns=patterns, status=status,
                            locale_filter=locale_filter, locales=locales,
                            deload_pending=deload_pending_view,
                            deload_threshold=DELOAD_THRESHOLD,

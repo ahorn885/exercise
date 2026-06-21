@@ -115,7 +115,7 @@
             <label class="form-label">Affected exercise</label>
             <select name="exercise_id" class="form-select" required>
               <option value="">— select —</option>
-              {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.exercise }}</option>{% endfor %}
+              {% for ex in exercises %}<option value="{{ ex.layer0_exercise_id }}">{{ ex.exercise }}</option>{% endfor %}
             </select>
           </div>
           <div class="col-12 col-md-3">
@@ -128,7 +128,7 @@
             <label class="form-label">Substitute exercise</label>
             <select name="substitute_exercise_id" class="form-select">
               <option value="">— none —</option>
-              {% for ex in exercises %}<option value="{{ ex.id }}">{{ ex.exercise }}</option>{% endfor %}
+              {% for ex in exercises %}<option value="{{ ex.layer0_exercise_id }}">{{ ex.exercise }}</option>{% endfor %}
             </select>
           </div>
           <div class="col-12 col-md-2">

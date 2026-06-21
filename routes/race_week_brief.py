@@ -24,6 +24,8 @@ redirect surfaces the failure to the athlete.
 
 from __future__ import annotations
 
+import time
+
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
 from database import get_db
@@ -36,7 +38,12 @@ from layer4 import (
 from layer3a.builder import Layer3AOutputError
 from layer3b.builder import Layer3BOutputError
 from layer4.errors import Layer4InputError, Layer4OutputError
-from race_week_brief_repo import load_race_week_brief, persist_race_week_brief_result
+from race_week_brief_repo import (
+    load_race_week_brief,
+    persist_race_week_brief_result,
+    write_race_week_brief_log,
+)
+from evidence_repo import load_plan_evidence
 from routes.auth import current_user_id
 
 
@@ -96,18 +103,46 @@ def _form_plan_version_id() -> int | None:
         return None
 
 
+def _log_brief_failure(db, user_id, plan_version_id, *, failure_reason):
+    """Best-effort failure telemetry (#732 slice 4). The orchestrator failure
+    aborts the in-flight transaction, so roll it back, land a `success=FALSE`
+    row, and commit JUST the log. Swallows its own errors so a logging fault
+    never masks the athlete's flash + redirect."""
+    try:
+        db.rollback()
+        write_race_week_brief_log(
+            db,
+            user_id=user_id,
+            plan_version_id=plan_version_id,
+            days_to_event=None,
+            duration_ms=None,
+            input_tokens=None,
+            output_tokens=None,
+            llm_call_count=None,
+            success=False,
+            failure_reason=failure_reason,
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 — telemetry must never break the route
+        print(f"race_week_brief: failure-log write failed (non-fatal): {exc}")
+
+
 @bp.route("/generate", methods=["POST"])
 def generate_brief():
-    """Invoke the orchestrator, persist the result, commit, redirect to the
-    brief view. The orchestrator resolves the active plan version + prior Taper
-    window itself (slice 1), so no inputs are needed beyond the user."""
+    """Invoke the orchestrator, persist the result, log the attempt, commit,
+    redirect to the brief view. The orchestrator resolves the active plan
+    version + prior Taper window itself (slice 1), so no inputs are needed
+    beyond the user. Every attempt — success or failure — lands one
+    `race_week_brief_log` row (slice 4)."""
     db = get_db()
     uid = current_user_id()
     origin_plan_version_id = _form_plan_version_id()
 
+    started = time.monotonic()
     try:
         result = orchestrate_race_week_brief(db, uid, cache=_build_layer4_cache())
     except OrchestrationError as exc:
+        _log_brief_failure(db, uid, origin_plan_version_id, failure_reason=exc.code)
         flash(_orchestration_error_message(exc), "danger")
         return _plan_view_redirect(origin_plan_version_id)
     except (
@@ -118,13 +153,29 @@ def generate_brief():
     ) as exc:
         # 3A/3B run upstream in the same cone, so their OutputErrors surface here
         # alongside the Layer 4 errors rather than 500-ing.
+        _log_brief_failure(db, uid, origin_plan_version_id, failure_reason=exc.code)
         flash(
             f"Race-week brief synthesis failed ({exc.code}). Try again shortly.",
             "danger",
         )
         return _plan_view_redirect(origin_plan_version_id)
 
+    duration_ms = int((time.monotonic() - started) * 1000)
     persist_race_week_brief_result(db, result)
+    write_race_week_brief_log(
+        db,
+        user_id=uid,
+        plan_version_id=result.plan_version_id,
+        days_to_event=(
+            result.race_week_brief.days_to_event if result.race_week_brief else None
+        ),
+        duration_ms=duration_ms,
+        input_tokens=result.input_tokens_total,
+        output_tokens=result.output_tokens_total,
+        llm_call_count=result.llm_call_count,
+        success=True,
+        failure_reason=None,
+    )
     db.commit()
     return redirect(
         url_for("race_week_brief.view_brief", plan_version_id=result.plan_version_id)
@@ -146,9 +197,23 @@ def view_brief(plan_version_id: int):
         abort(404)
     brief, race_plan = loaded
 
+    # #826 — the always-visible "science behind your plan" panel. The brief +
+    # race plan key off this same plan_version, so they reuse its evidence
+    # links. Read-only; a load fault must NEVER 500 the brief, so degrade to no
+    # panel (mirrors the plan-view gate in routes/plan_create.view_plan).
+    try:
+        evidence_sources = load_plan_evidence(db, plan_version_id)
+    except Exception as _ev_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_brief: evidence load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_ev_exc}"
+        )
+        evidence_sources = []
+
     return render_template(
         "plans/v2/race_week_brief.html",
         plan_version_id=plan_version_id,
         brief=brief,
         race_plan=race_plan,
+        evidence_sources=evidence_sources,
     )
