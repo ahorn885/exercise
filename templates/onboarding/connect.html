@@ -81,7 +81,7 @@
           <span class="chip good">✓ Connected</span>
           <a href="{{ c.connect_url }}" class="btn btn-ghost btn-sm"
              title="Run the OAuth handshake again to refresh tokens or scope grants.">Re-authorise</a>
-        {% else %}
+        {% elif c.is_configured %}
           <label class="onb-consent-gate-row">
             <input class="onboarding-consent-gate" type="checkbox"
                    id="consent-{{ c.slug }}" data-target-link="connect-link-{{ c.slug }}">
@@ -89,6 +89,10 @@
           </label>
           <a href="{{ c.connect_url }}" id="connect-link-{{ c.slug }}"
              class="btn btn-primary btn-sm disabled" aria-disabled="true" tabindex="-1">Connect {{ c.label }}</a>
+        {% else %}
+          {# Credentials not configured yet — no Connect button that would
+             dead-end in oauth_start's 503; flips on once *_CLIENT_ID is set. #}
+          <span class="chip">Not available yet</span>
         {% endif %}
       </div>
     </div>

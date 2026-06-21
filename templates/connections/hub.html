@@ -118,8 +118,12 @@
     <p class="eyebrow conn-sec-label">Auto-sync providers · {{ connected_count }} of {{ provider_total }} connected</p>
     <div class="provider-list">
 
-      {# Real OAuth providers (COROS / Polar) #}
+      {# Real OAuth providers. A provider whose OAuth credentials aren't
+         configured in the environment renders "Not available yet" (like the
+         webhook stubs below) instead of a Connect button that dead-ends in
+         oauth_start's 503 — it flips to Connect once its *_CLIENT_ID is set. #}
       {% for p in oauth_providers %}
+      {% if p.is_connected or p.is_configured %}
       <div class="card provider-row{{ ' is-on' if p.is_connected else '' }}">
         <div class="pv-avatar{{ ' on' if p.is_connected else '' }}">{{ p.label[0] }}</div>
         <div class="pv-id">
@@ -153,6 +157,21 @@
           {% endif %}
         </div>
       </div>
+      {% else %}
+      <div class="card provider-row is-stub">
+        <div class="pv-avatar">{{ p.label[0] }}</div>
+        <div class="pv-id">
+          <div class="pv-title">
+            <span class="pv-name">{{ p.label }}</span>
+            <span class="chip">Not available yet</span>
+          </div>
+          <p class="pv-meta mono">Auto-sync coming soon.</p>
+        </div>
+        <div class="pv-actions">
+          <span class="pv-soon mono">Coming soon</span>
+        </div>
+      </div>
+      {% endif %}
       {% endfor %}
 
       {# Garmin — PAUSED (API access closed; upload .FIT manually) #}

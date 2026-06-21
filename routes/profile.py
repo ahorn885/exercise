@@ -12,6 +12,7 @@ auto-capture pipeline (Session 0) are surfaced verbatim with their
 `source` and `captured_at` from the originating `feedback_log` row.
 """
 
+import os
 from datetime import datetime
 
 import bcrypt
@@ -118,6 +119,24 @@ CONNECTION_PROVIDERS = (
     ('trainingpeaks', 'TrainingPeaks', 'trainingpeaks.oauth_start'),
 )
 
+# Client-id env var per provider. Its presence in the environment gates
+# whether the connect surfaces offer a live "Connect" button: when unset the
+# provider renders "Not available yet" instead of a Connect that dead-ends in
+# the provider's `oauth_start` abort(503) (the credentials aren't registered
+# yet). Names match each routes/<provider>.py oauth_start lookup
+# (rwgps/trainingpeaks are irregular). Self-healing — setting STRAVA_CLIENT_ID
+# flips Strava back to a live Connect with no code change.
+_PROVIDER_CLIENT_ID_ENV = {
+    'coros': 'COROS_CLIENT_ID',
+    'polar': 'POLAR_CLIENT_ID',
+    'strava': 'STRAVA_CLIENT_ID',
+    'whoop': 'WHOOP_CLIENT_ID',
+    'wahoo': 'WAHOO_CLIENT_ID',
+    'oura': 'OURA_CLIENT_ID',
+    'rwgps': 'RWGPS_CLIENT_ID',
+    'trainingpeaks': 'TP_CLIENT_ID',
+}
+
 
 def _coerce_date(value):
     """Best-effort scope-date coercion; tolerates date objects, ISO strings,
@@ -204,6 +223,8 @@ def load_connections(db, uid, return_to=None):
         display_label, badge_class = _STATUS_DISPLAY.get(
             status, ('Not connected', 'bg-light text-dark border')
         )
+        env_var = _PROVIDER_CLIENT_ID_ENV.get(slug)
+        is_configured = bool(env_var and os.environ.get(env_var))
         out.append({
             'slug': slug,
             'label': label,
@@ -212,6 +233,7 @@ def load_connections(db, uid, return_to=None):
             'status_label': display_label,
             'badge_class': badge_class,
             'is_connected': status == pa.STATUS_ACTIVE,
+            'is_configured': is_configured,
             'connect_url': url_for(endpoint, return_to=return_to),
         })
     return out
