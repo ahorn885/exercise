@@ -1764,6 +1764,21 @@ def orchestrate_plan_create(
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)
     payload = _apply_rx_wire(db, user_id, payload, layer2c_payloads)
+    # #826 — surface the Layer 3 LLM-cited evidence-source slugs onto the plan so
+    # the completing pass can persist provenance links. Per-plan-version grain:
+    # one slug set per upstream layer; the completing pass validates each slug
+    # against `evidence_sources` (constrained-citation) before linking. Only
+    # augment when Layer 3 actually cited something — otherwise return the
+    # synthesis payload unchanged (the completing pass treats absent/empty the
+    # same, and this preserves the "no modify" invariant for the common case).
+    _l3a_cites = list(cone.layer3a_payload.source_citations or [])
+    _l3b_cites = list(cone.layer3b_payload.source_citations or [])
+    if _l3a_cites or _l3b_cites:
+        payload = payload.model_copy(update={
+            "evidence_source_citations": {
+                "layer3a": _l3a_cites, "layer3b": _l3b_cites,
+            }
+        })
     # Layer 5A — stash the nutrition inputs (2E payload + body weight + event
     # dates) so the post-`ready` deterministic nutrition stage + the manual
     # regenerate action can rebuild without re-running this cone, pinned to

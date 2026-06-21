@@ -34,6 +34,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from llm_invocation import ThinkingToolCallError, invoke_tool_call
+from evidence_catalog import render_catalog_block as _render_evidence_catalog_block
 from layer4.context import (
     GoalViability,
     Layer1Payload,
@@ -352,6 +353,14 @@ def build_emit_layer3b_payload_tool() -> dict[str, Any]:
                             "elevates_to_hitl": {"type": "boolean"},
                         },
                     },
+                },
+                # #826 — curated research/coaching sources the viability +
+                # periodization judgments rest on. Slugs from the provided
+                # research-source catalog ONLY (constrained-citation). Optional:
+                # omit / empty when no catalog source applies.
+                "source_citations": {
+                    "type": "array",
+                    "items": {"type": "string"},
                 },
             },
         },
@@ -897,6 +906,16 @@ Hard rules:
 12. Plan duration cap: §H.3 caps no-event Plan Duration at 24 weeks.
     Event-mode can exceed (use 'extended' mode).
 
+13. Research-source citations (`source_citations`): a catalog of curated
+    training-science sources is provided below. When your viability or
+    periodization judgment rests on the principle in one of them, list its
+    `slug` in the top-level `source_citations` array. Cite ONLY slugs that
+    appear in the provided catalog — never invent a slug. Cite only what
+    genuinely applies (typically 0–4); an empty array is fine. This is
+    separate from `evidence_basis` (which cites the athlete's input fields):
+    `evidence_basis` = "what about THIS athlete", `source_citations` = "what
+    established research backs the call".
+
 Voice: direct, evidence-grounded, no platitudes. Match the cadence of a
 real endurance coach evaluating a goal. No hedging ("might possibly"). If
 a goal is unrealistic, say so and explain why."""
@@ -955,13 +974,18 @@ def _render_user_prompt(
         "Discipline + load context (from Layer 2A):",
         _render_block_4_discipline_load(layer2a_payload),
         "",
+        # #826 — research-source allowlist for `source_citations` (rule 13).
+        _render_evidence_catalog_block(),
+        "",
         f"Today is {current_date.isoformat()}.",
         "",
         "Produce a `Layer3BPayload` via the `emit_layer3b_payload` tool. "
         "Ground every viability + periodization judgment in evidence_basis "
-        "citations. Apply the §6 guardrails — be conservative on confidence; "
-        "emit HITL items when conditions trigger; pick periodization mode "
-        "per §5.3 phase bands plus 3A state.",
+        "citations, and cite any applicable research sources in "
+        "`source_citations` (slugs from the catalog above only). Apply the §6 "
+        "guardrails — be conservative on confidence; emit HITL items when "
+        "conditions trigger; pick periodization mode per §5.3 phase bands plus "
+        "3A state.",
     ]
     if retry_error:
         blocks.extend([
