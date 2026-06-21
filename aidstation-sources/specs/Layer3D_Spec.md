@@ -223,7 +223,7 @@ v1, minimal (handful-of-athletes scale):
 - **`plan_versions.generation_status`** gains a value: `'needs_review'` (alongside `generating`/`ready`/`failed`). A plan that hits a non-green gate parks at `needs_review` instead of advancing to `generating`.
 - **`plan_versions.hitl_gate` JSONB** — the persisted `Layer3DGate` (items + resolutions + `gate_status` + `evaluated_against`). One column, no new table; the gate is small and always read/written whole. (A normalized `plan_hitl_items` table is the obvious v2 move if items need per-row querying — named in §13, not built now.)
 
-The `revise` cascade reuses the existing partial-update invalidation machinery (`Control_Spec` §4) — no new mechanism. The gate column is rewritten on each evaluation round.
+The `revise` cascade reuses the existing partial-update invalidation machinery (`Control_Spec` §4) — no new mechanism. The gate column is rewritten on each evaluation round. **`[Cancel]`** voids the row (D-64 atomic-write; nothing was written to unwind). **At most one** plan may sit in `generating`/`needs_review` per athlete (one-in-flight, §11.1) — enforced at plan-create. The parked-plan lifecycle + staleness re-fire are §11.1/§11.2.
 
 ---
 
@@ -238,6 +238,26 @@ The athlete-facing review screen (the "screen" Andy asked for):
 3. `POST /plans/v2/<id>/review/resolve` records a `GateResolution` and re-evaluates the gate (re-running upstream layers when the resolution was a revise). On `green`, the screen offers `[Generate plan]`, which flips the row to `generating` and resumes the existing Layer-4 advance loop.
 
 Copy tone follows the coaching voice (direct, evidence-grounded, no cheerleading) per `CLAUDE.md`.
+
+### 11.1 Parked-plan lifecycle (Andy 2026-06-21)
+
+The athlete does not have to resolve everything in one sitting. Two ways off the review screen:
+
+- **`[Save as pending & exit]`** — the plan stays at `generation_status='needs_review'` with its `hitl_gate` state (items + any resolutions made so far) persisted. Non-destructive; they can come back and pick up where they left off.
+- **`[Cancel]`** — discards the in-flight plan attempt. The `plan_versions` row is voided per D-64 atomic-write semantics (no sessions were ever written; nothing to unwind). Use when the athlete decides not to pursue this plan at all.
+
+**Re-entry.** A parked plan appears in the athlete's **plans list with a "Needs review" badge**; the badge links back to `GET /plans/v2/<id>/review`. That list is the single discovery surface — there is no separate "pending plans" view.
+
+**One in flight at a time (v1).** An athlete may have **at most one** plan in `generating`/`needs_review` at once. Starting a new plan-create while one is parked is refused with a prompt to either resume or cancel the parked plan first. Keeps the model simple at handful-of-athletes scale; revisit if multi-plan drafting is ever needed.
+
+### 11.2 Staleness re-fire (Andy 2026-06-21)
+
+A parked plan can go stale: while it sits at `needs_review`, a provider sync or a profile edit can change an upstream input (e.g. new training data shifts 3A → 3B re-runs), which can add, remove, or change gate items. The gate must not show the athlete a resolution screen computed against inputs that no longer hold.
+
+- The persisted `Layer3DGate.evaluated_against` (the `etl_version_set` it was computed against, §6.1) is the staleness guard.
+- **On re-entry to the review screen, and whenever an upstream re-run touches a source payload, the gate re-evaluates** before anything is shown. If `evaluated_against` no longer matches the current upstream version set, 3D recomputes the item list.
+- Resolutions survive recompute by `item_key` (§6.4): an item the athlete already acknowledged/revised that still applies keeps its resolution; an item that no longer applies drops off; a newly-surfaced item is `pending`. So a stale-but-since-fixed warning clears itself, and a newly-introduced blocker correctly re-blocks a plan the athlete thought was ready.
+- A plan sitting at `green` that goes stale and recomputes to non-`green` reverts to `needs_review` and cannot proceed to generation until re-resolved — the staleness guard runs at the `[Generate plan]` click too, not only on screen load.
 
 ---
 
@@ -275,10 +295,15 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 | TS-3D-10 | Athlete acknowledges warning (round 1), revises an unrelated blocker (round 2) | round-1 acknowledgment persists via stable `item_key`; gate goes `green` after round 2 clears |
 | TS-3D-11 | Revise that doesn't fix the blocker | same `item_key` re-surfaces → `pending`; gate stays `blocked` |
 | TS-3D-12 | `etl_version_set` mismatch across payloads | `Layer3DGateError('etl_version_set_mismatch')` |
+| TS-3D-13 | `[Save as pending & exit]` then return | plan still `needs_review`; `hitl_gate` (items + prior resolutions) intact; re-entry via plans-list "Needs review" badge (§11.1) |
+| TS-3D-14 | `[Cancel]` on the review screen | `plan_versions` row voided (D-64); no sessions written; plan leaves the plans list |
+| TS-3D-15 | Start a new plan-create while one is parked at `needs_review` | refused; prompt to resume or cancel the parked plan first (one-in-flight, §11.1) |
+| TS-3D-16 | Parked plan goes stale — provider sync re-runs 3B, adding a new blocker | on re-entry the gate recomputes (`evaluated_against` mismatch); prior resolutions persist by `item_key`; new blocker is `pending`; gate reverts to `blocked` (§11.2) |
+| TS-3D-17 | `green` plan goes stale, athlete clicks `[Generate plan]` | staleness guard recomputes at the click; if now non-`green`, generation refused → back to `needs_review` (§11.2) |
 
 ### Gut check
 
 - **Biggest risk: the revise cascade.** "Athlete edits a Layer 1 field → affected layers re-run → gate re-evaluates" leans entirely on the partial-update invalidation machinery being correct and reachable from the review screen. That machinery exists (Control_Spec §4) but has never been driven from an athlete-facing mid-plan-creation edit. If it's flaky, a blocker could be un-fixable from the screen. **Mitigation:** v1 can ship the *acknowledge* path + the *read* surface first (closes the silent-discard safety gap immediately) and treat the full revise-cascade-from-screen as the slice that needs the most testing. Flagging for the build-slice plan.
-- **What might be missing:** the gate doesn't currently re-check after a *time delay* (e.g. athlete leaves the screen, a provider sync changes 3A → 3B days later). v1 treats the gate as evaluated at plan-creation time; a stale `evaluated_against` is the guard, but the re-fire policy is unspecified. Acceptable for handful-of-athletes scale; name it if it bites.
+- **Staleness — now specced (§11.2).** The earlier gap (a parked plan going stale when a provider sync changes 3A→3B days later) is closed: the gate re-evaluates on re-entry, on any upstream re-run, and at the `[Generate plan]` click, guarded by `evaluated_against`; resolutions survive by `item_key`. Remaining thin spot: *what wakes the re-evaluation* when the athlete isn't on the screen — v1 leans on "re-check on next view / next click" rather than a push the instant a sync lands. Fine at this scale; if a stale-green plan could auto-generate from a background trigger, the guard at the generate click is the backstop.
 - **Best argument against this design:** folding the #214 feasibility detectors into 3D (rather than leaving them in Layer 4) moves logic across a layer boundary. Counter: the detectors *need* 3B's phase structure + all of 2A/2C/2D, which is exactly 3D's input set, and the gate is the natural home for "stop before synthesis" — keeping a thin defensive raise in Layer 4 preserves defense-in-depth without duplicating the detection.
 - **Scope honesty:** this is the design for the *first* gate slice. 3C and the deepest revise-cascade wiring are explicitly deferred. The spec is written so they bolt on without reshaping the `Layer3DGate` / `GateItem` contract.
