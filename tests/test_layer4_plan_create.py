@@ -27,6 +27,7 @@ LLM calls are mocked via stub callers. No real Anthropic SDK invocations.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+import threading
 from decimal import Decimal
 from typing import Any
 
@@ -73,7 +74,10 @@ from layer4 import (
     llm_layer4_plan_create,
 )
 from layer4 import InMemoryCacheBackend, Layer4Cache
-from layer4.plan_create import _SEAM_CACHE_PHASE_IDX_BASE
+from layer4.plan_create import (
+    _SEAM_CACHE_PHASE_IDX_BASE,
+    _SEAM_ITER2_CACHE_PHASE_IDX_BASE,
+)
 from layer4.per_phase import _SynthesizerOutput as _PhaseOut
 from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 
@@ -2500,6 +2504,118 @@ class TestIter1SeamReviewCache:
         )
         assert result.phase_structure is not None
         assert seam_stub.calls == len(result.phase_structure.phases) - 1
+
+
+class _CountingFlaggedThenApprovedSeamStub:
+    """flagged_major+re_prompt_next on the FIRST invocation (drives one seam
+    re-synthesis + an iter-2 review), approved thereafter, counting every call.
+    Mirrors `_seam_stub_flagged_major_then_approved` but exposes `.calls` so a
+    resumed pass can assert ZERO new seam LLM calls — iter-1 AND iter-2 served
+    from cache. Locked so the first-call-flagged contract holds even though
+    iter-1 reviews fire in parallel."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, *_a, **_kw) -> _SeamOut:
+        with self._lock:
+            i = self.calls
+            self.calls += 1
+        if i == 0:
+            return _SeamOut(
+                tool_args={
+                    "reviewer_verdict": "flagged_major",
+                    "seam_issues": ["Peak entry too aggressive"],
+                    "proposed_patch_direction": "re_prompt_next",
+                },
+                input_tokens=2000,
+                output_tokens=100,
+                latency_ms=2500,
+            )
+        return _SeamOut(
+            tool_args={
+                "reviewer_verdict": "approved",
+                "seam_issues": [],
+                "proposed_patch_direction": None,
+            },
+            input_tokens=2000,
+            output_tokens=100,
+            latency_ms=2500,
+        )
+
+
+class TestIter2SeamReviewCache:
+    """#209 §9.2 iter-2 seam-review cache — the re-synthesis-driven iter-2 review
+    caches under a disjoint phase_idx band (>= _SEAM_ITER2_CACHE_PHASE_IDX_BASE),
+    so a resumed pass replays it from cache instead of re-firing the LLM call.
+    Closes the gap where the iter-2 seam tail re-ran whole on every resume."""
+
+    def test_cold_run_stores_iter2_row_in_disjoint_band(self):
+        cache = Layer4Cache(InMemoryCacheBackend())
+        seam_stub = _CountingFlaggedThenApprovedSeamStub()
+        result = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-iter2",
+            phase_caller=_CountingPhaseStub(_empty_phase_output()),
+            seam_caller=seam_stub,
+        )
+        # The flagged seam triggered a re-synthesis + an iter-2 review.
+        assert any(sr.triggered_resynthesis for sr in (result.seam_reviews or []))
+        backend: Any = cache.backend
+        iter2_rows = [
+            e for (_k, idx), e in backend._rows.items()
+            if idx >= _SEAM_ITER2_CACHE_PHASE_IDX_BASE
+        ]
+        # Exactly one iter-2 review fired (one seam flagged) → one iter-2 row,
+        # routed to the same entry_point as the per-phase + iter-1 rows.
+        assert len(iter2_rows) == 1
+        assert {e.entry_point for e in iter2_rows} == {"plan_create"}
+
+    def test_resume_replays_iter2_from_cache(self):
+        cache = Layer4Cache(InMemoryCacheBackend())
+        first_seam = _CountingFlaggedThenApprovedSeamStub()
+        first_phase = _CountingPhaseStub(_empty_phase_output())
+        first = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-iter2",
+            phase_caller=first_phase,
+            seam_caller=first_seam,
+        )
+        assert any(sr.triggered_resynthesis for sr in (first.seam_reviews or []))
+        misses_after_cold = cache.metrics.phase_misses_total
+        assert misses_after_cold > 0
+        assert cache.metrics.phase_hits_total == 0
+
+        second_seam = _CountingFlaggedThenApprovedSeamStub()
+        second_phase = _CountingPhaseStub(_empty_phase_output())
+        second = llm_layer4_plan_create(
+            **_call_kwargs(),
+            cache=cache,
+            call_cache_key="call-iter2",
+            phase_caller=second_phase,
+            seam_caller=second_seam,
+        )
+        # The resumed pass fired NO seam LLM calls (iter-1 + iter-2 from cache)
+        # and NO synthesizer calls (primary + re-synth blocks from cache).
+        assert second_seam.calls == 0
+        assert second_phase.calls == 0
+        # Every row written on the cold pass is a hit; no new misses.
+        assert cache.metrics.phase_misses_total == misses_after_cold
+        assert cache.metrics.phase_hits_total == misses_after_cold
+        assert isinstance(second, Layer4Payload)
+
+    def test_iter2_phase_idx_band_disjoint_from_iter1(self):
+        """iter-2 rows sit at >= 2000, above the iter-1 base (1000), so under any
+        realistic seam count the two seam-review row classes never alias."""
+        assert _SEAM_ITER2_CACHE_PHASE_IDX_BASE > _SEAM_CACHE_PHASE_IDX_BASE
+        for seam_idx in range(50):
+            assert (
+                _SEAM_CACHE_PHASE_IDX_BASE + seam_idx
+                < _SEAM_ITER2_CACHE_PHASE_IDX_BASE
+            )
 
 
 # ─── Step 6b: ThreadPoolExecutor concurrency for iter-1 seam reviews ─────────
