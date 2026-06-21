@@ -332,6 +332,10 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'auth.register',
     'auth.forgot',
     'auth.reset',
+    # 2FA second-factor gate (#265). Reached mid-login (correct password, no
+    # session yet) so it must bypass the wall; in-flow auth is the pending
+    # marker the challenge route checks (`routes.auth.totp_challenge`).
+    'auth.totp_challenge',
     # Single endpoint covers every registered provider (slug allowlist
     # lives in routes/oauth_callbacks.py). Adding a new provider does
     # not require a change here.

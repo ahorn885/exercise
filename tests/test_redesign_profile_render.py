@@ -57,6 +57,11 @@ class _Conn:
             return _Cursor([], one=u)
         if 'FROM coaching_preferences' in s or 'preferences' in s and 'category' in s:
             return _Cursor(self._memory)
+        if 'FROM user_totp' in s:
+            # No 2FA enrolled in the render fixtures (account card → 'off'). The
+            # default cursor's fetchone() hands back a stub user row even when
+            # one=None, so return a genuinely-empty cursor here.
+            return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
         if 'athlete_profile' in s:
             return _Cursor([], one=_FakeRow(self._profile) if self._profile else None)
         if 'discipline_baseline_' in s:

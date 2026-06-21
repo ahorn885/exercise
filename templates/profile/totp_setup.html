@@ -1,0 +1,63 @@
+{# Two-factor enrollment (#265). Reached from the Account page "Enable" button.
+   Shows the QR (inline SVG — CSP-clean) plus the manual base32 key, then a
+   verify form that POSTs the first code to profile.totp_confirm. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Set up two-factor — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> ·
+  <a href="{{ url_for('profile.account_settings') }}">Account</a> · <b>Two-factor</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Account · security</p>
+    <h1 class="page-title">Set up two-factor auth.</h1>
+    <p class="page-sub">Scan the code with an authenticator app (Google Authenticator, 1Password, Authy,
+      …), then enter the 6-digit code it shows to confirm.</p>
+  </div>
+</div>
+
+<div class="stack acct-wrap">
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Step 1 · Scan</p>
+    {% if qr_svg %}
+    <div class="totp-qr" aria-label="Two-factor QR code">{{ qr_svg | safe }}</div>
+    {% else %}
+    <p class="acct-hint">QR rendering isn't available — add the key manually instead.</p>
+    {% endif %}
+
+    <div>
+      <p class="acct-hint">Can't scan? Enter this key manually (type: time-based):</p>
+      <p class="mono totp-secret">{{ secret }}</p>
+    </div>
+  </div>
+
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Step 2 · Confirm</p>
+    <form method="post" action="{{ url_for('profile.totp_confirm') }}" class="acct-pw">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="pf-grid">
+        <label class="field"><span class="lbl">6-digit code</span>
+          <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9 ]*" maxlength="9" required autofocus
+                 class="form-control form-control-sm"></label>
+      </div>
+      <div class="pf-save">
+        <span class="pf-saved mono">Codes refresh every 30 seconds</span>
+        <button type="submit" class="btn btn-primary">Turn on two-factor</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card card-pad acct-signout">
+    <div class="acct-signout-txt">
+      <p class="eyebrow">● Changed your mind?</p>
+      <p class="acct-hint">Cancel setup. Nothing changes until you confirm a code above.</p>
+    </div>
+    <form method="post" action="{{ url_for('profile.totp_disable') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-ghost">Cancel setup</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -74,6 +74,7 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM athlete_profile               WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM user_purchase_recommendations WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM api_tokens                    WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM user_totp                     WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM users                         WHERE id = ?',      (user_id,))
 
 

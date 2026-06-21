@@ -873,6 +873,20 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS api_tokens_user_id_idx ON api_tokens(user_id)",
     # `expires_at` was added after initial deploy.
     "ALTER TABLE api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP",
+    # TOTP two-factor auth (#265). One row per user, scoped by PK. The row's
+    # presence + `confirmed_at` encode the enrollment state machine (see
+    # `mfa.py`): absent = off, confirmed_at NULL = enrollment pending,
+    # confirmed_at set = active. `secret` is the base32 TOTP seed. Stored
+    # plaintext like the api_tokens hash design note: this is a friends-only
+    # install and the secret is only as sensitive as the DB it lives in (a DB
+    # compromise already exposes password hashes); a future hardening pass can
+    # wrap it with the `cryptography` Fernet key already in requirements.
+    """CREATE TABLE IF NOT EXISTS user_totp (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        secret TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        confirmed_at TIMESTAMP
+    )""",
     # Per-day wellness self-report. See SQLite migration above for rationale.
     """CREATE TABLE IF NOT EXISTS wellness_self_report (
         id SERIAL PRIMARY KEY,
