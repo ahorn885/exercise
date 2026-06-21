@@ -87,6 +87,7 @@ from pack_load_repo import (
     list_pack_loads, add_pack_load, delete_pack_load,
 )
 from routes import provider_auth as pa
+from routes import provider_identity as pi
 
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
@@ -195,6 +196,18 @@ def load_connections(db, uid, return_to=None):
         (uid,),
     ).fetchall()
     by_provider = {r['provider']: dict(r) for r in rows}
+    # Which providers are an active sign-in method (provider_identity), so the
+    # management screen can offer "Remove sign-in" distinctly from "Disconnect"
+    # (#251 §6.3). Defensive: provider_identity is PG-only; on local SQLite the
+    # table is absent — treat as no sign-in links rather than crash the tab.
+    try:
+        signin_slugs = {
+            r['provider'] for r in db.execute(
+                'SELECT provider FROM provider_identity WHERE user_id = ?', (uid,)
+            ).fetchall()
+        }
+    except Exception:
+        signin_slugs = set()
     if return_to is None:
         return_to = url_for('profile.edit') + '?tab=connections'
     out = []
@@ -212,6 +225,7 @@ def load_connections(db, uid, return_to=None):
             'status_label': display_label,
             'badge_class': badge_class,
             'is_connected': status == pa.STATUS_ACTIVE,
+            'is_signin': slug in signin_slugs,
             'connect_url': url_for(endpoint, return_to=return_to),
         })
     return out
@@ -849,6 +863,33 @@ def disconnect_provider(provider):
     else:
         flash(f'{label} was already disconnected.', 'info')
     return redirect(url_for('profile.edit', tab='connections'))
+
+
+@bp.route('/connections/<provider>/unlink', methods=['POST'])
+def unlink_provider_signin(provider):
+    """Remove a provider as a SIGN-IN method (#251 §6.3) — distinct from
+    `disconnect_provider`, which stops data sync. Removing the athlete's last
+    login method is refused (self-lockout guard, design decision #9): sync can
+    keep running on a provider you can no longer log in with, but you must
+    always retain at least one way in. Scoped on `current_user_id()`; unknown
+    slugs 404.
+    """
+    if provider not in {slug for slug, _label, _endpoint in CONNECTION_PROVIDERS}:
+        abort(404)
+    db = get_db()
+    label = next(
+        (lbl for slug, lbl, _endpoint in CONNECTION_PROVIDERS if slug == provider),
+        provider,
+    )
+    ok, reason = pi.unlink_identity(db, current_user_id(), provider)
+    if not ok and reason == 'last_method':
+        flash(f"Can't remove {label} sign-in — it's your only way to log in. "
+              f'Set a password first, then try again.', 'warning')
+    elif ok:
+        flash(f'{label} sign-in removed. Data sync is unaffected.', 'info')
+    else:
+        flash(f'{label} was not a sign-in method.', 'info')
+    return redirect(url_for('connections.hub', tab='sources'))
 
 
 @bp.route('/preference/add', methods=['POST'])

@@ -115,6 +115,84 @@ class TestIdentityHelpers:
         assert all(p['endpoint'].endswith('.oauth_start') for p in providers)
 
 
+class _Cur:
+    def __init__(self, rows, rowcount=0):
+        self._rows = rows
+        self.rowcount = rowcount
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeIdentityDB:
+    """Minimal in-memory stand-in for the provider_identity + users queries
+    unlink_identity / count_login_methods issue, so the self-lockout guard can
+    be verified without a live PG (NOW()/dialect bugs stay verify-owed)."""
+    def __init__(self, identities, passworded_users=()):
+        self.identities = set(identities)          # {(user_id, provider)}
+        self.passworded = set(passworded_users)    # {user_id}
+        self.committed = False
+
+    def execute(self, sql, params=()):
+        s = ' '.join(sql.split())
+        if s.startswith('SELECT 1 FROM provider_identity WHERE user_id = ? AND provider = ?'):
+            uid, prov = params
+            return _Cur([{'x': 1}] if (uid, prov) in self.identities else [])
+        if s.startswith('SELECT COUNT(*) AS n FROM provider_identity WHERE user_id = ?'):
+            uid = params[0]
+            return _Cur([{'n': sum(1 for (u, _p) in self.identities if u == uid)}])
+        if s.startswith("SELECT 1 FROM users WHERE id = ? AND COALESCE(password_hash"):
+            return _Cur([{'x': 1}] if params[0] in self.passworded else [])
+        if s.startswith('DELETE FROM provider_identity WHERE user_id = ? AND provider = ?'):
+            uid, prov = params
+            existed = (uid, prov) in self.identities
+            self.identities.discard((uid, prov))
+            return _Cur([], rowcount=1 if existed else 0)
+        raise AssertionError('unexpected SQL: ' + s)
+
+    def commit(self):
+        self.committed = True
+
+
+class TestUnlinkGuard:
+    def test_blocks_removing_the_only_login_method(self):
+        from routes import provider_identity as pi
+        db = _FakeIdentityDB({(1, 'strava')})  # one identity, no password
+        ok, reason = pi.unlink_identity(db, 1, 'strava')
+        assert (ok, reason) == (False, 'last_method')
+        assert (1, 'strava') in db.identities  # not removed
+
+    def test_allows_unlink_when_password_is_set(self):
+        from routes import provider_identity as pi
+        db = _FakeIdentityDB({(1, 'strava')}, passworded_users={1})
+        ok, reason = pi.unlink_identity(db, 1, 'strava')
+        assert (ok, reason) == (True, 'removed')
+        assert (1, 'strava') not in db.identities
+
+    def test_allows_unlink_when_another_identity_remains(self):
+        from routes import provider_identity as pi
+        db = _FakeIdentityDB({(1, 'strava'), (1, 'wahoo')})
+        ok, reason = pi.unlink_identity(db, 1, 'strava')
+        assert (ok, reason) == (True, 'removed')
+        assert db.identities == {(1, 'wahoo')}
+
+    def test_noop_when_not_a_signin_method(self):
+        from routes import provider_identity as pi
+        db = _FakeIdentityDB({(1, 'strava')}, passworded_users={1})
+        ok, reason = pi.unlink_identity(db, 1, 'oura')  # no oura identity
+        assert ok is False and reason == 'removed'
+
+    def test_count_login_methods_sums_identities_and_password(self):
+        from routes import provider_identity as pi
+        db = _FakeIdentityDB({(1, 'strava'), (1, 'wahoo')}, passworded_users={1})
+        assert pi.count_login_methods(db, 1) == 3
+        db2 = _FakeIdentityDB({(1, 'strava')})
+        assert pi.count_login_methods(db2, 1) == 1
+
+
 # ── Wahoo no-session sign-in ──────────────────────────────────────────────
 
 class TestWahooSignin:

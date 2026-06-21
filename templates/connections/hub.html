@@ -130,6 +130,7 @@
             {% else %}
               <span class="chip">{{ p.status_label }}</span>
             {% endif %}
+            {% if p.is_signin %}<span class="chip">Sign-in</span>{% endif %}
           </div>
           {% if p.is_connected %}
             <p class="pv-meta mono">
@@ -150,6 +151,13 @@
             </form>
           {% else %}
             <a class="btn btn-primary btn-sm" href="{{ p.connect_url }}">Connect</a>
+          {% endif %}
+          {% if p.is_signin %}
+            <form method="post" action="{{ url_for('profile.unlink_provider_signin', provider=p.slug) }}"
+                  data-confirm="Remove {{ p.label }} as a sign-in method? You'll no longer be able to log in with {{ p.label }}. This does not affect data sync.">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-ghost btn-sm pv-revoke">Remove sign-in</button>
+            </form>
           {% endif %}
         </div>
       </div>
