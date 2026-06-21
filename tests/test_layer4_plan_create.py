@@ -93,7 +93,7 @@ _PLAN_START = date.today()
 def _layer1() -> dict[str, Any]:
     return {
         "experience_level": "advanced",
-        "coaching_voice_preferences": None,
+        "coach_notes": None,
         "available_days_per_week": 5,
     }
 

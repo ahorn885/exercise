@@ -2478,6 +2478,36 @@ _PG_MIGRATIONS = [
             ALTER TABLE race_events DROP COLUMN race_rules_summary;
         END IF;
     END $$;""",
+    # coach_notes merge — consolidate the two free-text athlete→coach fields
+    # (`notes` + `coaching_voice_preferences`) into one canonical `coach_notes`
+    # column, and retire the never-captured `previous_coaching` enum. The two
+    # legacy fields said the same thing to the coach; the synthesizer now reads
+    # a single field. Backfill concatenates both legacy values (blank-safe,
+    # double-newline separated) into `coach_notes` before the drops. Guarded on
+    # column existence so it's a clean no-op on fresh DBs and on re-runs.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS coach_notes TEXT",
+    """DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name='athlete_profile' AND column_name='notes')
+           AND EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='athlete_profile'
+                         AND column_name='coaching_voice_preferences') THEN
+            UPDATE athlete_profile
+               SET coach_notes = NULLIF(
+                       BTRIM(CONCAT_WS(
+                           E'\\n\\n',
+                           NULLIF(BTRIM(notes), ''),
+                           NULLIF(BTRIM(coaching_voice_preferences), '')
+                       )),
+                       ''
+                   )
+             WHERE coach_notes IS NULL;
+        END IF;
+    END $$;""",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS notes",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coaching_voice_preferences",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS previous_coaching",
 ]
 
 _CLOTHING_SEEDS = [

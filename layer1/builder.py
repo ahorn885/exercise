@@ -29,7 +29,6 @@ from layer4.context import (
     DisciplineWeightRecord,
     HealthConditionRecord,
     InjuryRecord,
-    Layer1Availability,
     Layer1CoachingPreference,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
@@ -138,7 +137,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         supplements=supplements,
         **lifestyle,
     )
-    availability = Layer1Availability(**availability_scalars)
     network = Layer1Network(
         network_links=network_links,
         linked_partner_consents=linked_partner_consents,
@@ -160,12 +158,17 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         as_of=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
         # Layer-4-consumed convenience fields.
         experience_level=convenience["experience_level"],
-        coaching_voice_preferences=convenience["coaching_voice_preferences"],
+        coach_notes=convenience["coach_notes"],
         coaching_preferences=coaching_preferences,
         available_days_per_week=available_days_per_week,
         travel_constraint=travel_constraint,
         sleep_baseline=sleep_baseline_hours,
         daily_availability_windows=daily_windows,
+        # §G per-week capacity scalars (promoted from the retired
+        # Layer1Availability wrapper) — read top-level by the session grid.
+        doubles_feasible=availability_scalars["doubles_feasible"],
+        two_a_day_preference=availability_scalars["two_a_day_preference"],
+        peak_sessions_max=availability_scalars["peak_sessions_max"],
         # Full §A-§L mirror.
         identity=identity,
         health_status=health_status,
@@ -173,7 +176,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         discipline_baselines=discipline_baselines,
         strength_benchmarks=strength_benchmarks,
         performance=performance,
-        availability=availability,
         event_goal=event_goal,
         lifestyle=lifestyle_model,
         network=network,
@@ -190,7 +192,7 @@ _PROFILE_COLS = (
     "height_cm",
     "primary_sport",
     "weekly_hours_target",
-    "notes",
+    "coach_notes",
     "body_weight_kg",
     "hrmax_bpm",
     "lactate_threshold_hr_bpm",
@@ -205,7 +207,6 @@ _PROFILE_COLS = (
     "longest_event_completed",
     "training_consistency_disrupted_weeks",
     "training_consistency_cause",
-    "previous_coaching",
     "running_threshold_pace_sec_per_km",
     "running_threshold_test_date",
     "css_swim_sec_per_100m",
@@ -232,7 +233,6 @@ _PROFILE_COLS = (
     "sleep_deprivation_strategy_notes",
     # Layer-4 convenience fields, self-reported on the profile (#304).
     "experience_level",
-    "coaching_voice_preferences",
 )
 
 
@@ -259,7 +259,7 @@ def _load_athlete_profile(db, user_id: int):
             _empty_event_scalars(),
             _empty_lifestyle(),
             _empty_availability_scalars(),
-            {"experience_level": None, "coaching_voice_preferences": None},
+            {"experience_level": None, "coach_notes": None},
         )
 
     identity = Layer1Identity(
@@ -268,7 +268,6 @@ def _load_athlete_profile(db, user_id: int):
         height_cm=row["height_cm"],
         primary_sport=row["primary_sport"],
         weekly_hours_target=row["weekly_hours_target"],
-        notes=row["notes"],
     )
     performance = Layer1Performance(
         body_weight_kg=row["body_weight_kg"],
@@ -292,7 +291,6 @@ def _load_athlete_profile(db, user_id: int):
         "longest_event_completed": row["longest_event_completed"],
         "training_consistency_disrupted_weeks": row["training_consistency_disrupted_weeks"],
         "training_consistency_cause": row["training_consistency_cause"],
-        "previous_coaching": row["previous_coaching"],
     }
     event_scalars = {
         "plan_duration_weeks_no_event": row["plan_duration_weeks_no_event"],
@@ -323,7 +321,7 @@ def _load_athlete_profile(db, user_id: int):
     }
     convenience = {
         "experience_level": row["experience_level"],
-        "coaching_voice_preferences": row["coaching_voice_preferences"],
+        "coach_notes": row["coach_notes"],
     }
     return (identity, performance, training_scalars, event_scalars, lifestyle,
             availability_scalars, convenience)
@@ -337,7 +335,6 @@ def _empty_training_scalars() -> dict[str, Any]:
         "longest_event_completed": None,
         "training_consistency_disrupted_weeks": None,
         "training_consistency_cause": None,
-        "previous_coaching": None,
     }
 
 

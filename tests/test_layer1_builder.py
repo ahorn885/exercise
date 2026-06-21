@@ -142,7 +142,7 @@ class TestEmptyUser:
         assert isinstance(payload.as_of, datetime)
         # Top-level convenience fields.
         assert payload.experience_level is None
-        assert payload.coaching_voice_preferences is None
+        assert payload.coach_notes is None
         assert payload.coaching_preferences == []
         assert payload.available_days_per_week == 0
         assert payload.travel_constraint is None
@@ -166,7 +166,7 @@ class TestEmptyUser:
         assert payload.discipline_baselines.technical is None
         assert payload.strength_benchmarks is None
         assert payload.performance.hrmax_bpm is None
-        assert payload.availability.doubles_feasible is None
+        assert payload.doubles_feasible is None
         assert payload.event_goal.plan_duration_weeks_no_event is None
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
@@ -202,7 +202,7 @@ class TestFullyPopulated:
             "height_cm": 180.0,
             "primary_sport": "adventure_racing",
             "weekly_hours_target": 14.0,
-            "notes": "PGE 2026 prep",
+            "coach_notes": "PGE 2026 prep",
             "body_weight_kg": 78.5,
             "hrmax_bpm": 188,
             "lactate_threshold_hr_bpm": 168,
@@ -217,7 +217,6 @@ class TestFullyPopulated:
             "longest_event_completed": "Pocket Gopher Extreme 2024 finisher",
             "training_consistency_disrupted_weeks": 3,
             "training_consistency_cause": "wrist injury",
-            "previous_coaching": "self",
             "running_threshold_pace_sec_per_km": 250,
             "running_threshold_test_date": date(2026, 3, 1),
             "css_swim_sec_per_100m": 105,
@@ -243,7 +242,6 @@ class TestFullyPopulated:
             "sleep_deprivation_max_hrs_continuous_awake": 36,
             "sleep_deprivation_strategy_notes": "30-min naps at PGE",
             "experience_level": "advanced",
-            "coaching_voice_preferences": "Blunt, no cheerleading.",
         })
         # 2) body_metrics
         conn.queue_response(row={"resting_hr": 48})
@@ -448,7 +446,6 @@ class TestFullyPopulated:
         total = sum(r.weight_pct for r in payload.training_history.discipline_weighting)
         assert total == 100
         assert len(payload.training_history.secondary_sports) == 2
-        assert payload.training_history.previous_coaching == "self"
 
     def test_daily_windows_denormalize_doubles_and_infer_rest(self):
         conn = _FakeConn()
@@ -475,9 +472,9 @@ class TestFullyPopulated:
         # available_days_per_week derived count.
         assert payload.available_days_per_week == 2
         # Slice 2b.2b — the §G session-ceiling scalars round-trip from
-        # athlete_profile onto the availability sub-model (read by per_phase).
-        assert payload.availability.two_a_day_preference == "regularly"
-        assert payload.availability.peak_sessions_max == 12
+        # athlete_profile onto top-level Layer1Payload fields (read by per_phase).
+        assert payload.two_a_day_preference == "regularly"
+        assert payload.peak_sessions_max == 12
 
     def test_discipline_baselines_partial(self):
         conn = _FakeConn()
@@ -499,13 +496,13 @@ class TestFullyPopulated:
         assert payload.event_goal.plan_duration_weeks_no_event is None
 
     def test_convenience_fields_threaded(self):
-        # #304 — experience_level + coaching_voice_preferences round-trip from
+        # #304 — experience_level + coach_notes round-trip from
         # athlete_profile; travel_constraint is summarized from event windows.
         conn = _FakeConn()
         self._queue_andy(conn)
         payload = build_layer1_payload(conn, user_id=1)
         assert payload.experience_level == "advanced"
-        assert payload.coaching_voice_preferences == "Blunt, no cheerleading."
+        assert payload.coach_notes == "PGE 2026 prep"
         assert payload.travel_constraint is not None
         assert "2026-07-01–2026-07-05: training at Moab" in payload.travel_constraint
         assert "brings gravel_bike" in payload.travel_constraint
@@ -589,7 +586,7 @@ class TestFullyPopulated:
         dumped = payload.model_dump()
         # Layer 4 reads these keys via `.get(...)` today.
         assert "experience_level" in dumped
-        assert "coaching_voice_preferences" in dumped
+        assert "coach_notes" in dumped
         assert "available_days_per_week" in dumped
         assert "travel_constraint" in dumped
         assert "sleep_baseline" in dumped
@@ -721,13 +718,13 @@ class TestWeightingSumInvariant:
 # Helper: full athlete_profile column list (mirrors layer1.builder._PROFILE_COLS).
 _PROFILE_COL_NAMES = (
     "date_of_birth", "sex", "height_cm", "primary_sport",
-    "weekly_hours_target", "notes", "body_weight_kg", "hrmax_bpm",
+    "weekly_hours_target", "coach_notes", "body_weight_kg", "hrmax_bpm",
     "lactate_threshold_hr_bpm", "vo2max", "cycling_ftp_w",
     "doubles_feasible", "two_a_day_preference", "peak_sessions_max",
     "years_structured_training",
     "peak_weekly_volume_hrs", "peak_weekly_volume_year",
     "longest_event_completed", "training_consistency_disrupted_weeks",
-    "training_consistency_cause", "previous_coaching",
+    "training_consistency_cause",
     "running_threshold_pace_sec_per_km", "running_threshold_test_date",
     "css_swim_sec_per_100m", "css_test_date", "cycling_ftp_test_date",
     "hrmax_source", "lt_method", "vo2max_source",
@@ -740,5 +737,5 @@ _PROFILE_COL_NAMES = (
     "salt_electrolyte_tolerance",
     "sleep_deprivation_max_hrs_continuous_awake",
     "sleep_deprivation_strategy_notes",
-    "experience_level", "coaching_voice_preferences",
+    "experience_level",
 )

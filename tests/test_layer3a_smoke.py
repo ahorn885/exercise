@@ -36,7 +36,6 @@ from layer4.context import (
     CombinedLoadReport,
     DailyWellnessRecord,
     DisciplineWeightRecord,
-    Layer1Availability,
     Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
@@ -106,7 +105,6 @@ def _make_layer1(
             cycling_ftp_w=cycling_ftp_w,
             cycling_ftp_test_date=date(2026, 1, 15),
         ),
-        availability=Layer1Availability(),
         event_goal=Layer1EventGoal(),
         lifestyle=Layer1Lifestyle(
             sleep_baseline_hours=7.5,

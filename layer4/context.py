@@ -6,7 +6,7 @@ See:
   typed-payload promotion 2026-05-19; mirrors D-51 §3 storage shipped in
   Phase 1.2A/B/C). Section-keyed sub-models (`Layer1Identity`,
   `Layer1HealthStatus`, `Layer1TrainingHistory`, `Layer1DisciplineBaselines`,
-  `Layer1StrengthBenchmarks`, `Layer1Performance`, `Layer1Availability`,
+  `Layer1StrengthBenchmarks`, `Layer1Performance`,
   `Layer1EventGoal`, `Layer1Lifestyle`, `Layer1Network`, `Layer1Disclosures`)
   carry the full §A-§L view. Layer 4 entry points keep `dict[str, Any]`
   per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation
@@ -1477,7 +1477,7 @@ class ParsedIntent(_Base):
 # wellness_self_report joinpoints). Section-keyed sub-models follow the
 # v5 §A-§L spec structure. Top-level convenience fields surface the keys
 # Layer 4 entry points currently `.get(...)` from the opaque dict
-# (experience_level / coaching_voice_preferences / available_days_per_week
+# (experience_level / coach_notes / available_days_per_week
 # / travel_constraint / sleep_baseline / daily_availability_windows) so
 # `.model_dump()` produces a dict consumable by Layer 4 unchanged per
 # `Upstream_Implementation_Plan_v1.md` §6 item 3 mitigation.
@@ -1490,7 +1490,6 @@ class Layer1Identity(_Base):
     height_cm: float | None = None
     primary_sport: str | None = None
     weekly_hours_target: float | None = None
-    notes: str | None = None
 
 
 # §B — health status sub-records
@@ -1636,7 +1635,6 @@ class Layer1TrainingHistory(_Base):
     longest_event_completed: str | None = None
     training_consistency_disrupted_weeks: int | None = Field(default=None, ge=0, le=52)
     training_consistency_cause: str | None = None
-    previous_coaching: Literal["self", "online_plan", "coach", "none"] | None = None
     secondary_sports: list[SecondarySportRecord] = Field(default_factory=list)
     discipline_weighting: list[DisciplineWeightRecord] = Field(default_factory=list)
     recent_race_results: list[RecentRaceResult] = Field(default_factory=list)
@@ -1770,18 +1768,11 @@ class Layer1Performance(_Base):
     css_test_date: date | None = None
 
 
-# §G — per-week capacity (per-day windows are at top-level
-# `Layer1Payload.daily_availability_windows`). FormRefresh Slice C
-# (2026-05-25) reduced this to `doubles_feasible` — the long-session day +
-# rest days are inferred from the windows, not stored.
-class Layer1Availability(_Base):
-    doubles_feasible: Literal["regularly", "occasionally", "no"] | None = None
-    # Slice 2b.2b (§5.1.1 / D11) — the session-count ceiling controls.
-    # `two_a_day_preference` is the friendly density control; `peak_sessions_max`
-    # is the optional advanced override (NULL → the grid derives the ceiling
-    # from the preference via `session_grid._TWO_A_DAY_DENSITY`).
-    two_a_day_preference: Literal["never", "occasionally", "regularly"] | None = None
-    peak_sessions_max: int | None = Field(default=None, ge=1)
+# §G per-week capacity scalars are promoted to top-level `Layer1Payload`
+# fields (doubles_feasible / two_a_day_preference / peak_sessions_max) — the
+# former `Layer1Availability` wrapper held nothing else (per-day windows live
+# at `Layer1Payload.daily_availability_windows`), so the single-level read is
+# `layer1_payload.get("two_a_day_preference")` rather than a nested sub-model.
 
 
 # §H — event/goal
@@ -1918,12 +1909,22 @@ class Layer1Payload(_Base):
     # Layer-4-consumed convenience fields (top-level so `.model_dump()` produces
     # a dict where Layer 4's `.get("experience_level")` etc. continue to work
     # per `Upstream_Implementation_Plan_v1.md` §8 mitigation). `experience_level`
-    # + `coaching_voice_preferences` are self-reported on `athlete_profile`;
+    # + `coach_notes` are self-reported on `athlete_profile`;
     # `travel_constraint` is summarized from the athlete's event windows (#304).
     experience_level: Literal[
         "novice", "developing", "intermediate", "advanced", "elite"
     ] | None = None
-    coaching_voice_preferences: str | None = None
+    # Single free-text athlete→coach field (merged from the legacy `notes` +
+    # `coaching_voice_preferences` pair). Rendered into the synthesizer's
+    # athlete context across every Layer 4 surface.
+    coach_notes: str | None = None
+    # §G per-week capacity scalars (promoted from the retired Layer1Availability
+    # wrapper). `doubles_feasible` gates second-window scheduling; the session
+    # grid reads `two_a_day_preference` (friendly density control) +
+    # `peak_sessions_max` (optional advanced override, NULL → derive from pref).
+    doubles_feasible: Literal["regularly", "occasionally", "no"] | None = None
+    two_a_day_preference: Literal["never", "occasionally", "regularly"] | None = None
+    peak_sessions_max: int | None = Field(default=None, ge=1)
     # #690 — durable Coaching Memory preferences. Surfaced top-level so it both
     # rides into `layer1_hash` (every Layer 4 cache entry invalidates when prefs
     # change) and is readable as `.get("coaching_preferences")` by the
@@ -1943,7 +1944,6 @@ class Layer1Payload(_Base):
     discipline_baselines: Layer1DisciplineBaselines
     strength_benchmarks: Layer1StrengthBenchmarks | None = None
     performance: Layer1Performance
-    availability: Layer1Availability
     event_goal: Layer1EventGoal
     lifestyle: Layer1Lifestyle
     network: Layer1Network

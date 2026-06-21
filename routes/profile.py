@@ -83,6 +83,9 @@ from health_inputs_repo import (
     SYSTEM_CATEGORY_LABELS, MEDICATION_CLASS_LABELS,
     CONDITIONS_BY_CATEGORY,
 )
+from pack_load_repo import (
+    list_pack_loads, add_pack_load, delete_pack_load,
+)
 from routes import provider_auth as pa
 
 
@@ -353,6 +356,12 @@ def edit():
         experience_level = _str('experience_level')
         if experience_level not in EXPERIENCE_LEVEL_CHOICES:
             experience_level = None
+        # Altitude acclimatization is a tri-state select: yes / no / unset.
+        # Map to BOOLEAN | None; anything outside the pair stays None.
+        _alt_raw = _str('altitude_acclimatization_history')
+        altitude_acclimatization_history = (
+            True if _alt_raw == 'yes' else False if _alt_raw == 'no' else None
+        )
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -360,9 +369,8 @@ def edit():
             height_cm=height_cm,
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
-            notes=_str('notes'),
+            coach_notes=_str('coach_notes'),
             experience_level=experience_level,
-            coaching_voice_preferences=_str('coaching_voice_preferences'),
             unit_preference=submitted_unit_pref,
             # §I.2 nutrition & fueling protocol.
             dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
@@ -373,6 +381,11 @@ def edit():
             caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
             salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
             gi_triggers_known=_str('gi_triggers_known'),
+            # §I altitude exposure — acclimatization history (tri-state),
+            # highest sustained exposure, and how many distinct exposures.
+            altitude_acclimatization_history=altitude_acclimatization_history,
+            altitude_max_exposure_m=_num('altitude_max_exposure_m', cast=int),
+            altitude_exposure_count=_num('altitude_exposure_count', cast=int),
             # supplement_protocol_notes is no longer edited here — supplements
             # moved to structured records (athlete_supplements). The legacy
             # column is left untouched (not passed) rather than wiped to NULL.
@@ -468,6 +481,8 @@ def edit():
     # §B health inputs — feed the Layer 2E contraindication screening.
     health_conditions = list_health_conditions(db, uid)
     medications = list_medications(db, uid)
+    # §C pack-load history — load-carriage base, summarized into Layer 3B.
+    pack_loads = list_pack_loads(db, uid)
 
     # Locations tab (#619) embeds the full locales surface. Build its context
     # only when that tab is active so the per-locale equipment-tag queries don't
@@ -488,6 +503,7 @@ def edit():
         supplement_vocab=supplement_vocab,
         health_conditions=health_conditions,
         medications=medications,
+        pack_loads=pack_loads,
         system_category_choices=SYSTEM_CATEGORY_CHOICES,
         conditions_by_category=CONDITIONS_BY_CATEGORY,
         medication_class_choices=MEDICATION_CLASS_CHOICES,
@@ -984,6 +1000,37 @@ def delete_medication_route(medication_id):
     delete_medication(db, current_user_id(), medication_id)
     db.commit()
     flash('Medication removed.', 'info')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/pack-load/add', methods=['POST'])
+def add_pack_load_route():
+    """Add one pack-load record. `pack_weight_kg` is the only required field;
+    a blank/negative weight is rejected (no insert)."""
+    db = get_db()
+    ok = add_pack_load(
+        db, current_user_id(),
+        pack_weight_kg=request.form.get('pack_weight_kg'),
+        session_count_4wk=request.form.get('session_count_4wk'),
+        longest_session_hrs=request.form.get('longest_session_hrs'),
+        terrain_type=request.form.get('terrain_type'),
+        notes=request.form.get('notes'),
+    )
+    if ok:
+        db.commit()
+        flash('Pack-load record added.', 'success')
+    else:
+        flash('Enter a pack weight (kg).', 'danger')
+    return redirect(url_for('profile.edit'))
+
+
+@bp.route('/pack-load/<int:pack_load_id>/delete', methods=['POST'])
+def delete_pack_load_route(pack_load_id):
+    """Remove one pack-load record. Scoped on user_id."""
+    db = get_db()
+    delete_pack_load(db, current_user_id(), pack_load_id)
+    db.commit()
+    flash('Pack-load record removed.', 'info')
     return redirect(url_for('profile.edit'))
 
 

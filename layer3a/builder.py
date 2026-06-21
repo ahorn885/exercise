@@ -580,8 +580,13 @@ def _render_lifestyle(layer1_payload: Layer1Payload) -> str:
         lines.append(f"- caffeine_tolerance: {li.caffeine_tolerance}{strategy}")
     if li.altitude_acclimatization_history is not None:
         ah = "yes" if li.altitude_acclimatization_history else "no"
-        max_m = f" (max_m={li.altitude_max_exposure_m})" if li.altitude_max_exposure_m else ""
-        lines.append(f"- altitude_acclimatization_history: {ah}{max_m}")
+        extras = []
+        if li.altitude_max_exposure_m:
+            extras.append(f"max_m={li.altitude_max_exposure_m}")
+        if li.altitude_exposure_count:
+            extras.append(f"exposures={li.altitude_exposure_count}")
+        detail = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- altitude_acclimatization_history: {ah}{detail}")
     if li.salt_electrolyte_tolerance:
         lines.append(f"- salt_electrolyte_tolerance: {li.salt_electrolyte_tolerance}")
     return "\n".join(lines) if lines else "(no lifestyle fields populated)"
@@ -731,13 +736,17 @@ def _render_phase_context(layer2a_payload: Layer2APayload) -> str:
 
 
 def _render_health_context_note(layer1_payload: Layer1Payload) -> str:
-    """Per §5.2 — max 2 sentences. Surface only active-injury constraint
-    relevant to coloring strength assessments. Pregnancy NEVER mentioned."""
+    """Per §5.2 — threaded health context for coloring the strength / state
+    assessment. Active injuries are the hard constraint; resolved injuries,
+    past/active conditions, and medication classes are threaded in as
+    background so the assessment accounts for history (return-to-load,
+    flare-aware load, HR-affecting meds). Injury-risk *verdicts* remain Layer
+    2D's territory. Pregnancy NEVER mentioned (not in the captured vocab)."""
     hs = layer1_payload.health_status
-    if hs is None or not hs.current_injuries:
-        return "(no active injuries recorded)"
-    constraints: list[str] = []
-    for inj in hs.current_injuries[:3]:
+    if hs is None:
+        return "(no health context recorded)"
+
+    def _inj(inj) -> str:
         bp = inj.body_part or "unspecified"
         sev = inj.severity or "unspecified"
         mc = (
@@ -745,10 +754,55 @@ def _render_health_context_note(layer1_payload: Layer1Payload) -> str:
             if inj.movement_constraints
             else ""
         )
-        constraints.append(f"{bp} ({sev}){mc}")
-    s = "Active injuries: " + " | ".join(constraints) + "."
-    s += " Color strength assessment accordingly; do not produce injury-risk judgments (Layer 2D's territory)."
-    return s
+        return f"{bp} ({sev}){mc}"
+
+    def _cond(c) -> str:
+        nm = c.condition_name or c.system_category
+        return f"{nm} (severity {c.severity})" if c.severity else nm
+
+    lines: list[str] = []
+    if hs.current_injuries:
+        lines.append(
+            "Active injuries: "
+            + " | ".join(_inj(i) for i in hs.current_injuries[:3])
+            + "."
+        )
+    if hs.injury_history:
+        lines.append(
+            "Prior (resolved) injuries: "
+            + " | ".join(_inj(i) for i in hs.injury_history[:3])
+            + "."
+        )
+    cond_parts: list[str] = []
+    if hs.health_conditions_active:
+        cond_parts.append(
+            "active: " + ", ".join(_cond(c) for c in hs.health_conditions_active[:4])
+        )
+    if hs.health_conditions_history:
+        cond_parts.append(
+            "prior: " + ", ".join(_cond(c) for c in hs.health_conditions_history[:4])
+        )
+    if cond_parts:
+        lines.append("Health conditions — " + "; ".join(cond_parts) + ".")
+    med_parts: list[str] = []
+    if hs.medications_active:
+        med_parts.append(
+            "current: " + ", ".join(m.medication_class for m in hs.medications_active[:4])
+        )
+    if hs.medications_history:
+        med_parts.append(
+            "past: " + ", ".join(m.medication_class for m in hs.medications_history[:4])
+        )
+    if med_parts:
+        lines.append("Medications — " + "; ".join(med_parts) + ".")
+
+    if not lines:
+        return "(no health context recorded)"
+    lines.append(
+        "Color the strength/state assessment accordingly; do not produce "
+        "injury-risk judgments (Layer 2D's territory)."
+    )
+    return " ".join(lines)
 
 
 def _build_prep_dict(

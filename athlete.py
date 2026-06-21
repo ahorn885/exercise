@@ -27,7 +27,11 @@ PROFILE_FIELDS = (
     # (init_db.py migrations). `training_window` retired in D-73 Phase 1.2A
     # — superseded by `daily_availability_windows` (D-61 / PR12).
     'weekly_hours_target',
-    'notes',
+    # Single free-text athlete→coach field. Merged from the legacy `notes` +
+    # `coaching_voice_preferences` pair (they said the same thing): general
+    # context the coach should know *and* voice/communication preferences.
+    # Rendered into the synthesizer's athlete context.
+    'coach_notes',
     # v5 §A.2 prefill-eligible baselines (PR6 D-51 column foundation).
     # Self-report at onboarding today; provider extractors land in PR7
     # (D2a) and write to athlete_profile_field_provenance.
@@ -50,8 +54,7 @@ PROFILE_FIELDS = (
     'two_a_day_preference',
     'peak_sessions_max',
     # D-73 Phase 1.2A (D-51 §3.3) — §C training history scalars. All
-    # self-report at onboarding today; `previous_coaching` closed enum
-    # (`self` / `online_plan` / `coach` / `none`). Free-text columns
+    # self-report at onboarding today. Free-text columns
     # (`longest_event_completed`, `training_consistency_cause`) tolerate
     # any string and the Layer 1 builder parses at read time.
     'years_structured_training',
@@ -60,7 +63,6 @@ PROFILE_FIELDS = (
     'longest_event_completed',
     'training_consistency_disrupted_weeks',
     'training_consistency_cause',
-    'previous_coaching',
     # D-73 Phase 1.2A (D-51 §3.6) — §F testing-baseline gap fields. The
     # three `_source` companions encode how the existing prefill-eligible
     # baseline was obtained (closed enum: `measured` / `estimated_tanaka`
@@ -101,11 +103,10 @@ PROFILE_FIELDS = (
     'salt_electrolyte_tolerance',
     'sleep_deprivation_max_hrs_continuous_awake',
     'sleep_deprivation_strategy_notes',
-    # #304 — self-reported Layer-4 convenience fields. `experience_level` is a
-    # closed self-select band (EXPERIENCE_LEVEL_CHOICES); `coaching_voice_
-    # preferences` is free text rendered into the synthesizer's athlete context.
+    # #304 — self-reported Layer-4 convenience field. `experience_level` is a
+    # closed self-select band (EXPERIENCE_LEVEL_CHOICES). (The free-text
+    # coach-facing field is `coach_notes`, listed above.)
     'experience_level',
-    'coaching_voice_preferences',
 )
 
 # #304 — self-select athlete experience band. Mirrors the

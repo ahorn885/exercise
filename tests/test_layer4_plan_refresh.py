@@ -72,7 +72,7 @@ _T2_END = date(2026, 6, 7)  # Sun
 
 
 def _layer1() -> dict[str, Any]:
-    return {"experience_level": "advanced", "coaching_voice_preferences": None}
+    return {"experience_level": "advanced", "coach_notes": None}
 
 
 def _layer2a() -> Layer2APayload:
@@ -1966,7 +1966,7 @@ class TestStructuredCardio337:
         )
         layer1 = {
             "experience_level": "advanced",
-            "coaching_voice_preferences": None,
+            "coach_notes": None,
             "performance": {
                 "hrmax_bpm": 188,
                 "lactate_threshold_hr_bpm": 168,

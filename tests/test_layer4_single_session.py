@@ -178,7 +178,7 @@ def _layer2d(excluded: tuple[str, ...] = ()) -> Layer2DPayload:
 
 
 def _layer1() -> dict[str, Any]:
-    return {"experience_level": "advanced", "coaching_voice_preferences": None}
+    return {"experience_level": "advanced", "coach_notes": None}
 
 
 # ─── Tool output builders for the LLM stub ────────────────────────────────────
@@ -1387,7 +1387,7 @@ class TestStructuredCardio337:
         )
         layer1 = {
             "experience_level": "advanced",
-            "coaching_voice_preferences": None,
+            "coach_notes": None,
             "performance": {
                 "hrmax_bpm": 188,
                 "running_threshold_pace_sec_per_km": 245,
