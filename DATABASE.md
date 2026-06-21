@@ -413,6 +413,35 @@ PR #15; `expires_at` column added in the 2026-05-11 session.
   `api_tokens` before `users`. **Any new user-scoped table must be
   added to that chain.**
 
+#### `user_totp`
+
+App-based two-factor auth (TOTP, RFC 6238). Added for #265. One row per
+user, scoped by PK.
+
+- Columns: `user_id` (INTEGER PK FK), `secret` (TEXT NOT NULL — base32
+  TOTP seed), `created_at`, `confirmed_at` (NULL until the first valid
+  code is verified).
+- **State machine** (see `mfa.py`): row absent → 2FA off; row present
+  with `confirmed_at IS NULL` → enrollment pending (secret issued,
+  awaiting first code); `confirmed_at` set → active (logins are
+  challenged).
+- Login integration: `routes/auth.login` verifies the password, then —
+  if `mfa.is_enabled` — withholds the session and stashes a
+  `totp_pending_user_id` marker, redirecting to `routes/auth.totp_challenge`
+  (an `_AUTH_EXEMPT_ENDPOINTS` route, rate-limited 10/5min) which
+  converts the marker into a real session only on a valid code.
+- Recovery: a completed password reset (`routes/auth.reset`) calls
+  `mfa.disable`, so a lost authenticator is recovered via the email
+  reset flow rather than backup codes.
+- Writes: `routes/profile.py:totp_setup` / `totp_confirm` / `totp_disable`,
+  `routes/auth.py:reset` (recovery clear).
+- Reads: `routes/profile.py:account_settings` (status card),
+  `routes/auth.py:login` + `totp_challenge` (the gate).
+- Storage note: `secret` is plaintext today — same threat model as the
+  `password_hash` it sits beside (a DB compromise is already game-over);
+  a future pass can wrap it with the `cryptography` Fernet dep.
+- Cascade-delete: in `_delete_user_and_data` before `users`.
+
 ### Strength training
 
 #### `training_sessions`

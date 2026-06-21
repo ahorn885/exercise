@@ -77,3 +77,19 @@ class TestInspectStaysBehindLoginWall:
         resp = _appmod.app.test_client().get('/admin/plan/999999/inspect')
         assert resp.status_code == 302
         assert '/auth/login' in resp.headers.get('Location', '')
+
+
+class TestTotpChallengeGate:
+    """The 2FA challenge (#265) is reached mid-login (correct password, no
+    session yet), so it must bypass the global login wall. Without a pending
+    marker in the session there's nothing to challenge, so it bounces to
+    /auth/login — and crucially does NOT touch the DB to get there (these tests
+    run with `DATABASE_URL=''`)."""
+
+    def test_listed_in_auth_exempt_endpoints(self):
+        assert 'auth.totp_challenge' in _appmod._AUTH_EXEMPT_ENDPOINTS
+
+    def test_no_pending_marker_redirects_to_login(self):
+        resp = _appmod.app.test_client().get('/auth/totp')
+        assert resp.status_code == 302
+        assert '/auth/login' in resp.headers.get('Location', '')
