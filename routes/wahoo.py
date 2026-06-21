@@ -9,7 +9,16 @@ synchronous-from-payload (like COROS) — no REST fetch needed for the summary.
 - `GET  /wahoo/oauth/callback`  — exchange code for tokens; the token response
                                   has no user id, so fetch `/v1/user` for it
                                   (webhook reverse-lookup needs it); persist +
-                                  scope ack.
+                                  scope ack. On any failure it redirects back to
+                                  `return_to` with `?wahoo_oauth_error=<reason>`
+                                  (not a bare abort) so the connect screen can
+                                  say what broke.
+
+CONFIG (go-live): set `WAHOO_CLIENT_ID` + `WAHOO_CLIENT_SECRET`, and register
+the developer-portal redirect_uri EXACTLY as `…/wahoo/oauth/callback` (what
+`oauth_start` sends). A mismatch (e.g. the old `/auth/wahoo/callback` stub) makes
+Wahoo error right after the user logs in — the most common "login showed but
+then errored" failure.
 - `POST /wahoo/webhook`         — verify the configured webhook token, record to
                                   `webhook_events`, map `user.id` → local user,
                                   and ingest the `workout_summary` → `cardio_log`
@@ -104,16 +113,26 @@ def oauth_callback():
     ):
         current_app.logger.warning('Wahoo OAuth state mismatch for user %s', user_id)
         abort(400)
+
+    def _fail(reason: str):
+        """Bounce back to the originating screen with a readable reason rather
+        than dead-ending on a bare error page. Both connect surfaces (onboarding
+        Step 2 + the connections hub) render `?wahoo_oauth_error=` as a
+        '<provider> did not connect' alert, so the athlete sees what went wrong
+        and the matching `current_app.logger` line above is the breadcrumb."""
+        sep = '&' if '?' in return_to else '?'
+        return redirect(f'{return_to}{sep}wahoo_oauth_error={reason}')
+
     if 'error' in request.args:
-        return redirect(f'{return_to}?wahoo_oauth_error={request.args.get("error")}')
+        return _fail(request.args.get('error') or 'denied')
     code = request.args.get('code')
     if not code:
-        abort(400)
+        return _fail('no_code')
     client_id = os.environ.get('WAHOO_CLIENT_ID')
     client_secret = os.environ.get('WAHOO_CLIENT_SECRET')
     if not client_id or not client_secret:
         current_app.logger.error('Wahoo client credentials not configured')
-        abort(503)
+        return _fail('not_configured')
     redirect_uri = url_for('wahoo.oauth_callback', _external=True)
     try:
         resp = requests.post(_WAHOO_TOKEN_URL, data={
@@ -127,14 +146,14 @@ def oauth_callback():
         token_data = resp.json()
     except requests.RequestException as exc:
         current_app.logger.exception('Wahoo token exchange failed: %s', exc)
-        abort(502)
+        return _fail('token_exchange_failed')
 
     access_token = token_data.get('access_token')
     refresh_token = token_data.get('refresh_token')
     expires_in = token_data.get('expires_in')
     if not access_token:
         current_app.logger.error('Wahoo token response missing access_token: %s', token_data)
-        abort(502)
+        return _fail('no_access_token')
 
     wahoo_user_id = (token_data.get('user') or {}).get('id')
     if wahoo_user_id is None:
@@ -146,10 +165,10 @@ def oauth_callback():
             wahoo_user_id = prof.json().get('id')
         except requests.RequestException as exc:
             current_app.logger.exception('Wahoo user fetch failed: %s', exc)
-            abort(502)
+            return _fail('profile_fetch_failed')
     if wahoo_user_id is None:
         current_app.logger.error('Wahoo user id missing')
-        abort(502)
+        return _fail('no_user_id')
 
     token_expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
