@@ -979,6 +979,15 @@ def _upstream_full_cone(
     framework_sport = _resolve_planning_sport(
         target_race_event, layer1_payload, user_id
     )
+    # #447 §5 — when the race sport differs from the athlete's home discipline,
+    # fold the home sport into Layer 2A as low-weight cross-training. Inert
+    # (None) when there's no primary_sport or it already IS the planning sport.
+    _primary_sport = layer1_payload.identity.primary_sport
+    cross_training_sport = (
+        _primary_sport
+        if (_primary_sport and _primary_sport != framework_sport)
+        else None
+    )
 
     # D-73 Phase 5.2 Bucket E.(b)-B2 — race-row `included_discipline_ids`
     # narrows the bridge-derived discipline list when supplied. Layer 2A
@@ -1001,6 +1010,9 @@ def _upstream_full_cone(
         # bridge midpoints (precedence resolved in _apply_modality_group_pooling).
         # Inert when the race carries no discipline-tagged terrain.
         race_discipline_overrides=_derive_race_discipline_mix(target_race_event),
+        # #447 §5 — fold the home sport in as low-weight cross-training when the
+        # race sport differs from it.
+        cross_training_sport=cross_training_sport,
     )
     included_discipline_ids = [
         d.discipline_id
