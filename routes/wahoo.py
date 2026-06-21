@@ -42,6 +42,7 @@ from flask import (
 from database import get_db
 from provider_cardio_resolve import resolve_cardio_discipline
 from routes import provider_auth as pa
+from routes import provider_identity as pi
 from routes.auth import current_user_id
 
 bp = Blueprint('wahoo', __name__, url_prefix='/wahoo')
@@ -57,6 +58,7 @@ _WAHOO_SCOPE_VERSION = '2026-06-20'
 
 _OAUTH_STATE = 'wahoo_oauth_state'
 _OAUTH_RETURN_TO = 'wahoo_oauth_return_to'
+_OAUTH_INTENT = 'wahoo_oauth_intent'  # 'signin' (no session) vs 'connect' (logged in)
 
 _M_TO_MI = 0.000621371
 _M_TO_FT = 3.28084
@@ -67,7 +69,11 @@ _J_TO_KCAL = 1.0 / 4184.0
 
 @bp.route('/oauth/start', methods=['GET'])
 def oauth_start():
-    if current_user_id() is None:
+    # No session = "sign in / sign up with Wahoo" (design §6.1), gated by the
+    # feature flag. When the flag is off, keep the legacy behaviour: bounce to
+    # login so OAuth is connect-only for an authenticated athlete.
+    signin = current_user_id() is None
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login', next=request.url))
     client_id = os.environ.get('WAHOO_CLIENT_ID')
     if not client_id:
@@ -75,6 +81,7 @@ def oauth_start():
         abort(503)
     state = secrets.token_urlsafe(32)
     session[_OAUTH_STATE] = state
+    session[_OAUTH_INTENT] = 'signin' if signin else 'connect'
     return_to = request.args.get('return_to') or '/'
     if not return_to.startswith('/') or return_to.startswith('//'):
         return_to = '/'
@@ -94,7 +101,9 @@ def oauth_start():
 @bp.route('/oauth/callback', methods=['GET'])
 def oauth_callback():
     user_id = current_user_id()
-    if user_id is None:
+    signin = user_id is None
+    session.pop(_OAUTH_INTENT, None)
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login'))
     expected_state = session.pop(_OAUTH_STATE, None)
     return_to = session.pop(_OAUTH_RETURN_TO, '/')
@@ -136,6 +145,50 @@ def oauth_callback():
         current_app.logger.error('Wahoo token response missing access_token: %s', token_data)
         abort(502)
 
+    db = get_db()
+
+    # ── No-session sign-in / sign-up (design §6.1) ────────────────────────
+    if signin:
+        # Need id + email + name for the account, so fetch the full profile
+        # (the connect path below only needs the id).
+        prof = _fetch_wahoo_profile(access_token)
+        wahoo_user_id = prof.get('id')
+        if wahoo_user_id is None:
+            current_app.logger.error('Wahoo profile missing user id (signin)')
+            abort(502)
+        wahoo_user_id = str(wahoo_user_id)
+
+        identity = pi.get_identity(db, 'wahoo', wahoo_user_id)
+        if identity:  # existing account → log in
+            user_id = identity['user_id']
+            pi.bump_last_login(db, identity['id'])
+            username = pi.get_username(db, user_id)
+            dest = url_for('dashboard.index')
+            print(f'[wahoo-signin] match user={user_id} '  # noqa: T201
+                  f'wahoo_user_id={wahoo_user_id}')
+        else:  # new athlete → create a passwordless account
+            display = ' '.join(
+                p for p in (prof.get('first'), prof.get('last')) if p
+            ) or None
+            user_id, username = pi.create_signin_user(
+                db, provider='wahoo', provider_user_id=wahoo_user_id,
+                email=prof.get('email'), display_name=display,
+                username_hint=prof.get('first') or display,
+            )
+            dest = url_for('onboarding.connect')
+            print(f'[wahoo-signin] new-account user={user_id} '  # noqa: T201
+                  f'wahoo_user_id={wahoo_user_id} username={username}')
+
+        # Write the sync credential + scope ack just like the connect path, so
+        # D-58 prefill has tokens immediately for the just-signed-in athlete.
+        _persist_wahoo_auth(db, user_id, access_token, refresh_token,
+                            expires_in, wahoo_user_id)
+        session.clear()
+        session['user_id'] = user_id
+        session['username'] = username
+        return redirect(dest)
+
+    # ── Logged-in connect / link path ─────────────────────────────────────
     wahoo_user_id = (token_data.get('user') or {}).get('id')
     if wahoo_user_id is None:
         try:
@@ -150,12 +203,57 @@ def oauth_callback():
     if wahoo_user_id is None:
         current_app.logger.error('Wahoo user id missing')
         abort(502)
+    wahoo_user_id = str(wahoo_user_id)
 
+    _persist_wahoo_auth(db, user_id, access_token, refresh_token,
+                        expires_in, wahoo_user_id)
+    # Record the identity link so Wahoo can later sign this athlete in
+    # (design §6.2). Refuse if the Wahoo account already links elsewhere.
+    sep = '&' if '?' in return_to else '?'
+    ok, reason = pi.link_identity(db, user_id, 'wahoo', wahoo_user_id)
+    if not ok and reason == 'claimed_by_other':
+        current_app.logger.warning(
+            'Wahoo identity %s already linked to another account', wahoo_user_id)
+        return redirect(f'{return_to}{sep}wahoo_oauth_error=already_linked')
+    print(f'[wahoo-oauth] connected user={user_id} wahoo_user_id={wahoo_user_id} '  # noqa: T201
+          f'expires_in={expires_in}')
+    return redirect(f'{return_to}{sep}wahoo_connected=1')
+
+
+def _fetch_wahoo_profile(access_token: str) -> dict:
+    """Best-effort GET /v1/user → {id, email, first, last}. Returns {} on
+    failure (caller treats a missing id as fatal).
+
+    VERIFY-OWED (Rule #14): only `id` is exercised by the connect path today;
+    confirm `email` / `first` / `last` are present under the `user_read` scope
+    against a live payload before flipping PROVIDER_OAUTH_SIGNIN on. If they're
+    absent, sign-in still works (id-only) — the account just gets no email seed
+    and a name-less synthesized username."""
+    try:
+        resp = requests.get(_WAHOO_USER_URL,
+                            headers={'Authorization': f'Bearer {access_token}'},
+                            timeout=10)
+        resp.raise_for_status()
+        data = resp.json() or {}
+    except requests.RequestException as exc:
+        current_app.logger.exception('Wahoo profile fetch failed: %s', exc)
+        return {}
+    return {
+        'id': data.get('id'),
+        'email': data.get('email'),
+        'first': data.get('first') or data.get('first_name'),
+        'last': data.get('last') or data.get('last_name'),
+    }
+
+
+def _persist_wahoo_auth(db, user_id, access_token, refresh_token,
+                        expires_in, wahoo_user_id) -> None:
+    """Upsert the provider_auth sync credential + record the scope ack. Shared
+    by the sign-in and connect paths so the persisted shape is identical."""
     token_expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
         if expires_in else None
     )
-    db = get_db()
     pa.upsert_auth(
         db, user_id=user_id, provider='wahoo',
         access_token=access_token, refresh_token=refresh_token,
@@ -167,10 +265,6 @@ def oauth_callback():
         db, user_id=user_id, provider='wahoo',
         scopes_granted=_WAHOO_SCOPES, version_id=_WAHOO_SCOPE_VERSION,
     )
-    print(f'[wahoo-oauth] connected user={user_id} wahoo_user_id={wahoo_user_id} '  # noqa: T201
-          f'expires_in={expires_in}')
-    sep = '&' if '?' in return_to else '?'
-    return redirect(f'{return_to}{sep}wahoo_connected=1')
 
 
 # ── Webhook (push-with-data; ingest synchronously) ────────────────────
