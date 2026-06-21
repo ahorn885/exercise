@@ -87,7 +87,11 @@ from plan_notifications import notify_plan_terminal
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from plan_conditions_repo import load_plan_conditions_by_version
-from evidence_repo import attach_baseline_plan_evidence, load_plan_evidence
+from evidence_repo import (
+    attach_baseline_plan_evidence,
+    load_plan_evidence,
+    record_plan_evidence_citations,
+)
 from race_week_brief_repo import load_race_week_brief
 from layer5 import (
     generate_and_persist_plan_nutrition,
@@ -691,14 +695,33 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             db, uid, plan_version_id,
             {**plan_version, 'generation_status': 'ready'},
         )
-        # #826 — best-effort science-provenance capture. Link this plan version
-        # to the baseline methodology evidence sources (the per-`plan_version`
-        # "whys" behind the plan as a whole). Runs AFTER the row is durable +
-        # `ready`; isolated in its own try + commit so a provenance fault can
-        # NEVER affect the already-durable plan (mirrors the Layer 5A pattern).
-        # Idempotent (ON CONFLICT DO NOTHING), so the cron/poller replay is safe.
+        # #826 — best-effort science-provenance capture. Two channels, per the
+        # issue's "mixed" attribution: (1) deterministic — link the baseline
+        # methodology sources every plan rests on; (2) LLM-cited — persist the
+        # Layer 3A/3B source-slug citations, validating each against the store
+        # (hits link the plan, misses become curation-gap flags). Runs AFTER the
+        # row is durable + `ready`; isolated in its own try + commit so a
+        # provenance fault can NEVER affect the already-durable plan (mirrors the
+        # Layer 5A pattern). All writes are idempotent, so cron/poller replay is
+        # safe.
         try:
-            if attach_baseline_plan_evidence(db, plan_version_id) > 0:
+            wrote = attach_baseline_plan_evidence(db, plan_version_id) > 0
+            citations_by_layer = getattr(result, 'evidence_source_citations', None) or {}
+            _layer_context = {
+                'layer3a': 'Layer 3A — athlete-state assessment',
+                'layer3b': 'Layer 3B — goal viability & periodization',
+            }
+            for layer_key, slugs in citations_by_layer.items():
+                cites = [
+                    {'slug': slug,
+                     'context_text': _layer_context.get(layer_key, layer_key)}
+                    for slug in (slugs or [])
+                ]
+                if cites:
+                    record_plan_evidence_citations(
+                        db, plan_version_id, layer_key, cites)
+                    wrote = True
+            if wrote:
                 db.commit()
         except Exception as _ev_exc:  # noqa: BLE001 — provenance must not break gen
             db.rollback()

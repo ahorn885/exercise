@@ -912,6 +912,13 @@ class Layer3APayload(_Base):
     recent_trajectory: RecentTrajectory
     data_density: DataDensity
     notable_observations: list[Layer3Observation]
+    # #826 — curated evidence-source slugs the state assessment rests on, cited
+    # by the LLM from the `evidence_catalog` allowlist. Distinct from the nested
+    # `evidence_basis` (which cites internal input field paths). Per-plan-version
+    # grain: one set of "whys" for the whole assessment. Validated against
+    # `evidence_sources` at persist time (constrained-citation); optional with a
+    # default so older cache entries / tool outputs that omit it hydrate cleanly.
+    source_citations: list[str] = Field(default_factory=list)
 
 
 # ─── Layer 3A integration substrate (Athlete_Data_Integration_Spec_v6.md §10) ─
@@ -1115,6 +1122,12 @@ class Layer3BPayload(_Base):
     # layer3b.builder._NOTABLE_OBSERVATIONS_MAX (tool-schema maxItems + the
     # pre-validation priority clamp).
     notable_observations: list[Layer3Observation] = Field(max_length=10)
+    # #826 — curated evidence-source slugs the viability + periodization
+    # judgments rest on, cited by the LLM from the `evidence_catalog` allowlist.
+    # Distinct from the nested `evidence_basis` (internal input field paths).
+    # Per-plan-version grain; validated against `evidence_sources` at persist
+    # time. Optional with a default so older cache/tool outputs hydrate cleanly.
+    source_citations: list[str] = Field(default_factory=list)
 
     # ─── Event metadata (D-66 amendment 2026-05-18) ──────────────────────
     # Sourced from `race_events WHERE user_id=? AND is_target_event=true`

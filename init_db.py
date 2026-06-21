@@ -3051,64 +3051,12 @@ EXERCISES = [
 ]
 
 
-# #826 — baseline science-provenance sources: the credible, external
-# training-science the periodization engine always applies, so every generated
-# plan is linked to this set (the per-`plan_version` "whys" for v1). Each is a
-# real, recognized source constrained to one of the three allowed kinds
-# (study | guideline | expert_coach). Tuples: (slug, kind, title, summary,
-# citation, url). Seeded with is_baseline=TRUE in `init_postgres`.
-EVIDENCE_SOURCE_BASELINE_SEEDS = [
-    (
-        'periodization-foundations', 'expert_coach',
-        'Periodized training structure',
-        'Plans are organized into Base → Build → Peak → Taper phases that '
-        'progressively develop fitness then sharpen it for the goal date, the '
-        'foundational model behind every generated plan.',
-        'Bompa, T.O. & Haff, G.G. Periodization: Theory and Methodology of '
-        'Training (5th ed.). Human Kinetics.',
-        None,
-    ),
-    (
-        'polarized-intensity', 'study',
-        'Polarized training-intensity distribution',
-        'Endurance work is weighted toward easy aerobic volume with a smaller '
-        'share of high-intensity work, which outperforms threshold-heavy '
-        'distributions for most endurance athletes.',
-        'Seiler, S. (2010). What is best practice for training intensity and '
-        'duration distribution in endurance athletes? Int J Sports Physiol '
-        'Perform, 5(3), 276-291.',
-        None,
-    ),
-    (
-        'progressive-overload', 'guideline',
-        'Progressive overload in resistance training',
-        'Strength and load are advanced gradually and systematically rather '
-        'than all at once, the basis for how week-over-week load is stepped up.',
-        'ACSM Position Stand: Progression Models in Resistance Training for '
-        'Healthy Adults. Med Sci Sports Exerc, 41(3), 687-708 (2009).',
-        None,
-    ),
-    (
-        'tapering-peak', 'study',
-        'Tapering before the goal event',
-        'A pre-event reduction in training volume while preserving intensity '
-        'restores freshness and improves performance, the basis for the Taper '
-        'phase shape.',
-        'Bosquet, L. et al. (2007). Effects of tapering on performance: a '
-        'meta-analysis. Med Sci Sports Exerc, 39(8), 1358-1365.',
-        None,
-    ),
-    (
-        'recovery-adaptation', 'guideline',
-        'Recovery and the overload-adaptation cycle',
-        'Adaptation happens during recovery, so rest days and lighter weeks are '
-        'scheduled deliberately to let the prescribed load translate into '
-        'fitness and to manage injury risk.',
-        'Kellmann, M. et al. (2018). Recovery and Performance in Sport: '
-        'Consensus Statement. Int J Sports Physiol Perform, 13(2), 240-245.',
-        None,
-    ),
-]
+# #826 — the curated science-provenance sources now live in the canonical
+# `evidence_catalog` module (shared with the Layer 3 prompts so cited slugs
+# always exist in the store). Re-exported here for back-compat with callers
+# /tests that referenced this name.
+from evidence_catalog import seed_rows as _evidence_seed_rows
+EVIDENCE_SOURCE_SEEDS = _evidence_seed_rows()
 
 
 def init_postgres():
@@ -3175,22 +3123,26 @@ def init_postgres():
         _pvm_rows
     )
     print(f"[init_db] seeded provider_value_map: {len(_pvm_rows)} rows")  # Rule #15
-    # #826 — seed the baseline science-provenance sources (the house-methodology
-    # "whys" every periodized plan rests on). ON CONFLICT (slug) DO UPDATE re-syncs
-    # the table to this authoring source each deploy, mirroring provider_value_map.
-    # `evidence_sources` is created in the migration list above, so the table is
-    # guaranteed present here.
+    # #826 — seed the curated science-provenance sources from the canonical
+    # catalog (`evidence_catalog`), the same module the Layer 3 prompts cite
+    # from, so every citable slug exists in the store. ON CONFLICT (slug) DO
+    # UPDATE re-syncs the table to the catalog each deploy (mirrors
+    # provider_value_map). `evidence_sources` is created in the migration list
+    # above, so the table is guaranteed present here. Rows carry per-row
+    # is_baseline (baseline sources auto-link to every plan; the rest are
+    # cited selectively by Layer 3).
     cur.executemany(
         '''INSERT INTO evidence_sources
            (slug, kind, title, summary, citation, url, is_baseline)
-           VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (slug) DO UPDATE SET
                kind=EXCLUDED.kind, title=EXCLUDED.title, summary=EXCLUDED.summary,
-               citation=EXCLUDED.citation, url=EXCLUDED.url, is_baseline=TRUE''',
-        EVIDENCE_SOURCE_BASELINE_SEEDS,
+               citation=EXCLUDED.citation, url=EXCLUDED.url,
+               is_baseline=EXCLUDED.is_baseline''',
+        EVIDENCE_SOURCE_SEEDS,
     )
     print(f"[init_db] seeded evidence_sources: "  # Rule #15
-          f"{len(EVIDENCE_SOURCE_BASELINE_SEEDS)} baseline rows")
+          f"{len(EVIDENCE_SOURCE_SEEDS)} rows")
     # Seed exercise equipment tags (always update — safe to re-run)
     for exercise, tags in EXERCISE_EQUIPMENT.items():
         cur.execute(
