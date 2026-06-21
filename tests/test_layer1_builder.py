@@ -400,11 +400,12 @@ class TestFullyPopulated:
             {"id": 1, "user_id": 1, "start_date": date(2026, 7, 1),
              "end_date": date(2026, 7, 5), "override_type": "away",
              "unavailable_locale": None, "away_locale": "Moab",
-             "brought_craft": "gravel_bike", "notes": "training camp"},
+             "brought_craft": "gravel_bike", "volume_pct": None,
+             "notes": "training camp"},
             {"id": 2, "user_id": 1, "start_date": date(2026, 7, 10),
              "end_date": date(2026, 7, 12), "override_type": "indoor_only",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": "", "notes": ""},
+             "brought_craft": "", "volume_pct": None, "notes": ""},
         ])
         # 26) coaching_preferences — #690 Coaching Memory. One permanent
         # high-variety pref + one advisory avoid note; ordered created_at ASC.

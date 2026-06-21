@@ -19,6 +19,7 @@ import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, g
 from zxcvbn import zxcvbn
 
+import mfa
 from database import get_db
 from email_helper import send_email, email_configured
 
@@ -238,21 +239,87 @@ def login():
             return render_template('auth/login.html', username=username,
                                    registration_open=_registration_open())
 
-        session.clear()
-        session['user_id'] = row['id']
-        session['username'] = username
-        db.execute('UPDATE users SET last_login=? WHERE id=?',
-                   (datetime.utcnow().isoformat(timespec='seconds'), row['id']))
-        db.commit()
-
         next_url = request.args.get('next') or url_for('dashboard.index')
-        # Reject off-site redirects for safety.
-        if not next_url.startswith('/'):
-            next_url = url_for('dashboard.index')
-        return redirect(next_url)
+
+        if mfa.is_enabled(db, row['id']):
+            # Password is correct, but this account has 2FA on — do NOT grant a
+            # session yet. Stash a short-lived pending marker that the
+            # /auth/totp challenge converts into a real login once the
+            # authenticator code checks out. `session.clear()` first so no
+            # stale auth state lingers while the second factor is outstanding.
+            session.clear()
+            session['totp_pending_user_id'] = row['id']
+            session['totp_pending_username'] = username
+            session['totp_pending_next'] = (
+                next_url if next_url.startswith('/') else url_for('dashboard.index')
+            )
+            return redirect(url_for('auth.totp_challenge'))
+
+        return _finalize_login(db, row['id'], username, next_url)
 
     return render_template('auth/login.html', username='',
                            registration_open=_registration_open())
+
+
+def _finalize_login(db, user_id, username, next_url):
+    """Grant a real session and bounce to `next_url`. Shared by the
+    single-factor login path and the 2FA challenge so last_login bookkeeping
+    and the open-redirect guard live in one place."""
+    session.clear()
+    session['user_id'] = user_id
+    session['username'] = username
+    db.execute('UPDATE users SET last_login=? WHERE id=?',
+               (datetime.utcnow().isoformat(timespec='seconds'), user_id))
+    db.commit()
+    # Reject off-site redirects for safety.
+    if not next_url or not next_url.startswith('/'):
+        next_url = url_for('dashboard.index')
+    return redirect(next_url)
+
+
+@bp.route('/totp', methods=['GET', 'POST'])
+@_limit('10 per 5 minutes')
+def totp_challenge():
+    """Second-factor gate for accounts with 2FA enabled (#265).
+
+    Reachable only mid-login: `login()` sets `totp_pending_user_id` after a
+    correct password but withholds the session until a valid TOTP lands here.
+    No pending marker → nothing to challenge, so bounce to /auth/login. The
+    endpoint is in `_AUTH_EXEMPT_ENDPOINTS` (the user isn't logged in yet) and
+    rate-limited to blunt code brute-forcing."""
+    pending_uid = session.get('totp_pending_user_id')
+    if not pending_uid:
+        return redirect(url_for('auth.login'))
+    db = get_db()
+
+    if request.method == 'POST':
+        row = db.execute(
+            'SELECT secret, confirmed_at FROM user_totp WHERE user_id = ?',
+            (pending_uid,)
+        ).fetchone()
+        if not row or not row['confirmed_at']:
+            # 2FA was turned off out from under this half-finished login (e.g. a
+            # password reset in another tab cleared it). Drop the pending state
+            # and send them back to a clean sign-in.
+            _clear_totp_pending()
+            flash('Two-factor authentication is no longer required. '
+                  'Please sign in again.', 'info')
+            return redirect(url_for('auth.login'))
+        if mfa.verify_code(row['secret'], request.form.get('code') or ''):
+            return _finalize_login(
+                db, pending_uid,
+                session.get('totp_pending_username') or '',
+                session.get('totp_pending_next') or url_for('dashboard.index'),
+            )
+        flash('That code didn\'t match. Check your authenticator and try again.',
+              'danger')
+
+    return render_template('auth/totp.html')
+
+
+def _clear_totp_pending():
+    for key in ('totp_pending_user_id', 'totp_pending_username', 'totp_pending_next'):
+        session.pop(key, None)
 
 
 @bp.route('/logout', methods=['GET', 'POST'])
@@ -423,6 +490,13 @@ def reset(token):
                    (_hash_password(password), row['user_id']))
         db.execute('UPDATE password_resets SET used_at = ? WHERE token = ?',
                    (datetime.utcnow().isoformat(timespec='seconds'), token))
+        # Recovery path for a lost authenticator (#265, Andy 2026-06-21): a
+        # completed reset also clears any 2FA enrollment, so an athlete locked
+        # out of their TOTP app gets back in via the email reset flow rather
+        # than one-time backup codes. Proving control of the registered email
+        # is the recovery factor. The athlete can re-enable 2FA from /profile
+        # afterwards.
+        mfa.disable(db, row['user_id'])
         db.commit()
         # Clear any active session — the user can sign back in with the new
         # password. Defends against an attacker who hijacked a session via

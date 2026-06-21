@@ -1589,6 +1589,17 @@ def _event_window_label(segment: "EventWindowSegment") -> str:
                 f"away at \"{ov.away_locale}\" (training environment: that "
                 f"location's terrain/equipment + any craft you have there)"
             )
+        elif ov.override_type == "reduced_volume":
+            # Slice 6 (#593) — Trigger-#1 wording (owed Andy's sign-off at build).
+            pct = int(round((ov.volume_pct or 0.0) * 100))
+            parts.append(
+                f"in transit — reduced volume (about {pct}% of a normal training "
+                f"day; a short/easy session only)"
+            )
+        elif ov.override_type == "no_training":
+            parts.append(
+                "in transit — no training (travel day; this day is unavailable)"
+            )
         else:  # defensive
             parts.append(ov.override_type)
     label = " + ".join(parts)
@@ -1648,11 +1659,13 @@ def _format_event_window_overlay(
         # Trigger-#1 wording APPROVED (Andy 2026-06-14) — away-aware (Slice 2).
         "Part of this block falls inside a declared event window where the "
         "training environment differs — either reduced (home, indoor-only or a "
-        "locale closed) or replaced (training away at another location). On the "
+        "locale closed), replaced (training away at another location), or scaled "
+        "down (in transit — reduced or no training). On the "
         "dates below, routing differs from the default feasibility block above. "
         "Compose any session dated within a window against THAT window's routing; "
         "sessions outside the windows use the default. A session that lands on a "
-        "window day is composed at that day's environment, never dropped.",
+        "feasibility-window day is composed at that day's environment, never "
+        "dropped.",
     ]
     for seg in sorted(overlapping, key=lambda s: (s.start_date, s.end_date)):
         disp_start = max(seg.start_date, unit_start)
@@ -1675,8 +1688,59 @@ def _format_event_window_overlay(
         "unconstrained days; let indoor/strength-appropriate work fall on the "
         "window days."
     )
+    if any(s.volume_pct is not None for s in overlapping):
+        # Slice 6 (#593) — Trigger-#1 wording (owed Andy's sign-off at build). The
+        # week's session count was ALREADY scaled down deterministically for these
+        # in-transit dates (the grid above reflects it), so this is placement, not
+        # a count instruction: keep the listed dates light/empty as labelled.
+        out.append(
+            "In-transit dates (above): the week's session count has already been "
+            "reduced to match. Place no session on a no-training day, and only a "
+            "short/easy session on a reduced-volume day; lay the week's remaining "
+            "sessions out across the other days."
+        )
     out.append("")
     return out
+
+
+def _week_volume_capacity(
+    wk_start: _date_type,
+    wk_end: _date_type,
+    enabled_dows: set[str],
+    volume_segments: list["EventWindowSegment"],
+) -> tuple[float, int]:
+    """Slice 6 (#593) — the deterministic capacity factor + no-training-day count
+    for ONE calendar week under any overlapping volume windows.
+
+    Each enabled training day in the week contributes `1.0` normally, the
+    most-reducing covering segment's `volume_pct` when one applies (`no_training`
+    → 0.0), and the factor is `sum(contributions) / enabled_day_count`. Returns
+    `(1.0, 0)` when no enabled day is touched, so a non-windowed week is
+    byte-identical. The no-training count is fed back to shrink the week's
+    `available_days` (the session-ceiling placement guarantee)."""
+    dates: list[_date_type] = []
+    d = wk_start
+    while d <= wk_end:
+        if not enabled_dows or d.strftime("%a") in enabled_dows:
+            dates.append(d)
+        d += timedelta(days=1)
+    if not dates:
+        return 1.0, 0
+    total = 0.0
+    no_training_days = 0
+    for d in dates:
+        covering = [
+            s.volume_pct for s in volume_segments
+            if s.volume_pct is not None and s.start_date <= d <= s.end_date
+        ]
+        if covering:
+            pct = min(covering)
+            total += pct
+            if pct == 0.0:
+                no_training_days += 1
+        else:
+            total += 1.0
+    return total / len(dates), no_training_days
 
 
 def _format_session_grid(
@@ -1741,6 +1805,13 @@ def _format_session_grid(
     _away_segments = [
         s for s in (event_window_segments or []) if s.away_feasibility is not None
     ]
+    # Slice 6 (#593) — volume windows scale a week's target hours down (and drop
+    # no_training days from the placement pool). Resolve the athlete's enabled
+    # training days once for the per-week capacity math (empty set → all 7 open).
+    _volume_segments = [
+        s for s in (event_window_segments or []) if s.volume_pct is not None
+    ]
+    _enabled_dows = derive_enabled_days((layer1_payload or {}).get("daily_availability_windows"))
     # plan-72 root fix: the race truncates the final taper week, but `available_days`
     # is the athlete's nominal weekly figure — so the session ceiling (2×days) lets
     # the grid emit more sessions than there are placeable days, the synthesizer
@@ -1762,12 +1833,29 @@ def _format_session_grid(
     for w in weeks:
         week_feasibility = terrain_feasibility
         week_available_days = available_days
+        week_volume_factor = 1.0
         if _phase_spec is not None:
             wk_start = _phase_spec.start_date + timedelta(days=(w - 1) * 7)
             wk_end = wk_start + timedelta(days=6)
             week_available_days = placeable_days_in_week(
                 available_days, layer1_payload, wk_start, wk_end, _race_cutoff
             )
+            if _volume_segments:
+                week_volume_factor, _no_train = _week_volume_capacity(
+                    wk_start, wk_end, _enabled_dows, _volume_segments
+                )
+                if week_volume_factor != 1.0 or _no_train:
+                    _days_before = week_available_days
+                    # no_training days leave the placement pool so the ≤2/day
+                    # ceiling stays a real guarantee; the factor does the volume
+                    # reduction. Floor at 1 — the factor zeroes a full-rest week.
+                    week_available_days = max(1, week_available_days - _no_train)
+                    print(  # Rule #15 — the volume-window scale decision.
+                        f"volume_window_scale: {phase_name}:w{w} "
+                        f"dates={wk_start.isoformat()}..{wk_end.isoformat()} "
+                        f"factor={week_volume_factor:.3f} no_training_days={_no_train} "
+                        f"available_days {_days_before}→{week_available_days}"
+                    )
             if week_available_days != available_days:
                 # Rule #15: the race-week truncation that shrinks the ceiling.
                 print(
@@ -1810,6 +1898,7 @@ def _format_session_grid(
             ),
             skill_gated_ids=frozenset(skill_gated or {}),
             layer3a_payload=layer3a_payload,
+            volume_capacity_factor=week_volume_factor,
         )
         # Rule #15 observability: the deterministic grid decides sessions/week
         # per discipline BEFORE feasibility runs — the upstream half of a
