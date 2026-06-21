@@ -2667,6 +2667,27 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
     "ON plan_versions (user_id) "
     "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
+    # ── Layer 3D HITL gate (#213, Slice 1) ───────────────────────────────
+    # The 3D gate aggregates the human-review items the upstream nodes already
+    # emit (2A/2D/2E/3B) and parks a plan at `needs_review` instead of advancing
+    # to Layer 4 synthesis when the gate is non-green. `hitl_gate` persists the
+    # whole `Layer3DGate` (items + resolutions + gate_status + evaluated_against)
+    # as one JSONB blob — read/written whole, no per-item querying at v1 scale
+    # (Layer3D_Spec §10). Nullable; a plan with no gate state (legacy / clean
+    # athlete) reads NULL. The accessor (plan_sessions_repo) tolerates absence so
+    # the code is deploy-safe even before this column lands.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS hitl_gate JSONB",
+    # Add the `needs_review` value to the generation_status CHECK. Drop-then-add
+    # is idempotent; the new set is a superset so existing rows still satisfy it
+    # (same pattern as the layer4_cache entry_point + plan_sessions index_in_day
+    # realignments above). A plan that hits a non-green 3D gate parks at
+    # `needs_review` rather than `generating`.
+    """DO $$
+    BEGIN
+        ALTER TABLE plan_versions DROP CONSTRAINT IF EXISTS plan_versions_generation_status_chk;
+        ALTER TABLE plan_versions ADD CONSTRAINT plan_versions_generation_status_chk
+            CHECK (generation_status IN ('generating', 'ready', 'failed', 'needs_review'));
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [
