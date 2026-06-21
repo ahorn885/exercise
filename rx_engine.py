@@ -31,6 +31,7 @@ from calculations import (
 )
 from layer0_progression import progression_pattern
 from provider_strength_resolve import resolve_strength_ex_id
+from exercise_inventory_bridge import v1_names_for_exid
 
 
 DELOAD_THRESHOLD = 5
@@ -213,6 +214,22 @@ def apply_session_outcome(db, exercise, date, sets,
     else:
         layer0_exercise_id, match_kind = resolve_strength_ex_id(exercise)
     layer0_pattern = _layer0_progression_pattern(db, layer0_exercise_id)
+
+    # #814 — the name read above misses for layer0-renamed lifts: exercise_inventory
+    # is keyed on the v1 short names ('Back Squat'), but a logged/plan-gen layer0
+    # name ('Back Squat (Barbell)') won't match. When it missed but an EX-id
+    # resolved, bridge to the v1 display row by EX-id so discipline/type/
+    # suggested_volume (+ the movement_pattern fallback below) still populate on
+    # the new current_rx row. Display-only; progression already keys off the EX-id.
+    if ei is None and layer0_exercise_id:
+        bridge_names = v1_names_for_exid(layer0_exercise_id)
+        if bridge_names:
+            ei = db.execute(
+                '''SELECT discipline, type, movement_pattern, suggested_volume
+                   FROM exercise_inventory WHERE exercise = ANY(?)
+                   ORDER BY exercise LIMIT 1''',
+                (bridge_names,)
+            ).fetchone()
 
     # weight_increment: layer0 carries no per-exercise increment (#335 D4), and
     # the exercise_inventory column is unseeded (always NULL). Keep only the
