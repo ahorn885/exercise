@@ -871,6 +871,18 @@ _PG_MIGRATIONS = [
         used_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS password_resets_user_id_idx ON password_resets(user_id)",
+    # #251 — email verification tokens. Single-use, time-limited. `email` is
+    # captured at issue time so a token can't verify a *different* address the
+    # athlete later switched to (consume checks it still matches users.email).
+    """CREATE TABLE IF NOT EXISTS email_verifications (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        email TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS email_verifications_user_id_idx ON email_verifications(user_id)",
     # Admin action audit log. See SQLite migration above for rationale.
     """CREATE TABLE IF NOT EXISTS admin_audit (
         id SERIAL PRIMARY KEY,
@@ -2661,6 +2673,38 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS notes",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coaching_voice_preferences",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS previous_coaching",
+    # ── OAuth sign-in / connect-first identity ────────────────────────────
+    # Per Onboarding_OAuth_Signin_Design_v1 §5 (#251). provider_identity is
+    # the DURABLE "sign in with <provider>" login link — deliberately separate
+    # from provider_auth (the revocable sync credential). It must survive a
+    # sync disconnect, which nulls provider_auth.provider_user_id
+    # (routes/provider_auth.disconnect), so login can't ride on that column.
+    # UNIQUE (provider, provider_user_id) enforces one provider account → at
+    # most one AIDSTATION account — the invariant provider_auth can't, since
+    # its provider_user_id is non-unique. Garmin is intentionally NOT a
+    # sign-in provider (no OAuth; API paused) — no reserved row needed, the
+    # table is open-vocab on `provider`.
+    """CREATE TABLE IF NOT EXISTS provider_identity (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        email_at_link TEXT,
+        linked_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMP,
+        UNIQUE (provider, provider_user_id),
+        UNIQUE (user_id, provider)
+    )""",
+    "CREATE INDEX IF NOT EXISTS provider_identity_user_idx ON provider_identity (user_id)",
+    # Passwordless-capable accounts: a "sign in with <provider>" account has
+    # no password. routes/auth._check_password already fails closed on an
+    # empty/NULL hash, so a passwordless row simply can't authenticate via the
+    # password form (design decision #2). DROP NOT NULL is a no-op on re-run.
+    "ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL",
+    # Provider-offered emails are unverified-by-us. This flag stays FALSE for
+    # provider-seeded + legacy rows until a verify flow ships; it gates the
+    # no-silent-merge-on-email rule (design decision #5).
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE",
     # Plan-lifecycle notifications (#259/#260) — email + in-app badge when plan
     # generation reaches a terminal status (`ready`/`failed`) in
     # `_advance_plan_generation`. Both the progress-screen poller AND the

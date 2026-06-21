@@ -22,8 +22,13 @@ from zxcvbn import zxcvbn
 import mfa
 from database import get_db
 from email_helper import send_email, email_configured
+from routes import provider_identity as pi
 
 PASSWORD_RESET_TTL_MIN = 30
+# Email-verification links live longer than reset links — there's no security
+# urgency to a verify link (it only flips a flag; it can't change credentials),
+# and athletes click them at leisure.
+EMAIL_VERIFY_TTL_HOURS = 24
 # zxcvbn score table: 0=too guessable, 1=very guessable,
 # 2=somewhat guessable, 3=safely unguessable, 4=very unguessable.
 # 3 protects against offline slow-hash attack; with bcrypt + the rate
@@ -229,7 +234,8 @@ def login():
         if not username or not password:
             flash('Username and password are required.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         row = db.execute(
             'SELECT id, password_hash FROM users WHERE username=?', (username,)
@@ -237,7 +243,8 @@ def login():
         if not row or not _check_password(password, row['password_hash']):
             flash('Invalid username or password.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         next_url = request.args.get('next') or url_for('dashboard.index')
 
@@ -258,7 +265,8 @@ def login():
         return _finalize_login(db, row['id'], username, next_url)
 
     return render_template('auth/login.html', username='',
-                           registration_open=_registration_open())
+                           registration_open=_registration_open(),
+                           signin_providers=pi.enabled_signin_providers())
 
 
 def _finalize_login(db, user_id, username, next_url):
@@ -368,7 +376,8 @@ def register():
             return render_template('auth/register.html',
                                    username=username, email=email or '',
                                    display_name=display_name or '',
-                                   is_bootstrap=is_bootstrap)
+                                   is_bootstrap=is_bootstrap,
+                                   signin_providers=pi.enabled_signin_providers())
 
         cur = db.execute(
             'INSERT INTO users (username, email, password_hash, display_name) '
@@ -390,6 +399,15 @@ def register():
             pass
         db.commit()
 
+        # Confirm the email if one was given (#251). Best-effort: a mail
+        # failure must not block registration — the athlete can resend from
+        # account settings.
+        if email:
+            try:
+                send_verification_email(db, new_user_id, email)
+            except Exception:
+                pass
+
         session.clear()
         session['user_id'] = new_user_id
         session['username'] = username
@@ -405,7 +423,8 @@ def register():
 
     return render_template('auth/register.html',
                            username='', email='', display_name='',
-                           is_bootstrap=is_bootstrap)
+                           is_bootstrap=is_bootstrap,
+                           signin_providers=pi.enabled_signin_providers())
 
 
 # ── Password reset ───────────────────────────────────────────────────────────
@@ -532,3 +551,145 @@ def _send_password_reset_email(to_address: str, display_name: str, reset_url: st
 <p style="font-size:12px;color:#666;">— AIDSTATION</p>
 </body></html>"""
     send_email(to_address, subject, text, html)
+
+
+# ── Email verification ─────────────────────────────────────────────────────
+
+def issue_email_verification(db, user_id: int, email: str) -> str:
+    """Create a single-use, time-limited verification token for `email` and
+    return it. Caller is responsible for actually sending the link (so the
+    DB write is testable without a mail round-trip)."""
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_TTL_HOURS)
+    db.execute(
+        'INSERT INTO email_verifications (token, user_id, email, expires_at) '
+        'VALUES (?,?,?,?)',
+        (token, user_id, email, expires.isoformat(timespec='seconds')),
+    )
+    db.commit()
+    return token
+
+
+def consume_email_verification(db, token: str) -> tuple[str, int | None]:
+    """Validate `token` and, on success, mark the user's email verified and the
+    token used. Returns (status, user_id):
+
+      - ('ok', uid)       — verified; flag flipped, token consumed.
+      - ('invalid', None) — no such token.
+      - ('used', uid)     — already consumed.
+      - ('expired', uid)  — past its TTL.
+      - ('stale', uid)    — the account's email changed since the token was
+                            issued, so it no longer applies (don't verify a
+                            stale address).
+
+    No login required — possession of the token is the proof, exactly like the
+    password-reset link.
+    """
+    row = db.execute(
+        'SELECT ev.user_id, ev.email, ev.expires_at, ev.used_at, '
+        '       u.email AS current_email '
+        '  FROM email_verifications ev '
+        '  JOIN users u ON u.id = ev.user_id '
+        ' WHERE ev.token = ?',
+        (token,),
+    ).fetchone()
+    if not row:
+        return ('invalid', None)
+    uid = row['user_id']
+    if row['used_at']:
+        return ('used', uid)
+    expires_at = row['expires_at']
+    expires_dt = (expires_at if isinstance(expires_at, datetime)
+                  else datetime.fromisoformat(str(expires_at)))
+    if expires_dt < datetime.utcnow():
+        return ('expired', uid)
+    # The token verifies one specific address; if the athlete has since changed
+    # their email, this token is moot (a fresh one would've been issued).
+    if (row['current_email'] or '').lower() != (row['email'] or '').lower():
+        return ('stale', uid)
+    db.execute('UPDATE users SET email_verified = TRUE WHERE id = ?', (uid,))
+    db.execute('UPDATE email_verifications SET used_at = ? WHERE token = ?',
+               (datetime.utcnow().isoformat(timespec='seconds'), token))
+    db.commit()
+    return ('ok', uid)
+
+
+def send_verification_email(db, user_id: int, email: str) -> bool:
+    """Issue a token and email the verification link. Returns True if the mail
+    was put on the wire (False when email isn't configured — the link is still
+    printed to logs by send_email's dev fallback). No-op (False) for a blank
+    email."""
+    if not email:
+        return False
+    token = issue_email_verification(db, user_id, email)
+    verify_url = url_for('auth.verify_email', token=token, _external=True)
+    _send_verification_email(email, verify_url)
+    print(f'[email-verify] issued user={user_id}')  # Rule #15 — no token logged
+    return True
+
+
+def _send_verification_email(to_address: str, verify_url: str) -> None:
+    subject = 'AIDSTATION — confirm your email'
+    text = (
+        f'Confirm this email address for your AIDSTATION account:\n\n'
+        f'  {verify_url}\n\n'
+        f'The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn\'t '
+        f'create an AIDSTATION account, you can ignore this email.\n\n'
+        f'— AIDSTATION\n'
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
+<p>Confirm this email address for your AIDSTATION account:</p>
+<p><a href="{verify_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Confirm email</a></p>
+<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{verify_url}</span></p>
+<p style="font-size:12px;color:#666;">The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn't create an AIDSTATION account, you can ignore this email.</p>
+<p style="font-size:12px;color:#666;">— AIDSTATION</p>
+</body></html>"""
+    send_email(to_address, subject, text, html)
+
+
+@bp.route('/verify/<token>', methods=['GET'])
+def verify_email(token):
+    """Complete email verification from the link. Works logged-out (the token
+    is the proof). Flips `users.email_verified` and lands the athlete on a
+    sensible next screen with a flash."""
+    db = get_db()
+    status, _uid = consume_email_verification(db, token)
+    messages = {
+        'ok': ('Email confirmed. Thanks!', 'success'),
+        'used': ('That link was already used — your email is confirmed.', 'info'),
+        'expired': ('That confirmation link has expired. Request a new one from '
+                    'your account settings.', 'warning'),
+        'stale': ('That link was for a different email address. Request a new '
+                  'one from your account settings.', 'warning'),
+        'invalid': ('That confirmation link is invalid.', 'danger'),
+    }
+    msg, category = messages.get(status, messages['invalid'])
+    flash(msg, category)
+    if current_user_id():
+        return redirect(url_for('profile.account_settings'))
+    return redirect(url_for('auth.login'))
+
+
+@bp.route('/verify/resend', methods=['POST'])
+@_limit('5 per 15 minutes')
+def resend_verification():
+    """Re-send the verification link to the logged-in athlete's current email.
+    Used from account settings and by athletes confirming a provider-seeded
+    address."""
+    db = get_db()
+    uid = current_user_id()
+    if not uid:
+        return redirect(url_for('auth.login'))
+    row = db.execute(
+        'SELECT email, email_verified FROM users WHERE id = ?', (uid,)
+    ).fetchone()
+    if not row or not row['email']:
+        flash('Add an email to your account first, then confirm it.', 'warning')
+    elif row['email_verified']:
+        flash('Your email is already confirmed.', 'info')
+    else:
+        send_verification_email(db, uid, row['email'])
+        flash(f'Confirmation link sent to {row["email"]}. Check your inbox '
+              f'(and spam folder).', 'info')
+    return redirect(url_for('profile.account_settings'))

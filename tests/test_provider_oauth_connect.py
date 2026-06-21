@@ -91,6 +91,9 @@ class TestStravaOAuth:
                             lambda db, **kw: captured.update(kw) or 1)
         monkeypatch.setattr(strava.pa, 'record_oauth_scope_ack',
                             lambda db, **kw: captured.setdefault('ack', kw) or 1)
+        # Connect path now also records the identity link (#251 §6.2); stub it —
+        # identity behaviour is covered in test_provider_oauth_signin.
+        monkeypatch.setattr(strava.pi, 'link_identity', lambda *a, **k: (True, 'linked'))
         client = _make_app(strava.bp).test_client()
 
         # round-trip the state via a real start call

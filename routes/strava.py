@@ -45,6 +45,7 @@ from flask import (
 
 from database import get_db
 from routes import provider_auth as pa
+from routes import provider_identity as pi
 from routes.auth import current_user_id
 
 bp = Blueprint('strava', __name__, url_prefix='/strava')
@@ -65,6 +66,7 @@ _STRAVA_SCOPE_VERSION = '2026-06-20'
 
 _OAUTH_STATE = 'strava_oauth_state'
 _OAUTH_RETURN_TO = 'strava_oauth_return_to'
+_OAUTH_INTENT = 'strava_oauth_intent'  # 'signin' (no session) vs 'connect' (logged in)
 
 
 # ── OAuth initiation ──────────────────────────────────────────────────
@@ -72,8 +74,13 @@ _OAUTH_RETURN_TO = 'strava_oauth_return_to'
 @bp.route('/oauth/start', methods=['GET'])
 def oauth_start():
     """Stash a state token + the post-callback redirect target, then bounce
-    the user to Strava's consent screen."""
-    if current_user_id() is None:
+    the user to Strava's consent screen.
+
+    No session = "sign in / sign up with Strava" (design §6.1), gated by the
+    feature flag. Flag off keeps the legacy connect-only behaviour (bounce to
+    login)."""
+    signin = current_user_id() is None
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login', next=request.url))
 
     client_id = os.environ.get('STRAVA_CLIENT_ID')
@@ -83,6 +90,7 @@ def oauth_start():
 
     state = secrets.token_urlsafe(32)
     session[_OAUTH_STATE] = state
+    session[_OAUTH_INTENT] = 'signin' if signin else 'connect'
     return_to = request.args.get('return_to') or '/'
     if not return_to.startswith('/') or return_to.startswith('//'):
         return_to = '/'
@@ -107,7 +115,9 @@ def oauth_callback():
     """Strava redirects back with `?code=…&state=…&scope=…`. Exchange the
     code for tokens, persist via `provider_auth`, record the scope ack."""
     user_id = current_user_id()
-    if user_id is None:
+    signin = user_id is None
+    session.pop(_OAUTH_INTENT, None)
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login'))
 
     expected_state = session.pop(_OAUTH_STATE, None)
@@ -152,10 +162,12 @@ def oauth_callback():
     access_token = token_data.get('access_token')
     refresh_token = token_data.get('refresh_token')
     expires_at = token_data.get('expires_at')  # absolute epoch seconds
-    athlete_id = (token_data.get('athlete') or {}).get('id')
+    athlete = token_data.get('athlete') or {}
+    athlete_id = athlete.get('id')
     if not access_token or not athlete_id:
         current_app.logger.error('Strava token response missing fields: %s', token_data)
         abort(502)
+    athlete_id = str(athlete_id)
 
     token_expires_at = (
         datetime.fromtimestamp(int(expires_at), tz=timezone.utc)
@@ -166,6 +178,58 @@ def oauth_callback():
     granted_scopes = request.args.get('scope') or _STRAVA_SCOPES
 
     db = get_db()
+
+    # ── No-session sign-in / sign-up (design §6.1) ────────────────────────
+    if signin:
+        identity = pi.get_identity(db, 'strava', athlete_id)
+        if identity:  # existing account → log in
+            user_id = identity['user_id']
+            pi.bump_last_login(db, identity['id'])
+            username = pi.get_username(db, user_id)
+            dest = url_for('dashboard.index')
+            print(f'[strava-signin] match user={user_id} athlete_id={athlete_id}')  # noqa: T201
+        else:  # new athlete → passwordless account. Strava gives no email,
+               # so the account starts email-less (design §4/§7) — name comes
+               # from the token's `athlete` object.
+            display = ' '.join(
+                p for p in (athlete.get('firstname'), athlete.get('lastname')) if p
+            ) or None
+            user_id, username = pi.create_signin_user(
+                db, provider='strava', provider_user_id=athlete_id,
+                email=None, display_name=display,
+                username_hint=athlete.get('firstname') or display,
+            )
+            dest = url_for('onboarding.connect')
+            print(f'[strava-signin] new-account user={user_id} '  # noqa: T201
+                  f'athlete_id={athlete_id} username={username}')
+        _persist_strava_auth(db, user_id, access_token, refresh_token,
+                             token_expires_at, athlete_id, granted_scopes)
+        session.clear()
+        session['user_id'] = user_id
+        session['username'] = username
+        return redirect(dest)
+
+    # ── Logged-in connect / link path ─────────────────────────────────────
+    _persist_strava_auth(db, user_id, access_token, refresh_token,
+                         token_expires_at, athlete_id, granted_scopes)
+    sep = '&' if '?' in return_to else '?'
+    ok, reason = pi.link_identity(db, user_id, 'strava', athlete_id)
+    if not ok and reason == 'claimed_by_other':
+        current_app.logger.warning(
+            'Strava identity %s already linked to another account', athlete_id)
+        return redirect(f'{return_to}{sep}strava_oauth_error=already_linked')
+    # Rule #15 — record the connect decision (no token material).
+    print(  # noqa: T201
+        f'[strava-oauth] connected user={user_id} athlete_id={athlete_id} '
+        f'scopes={granted_scopes!r} expires_at={expires_at}'
+    )
+    return redirect(f'{return_to}{sep}strava_connected=1')
+
+
+def _persist_strava_auth(db, user_id, access_token, refresh_token,
+                         token_expires_at, athlete_id, granted_scopes) -> None:
+    """Upsert the provider_auth sync credential + record the scope ack. Shared
+    by the sign-in and connect paths so the persisted shape is identical."""
     pa.upsert_auth(
         db,
         user_id=user_id,
@@ -185,14 +249,6 @@ def oauth_callback():
         scopes_granted=granted_scopes,
         version_id=_STRAVA_SCOPE_VERSION,
     )
-    # Rule #15 — record the connect decision (no token material).
-    print(  # noqa: T201
-        f'[strava-oauth] connected user={user_id} athlete_id={athlete_id} '
-        f'scopes={granted_scopes!r} expires_at={expires_at}'
-    )
-
-    sep = '&' if '?' in return_to else '?'
-    return redirect(f'{return_to}{sep}strava_connected=1')
 
 
 # ── Webhook ───────────────────────────────────────────────────────────

@@ -144,6 +144,9 @@ class TestOAuth:
         monkeypatch.setattr(wahoo.requests, 'get', lambda *a, **k: _FakeResp({'id': 314}))
         monkeypatch.setattr(wahoo.pa, 'upsert_auth', lambda db, **kw: captured.update(kw) or 1)
         monkeypatch.setattr(wahoo.pa, 'record_oauth_scope_ack', lambda db, **kw: 1)
+        # The connect path now also records the identity link (#251 §6.2);
+        # stub it — the identity behaviour is covered in test_provider_oauth_signin.
+        monkeypatch.setattr(wahoo.pi, 'link_identity', lambda *a, **k: (True, 'linked'))
         client = _make_app(wahoo.bp).test_client()
         start = client.get('/wahoo/oauth/start?return_to=/connections')
         state = urllib.parse.parse_qs(
