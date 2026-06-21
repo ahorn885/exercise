@@ -23,6 +23,9 @@
     · {{ session_count }} session{{ '' if session_count == 1 else 's' }}
   </p>
 
+  {# #826 — always-visible "science behind your plan" panel. #}
+  {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
+
   <div class="card card-pad sec nutri-card">
     <div class="nutri-head">
       <p class="eyebrow accent">● Nutrition</p>

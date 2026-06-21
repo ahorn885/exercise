@@ -1,0 +1,55 @@
+{# #826 — Admin · evidence-source catalog. Read view over the canonical,
+   curated research/training-science behind plan decisions. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Evidence sources — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>Evidence sources</b>{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.curation_flags') }}">Curation gaps</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.dashboard') }}">Back to users</a>
+{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · evidence sources</p>
+    <h1 class="page-title">The research behind the plans.</h1>
+    <p class="page-sub">
+      Canonical, curated sources — study, guideline, or expert coach — that plan
+      decisions cite. Baseline sources back every generated plan.
+      {{ sources|length }} source{{ 's' if sources|length != 1 }}.
+    </p>
+  </div>
+</div>
+
+{% if sources %}
+<div class="card card-flush adm-tablewrap">
+  <table class="data">
+    <thead>
+      <tr><th>Slug</th><th>Kind</th><th>Title</th><th>Citation</th><th>Status</th><th>Baseline</th></tr>
+    </thead>
+    <tbody>
+      {% for s in sources %}
+      <tr>
+        <td class="dim mono">{{ s.slug }}</td>
+        <td><code>{{ s.kind }}</code></td>
+        <td>
+          <b>{{ s.title }}</b>
+          {% if s.summary %}<div class="dim">{{ s.summary }}</div>{% endif %}
+        </td>
+        <td class="dim">
+          {% if s.url %}<a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.citation or s.url }}</a>
+          {% else %}{{ s.citation or '—' }}{% endif %}
+        </td>
+        <td>{% if s.status == 'superseded' %}<span class="dim">superseded</span>{% else %}<code>active</code>{% endif %}</td>
+        <td>{% if s.is_baseline %}✓{% else %}<span class="dim">—</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card card-pad adm-none-card">No evidence sources yet.</div>
+{% endif %}
+{% endblock %}
