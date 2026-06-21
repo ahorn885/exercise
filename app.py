@@ -229,6 +229,7 @@ from routes.coros import bp as coros_bp
 from routes.polar import bp as polar_bp
 from routes.ride_with_gps import bp as ride_with_gps_bp
 from routes.strava import bp as strava_bp
+from routes.webhook_maintenance import bp as webhook_maintenance_bp
 from routes.whoop import bp as whoop_bp
 from routes.wahoo import bp as wahoo_bp
 from routes.oura import bp as oura_bp
@@ -278,6 +279,7 @@ app.register_blueprint(ad_hoc_workouts_bp)
 app.register_blueprint(plan_create_bp)
 app.register_blueprint(plan_refresh_bp)
 app.register_blueprint(logs_bp)
+app.register_blueprint(webhook_maintenance_bp)
 # COROS pushes workout-summary data to /coros/webhook from their servers,
 # not from a browser session, so the global CSRF protection doesn't apply
 # (and would 400 every push). Auth is via the `client` + `secret` request
@@ -304,6 +306,10 @@ csrf.exempt(zwift_bp)
 # is the x-vercel-signature HMAC-SHA1 verified against LOG_DRAIN_SECRET inside
 # the blueprint (issue #350).
 csrf.exempt(logs_bp)
+# Vercel Cron POSTs to /integrations/webhooks/cron/maintenance with no browser
+# session; auth is the Bearer-CRON_SECRET header verified inside the route
+# (#250 webhook prune + dead-letter sweep).
+csrf.exempt(webhook_maintenance_bp)
 
 
 # ── Auth gate ────────────────────────────────────────────────────────────────
@@ -340,6 +346,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     'nudges.scan_connect_provider_14d',
     'plan_create.cron_generate_pending',
     'ride_with_gps.cron_process',
+    'webhook_maintenance.cron_maintenance',
     # Plan-gen diag endpoint: deliberately readable WITHOUT the app login so
     # an operator/agent debugging from outside a browser session can fetch the
     # real fault. Auth is verified INSIDE the route (`admin._diag_authorized`:
