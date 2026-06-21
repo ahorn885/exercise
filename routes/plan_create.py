@@ -87,6 +87,7 @@ from plan_notifications import notify_plan_terminal
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from plan_conditions_repo import load_plan_conditions_by_version
+from evidence_repo import attach_baseline_plan_evidence, load_plan_evidence
 from race_week_brief_repo import load_race_week_brief
 from layer5 import (
     generate_and_persist_plan_nutrition,
@@ -690,6 +691,21 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             db, uid, plan_version_id,
             {**plan_version, 'generation_status': 'ready'},
         )
+        # #826 — best-effort science-provenance capture. Link this plan version
+        # to the baseline methodology evidence sources (the per-`plan_version`
+        # "whys" behind the plan as a whole). Runs AFTER the row is durable +
+        # `ready`; isolated in its own try + commit so a provenance fault can
+        # NEVER affect the already-durable plan (mirrors the Layer 5A pattern).
+        # Idempotent (ON CONFLICT DO NOTHING), so the cron/poller replay is safe.
+        try:
+            if attach_baseline_plan_evidence(db, plan_version_id) > 0:
+                db.commit()
+        except Exception as _ev_exc:  # noqa: BLE001 — provenance must not break gen
+            db.rollback()
+            print(
+                f"_advance_plan_generation: evidence provenance capture failed "
+                f"for plan_version_id={plan_version_id} (non-fatal): {_ev_exc}"
+            )
         if is_refresh:
             # #208 — record the successful refresh (diff vs parent + attribution)
             # in the refresh log, mirroring the synchronous route's success path.
@@ -1087,6 +1103,18 @@ def view_plan(plan_version_id: int):
         plan_version['scope_end_date'],
     )
 
+    # #826 — the always-visible "science behind your plan" panel. Read-only; a
+    # load fault must NEVER 500 the plan view, so degrade to no panel. Empty
+    # until the completing pass has linked the baseline sources.
+    try:
+        evidence_sources = load_plan_evidence(db, plan_version_id)
+    except Exception as _ev_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: evidence load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_ev_exc}"
+        )
+        evidence_sources = []
+
     # #732 slice 3 — race-week-brief trigger gate. The brief unlocks within 14
     # days of a target event (the orchestrator's auto-fire window); surface the
     # [Generate race-week brief] button only inside that window and a link to the
@@ -1112,6 +1140,7 @@ def view_plan(plan_version_id: int):
         plan_version=plan_version,
         plan_version_id=plan_version_id,
         plan_name=plan_name,
+        evidence_sources=evidence_sources,
         lifecycle_state=_plan_lifecycle_label(plan_version, date.today()),
         days=_plan_days_with_rest_gaps(sessions_by_date),
         session_count=len(sessions),

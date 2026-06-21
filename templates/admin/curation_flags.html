@@ -1,0 +1,113 @@
+{# #826 — Admin · curation-gap triage. Open gaps an operator resolves by
+   creating/picking the source the decision should have cited, or dismisses. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Curation gaps — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>Curation gaps</b>{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.evidence_sources') }}">Evidence sources</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.dashboard') }}">Back to users</a>
+{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · curation gaps</p>
+    <h1 class="page-title">Citations that need a source.</h1>
+    <p class="page-sub">
+      When a plan decision wanted to cite research but no matching evidence
+      source existed, it was flagged here. Resolve by linking or creating the
+      source, or dismiss the gap. {{ open_flags|length }} open.
+    </p>
+  </div>
+</div>
+
+{% if open_flags %}
+<div class="card card-flush adm-tablewrap">
+  <table class="data">
+    <thead>
+      <tr><th>Seen</th><th>Layer</th><th>Context</th><th>Cited token</th><th>Plan</th><th>Resolve</th></tr>
+    </thead>
+    <tbody>
+      {% for f in open_flags %}
+      <tr>
+        <td class="dim mono">{{ f.occurrences }}×</td>
+        <td><code>{{ f.raised_by_layer or '—' }}</code></td>
+        <td>{{ f.context_text }}</td>
+        <td class="dim mono">{{ f.cited_token or '—' }}</td>
+        <td class="dim mono">{% if f.plan_version_id %}#{{ f.plan_version_id }}{% else %}—{% endif %}</td>
+        <td>
+          <details class="adm-resolve">
+            <summary class="btn btn-ghost btn-sm">Resolve</summary>
+            {# Link an existing source #}
+            <form method="post" action="{{ url_for('admin.resolve_flag', flag_id=f.id) }}" class="adm-resolve-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="link">
+              <label class="field"><span class="lbl">Link existing source</span>
+                <select name="evidence_source_id" class="form-select form-select-sm">
+                  <option value="">— pick a source —</option>
+                  {% for s in sources %}
+                  <option value="{{ s.id }}">{{ s.kind }} · {{ s.title }}</option>
+                  {% endfor %}
+                </select></label>
+              <button type="submit" class="btn btn-primary btn-sm">Link</button>
+            </form>
+            {# Create a new source then resolve to it #}
+            <form method="post" action="{{ url_for('admin.resolve_flag', flag_id=f.id) }}" class="adm-resolve-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="create">
+              <label class="field"><span class="lbl">…or create a new source</span>
+                <input name="slug" class="form-control form-control-sm" placeholder="slug (e.g. heat-acclimation)" required></label>
+              <label class="field"><span class="lbl">Kind</span>
+                <select name="kind" class="form-select form-select-sm" required>
+                  <option value="study">study</option>
+                  <option value="guideline">guideline</option>
+                  <option value="expert_coach">expert_coach</option>
+                </select></label>
+              <label class="field"><span class="lbl">Title</span>
+                <input name="title" class="form-control form-control-sm" required></label>
+              <label class="field"><span class="lbl">Summary</span>
+                <input name="summary" class="form-control form-control-sm"></label>
+              <label class="field"><span class="lbl">Citation</span>
+                <input name="citation" class="form-control form-control-sm"></label>
+              <label class="field"><span class="lbl">URL</span>
+                <input name="url" type="url" class="form-control form-control-sm"></label>
+              <button type="submit" class="btn btn-primary btn-sm">Create &amp; resolve</button>
+            </form>
+            {# Dismiss #}
+            <form method="post" action="{{ url_for('admin.resolve_flag', flag_id=f.id) }}" class="adm-resolve-form">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="dismiss">
+              <button type="submit" class="btn btn-ghost btn-sm">Dismiss gap</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card card-pad adm-none-card">No open curation gaps. Every cited decision has a source. 🎉</div>
+{% endif %}
+
+{% if resolved_flags %}
+<h2 class="section-title" style="margin-top:1.5rem">Recently resolved</h2>
+<div class="card card-flush adm-tablewrap">
+  <table class="data">
+    <thead><tr><th>When</th><th>Context</th><th>Status</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for f in resolved_flags %}
+      <tr>
+        <td class="dim mono">{{ (f.resolved_at|string)[:19] }}</td>
+        <td>{{ f.context_text }}</td>
+        <td><code>{{ f.status }}</code></td>
+        <td class="dim mono">{% if f.resolved_by_evidence_source_id %}#{{ f.resolved_by_evidence_source_id }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
