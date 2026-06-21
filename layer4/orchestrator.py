@@ -1736,6 +1736,36 @@ def orchestrate_plan_create(
     event_windows_hash = (
         compute_event_windows_hash(overlapping_windows) if overlapping_windows else None
     )
+    # Layer 3D HITL gate (#213) — pre-synthesis, deterministic, no LLM. Aggregate
+    # the upstream review items the nodes already emit (2A/2D/2E/3B) + apply the
+    # athlete's prior resolutions (loaded from the persisted gate, so a re-run
+    # after the athlete resolves on the review screen sees their choices). Persist
+    # the evaluated gate, then — when non-green — park the plan for review by
+    # raising Layer3DGateBlocked instead of advancing into the (minutes-long,
+    # dollar-cost) synthesis below. The advance loop (routes/plan_create.py)
+    # catches the signal and flips the row to `needs_review`. Imported lazily to
+    # keep the layer4 package import graph acyclic (plan_sessions_repo imports
+    # layer4.payload). See Layer3D_Spec §5/§11.
+    from layer3d.gate import Layer3DGateBlocked, evaluate_layer3d_gate
+    from plan_sessions_repo import load_prior_resolutions, save_hitl_gate
+
+    gate = evaluate_layer3d_gate(
+        user_id=user_id,
+        plan_version_id=plan_version_id,
+        layer1_payload=cone.layer1_payload.model_dump(mode="json"),
+        layer2a_payload=cone.layer2a_payload,
+        layer2c_payloads=layer2c_payloads,
+        layer2d_payload=cone.layer2d_payload,
+        layer2e_payload=cone.layer2e_payload,
+        layer3b_payload=cone.layer3b_payload,
+        plan_start_date=plan_start_date,
+        total_weeks=total_weeks,
+        race_event_payload=race_event,
+        prior_resolutions=load_prior_resolutions(db, user_id, plan_version_id),
+    )
+    save_hitl_gate(db, user_id, plan_version_id, gate)
+    if gate.gate_status != "green":
+        raise Layer3DGateBlocked(gate)
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),

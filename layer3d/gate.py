@@ -65,6 +65,20 @@ class Layer3DGateError(Exception):
         super().__init__(f"{code}: {detail}" if detail else code)
 
 
+class Layer3DGateBlocked(Exception):
+    """Orchestration signal: the gate is non-green, so the plan must be parked
+    for athlete review instead of advancing to Layer 4 synthesis. Carries the
+    evaluated `Layer3DGate` so the caller can persist it + flip the row to
+    `needs_review`. Not a failure — a normal pre-synthesis stop (§11)."""
+
+    def __init__(self, gate: "Layer3DGate") -> None:
+        self.gate = gate
+        super().__init__(
+            f"Layer 3D gate is {gate.gate_status}; plan parked for review "
+            f"({len(gate.items)} item(s))"
+        )
+
+
 # ─── Payload schema (§6) ─────────────────────────────────────────────────────
 
 
@@ -286,22 +300,24 @@ def compute_gate_status(items: list[GateItem]) -> GateStatus:
 
 def _coherent_etl_version_set(
     layer2a_payload: Layer2APayload,
-    layer2c_payloads: dict[str, Layer2CPayload],
     layer2d_payload: Layer2DPayload,
     layer2e_payload: Layer2EPayload,
     layer3b_payload: Layer3BPayload,
 ) -> dict[str, str]:
-    """Every supplied payload must pin the same `etl_version_set` (§4
-    `etl_version_set_mismatch`, mirroring Layer 4 §4.1). Returns the coherent
-    set."""
+    """The aggregation-source payloads must pin the same `etl_version_set` (§4
+    `etl_version_set_mismatch`). Returns the coherent set.
+
+    2C is intentionally excluded: it encodes the source table in the *value*
+    (`{'0A': 'sports=v7', ...}`) rather than a bare version, so a literal
+    dict-equality against the other nodes' canonical `{'0A': 'v7', ...}` shape
+    would always (and wrongly) trip. 2C is also unused by the Slice 1
+    aggregation — only the deferred §5.2/§5.3 feasibility detectors read it."""
     sets: list[tuple[str, dict[str, str]]] = [
         ("2A", layer2a_payload.etl_version_set),
         ("2D", layer2d_payload.etl_version_set),
         ("2E", layer2e_payload.etl_version_set),
         ("3B", layer3b_payload.etl_version_set),
     ]
-    for locale_id, p in layer2c_payloads.items():
-        sets.append((f"2C[{locale_id}]", p.etl_version_set))
     reference = sets[0][1]
     for name, evs in sets[1:]:
         if evs != reference:
@@ -366,7 +382,6 @@ def evaluate_layer3d_gate(
 
     etl_version_set = _coherent_etl_version_set(
         layer2a_payload,
-        layer2c_payloads,
         layer2d_payload,
         layer2e_payload,
         layer3b_payload,

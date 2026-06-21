@@ -246,7 +246,7 @@ def list_plans():
            FROM plan_versions pv
            LEFT JOIN plan_sessions s ON s.plan_version_id = pv.id
            WHERE pv.user_id = ?
-             AND pv.generation_status IN ('ready', 'generating')
+             AND pv.generation_status IN ('ready', 'generating', 'needs_review')
              AND pv.superseded_at IS NULL
            GROUP BY pv.id
            ORDER BY pv.scope_start_date ASC, pv.created_at ASC''',
@@ -270,7 +270,14 @@ def list_plans():
     # render harness's fake cursor (which returns canned rows, ignoring the SQL).
     today = date_type.today()
     gen_generating, gen_upcoming, gen_active, gen_completed, gen_archived = [], [], [], [], []
+    gen_needs_review = []
     for r in gen_rows:
+        # #213 — a plan parked at the Layer 3D HITL gate surfaces in its own
+        # "Needs review" bucket (the single discovery surface, Layer3D_Spec §11.1);
+        # the card links to the review screen.
+        if r['generation_status'] == 'needs_review':
+            gen_needs_review.append(r)
+            continue
         if r['generation_status'] == 'generating':
             gen_generating.append(r)
             continue
@@ -292,6 +299,7 @@ def list_plans():
 
     return render_template(
         'plans/list.html', plans=plans, archived=archived,
+        gen_needs_review=gen_needs_review,
         gen_generating=gen_generating, gen_upcoming=gen_upcoming,
         gen_active=gen_active, gen_completed=gen_completed,
         gen_archived=gen_archived)

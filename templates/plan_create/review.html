@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Review before we build · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>Review</b>{% endblock %}
+
+{% block content %}
+<div class="stack">
+
+  <div class="races-intro">
+    <p class="eyebrow accent">● Before we build</p>
+    <h1 class="page-title">A few things to settle.</h1>
+    <p class="page-sub">We caught some things worth your call before committing minutes of synthesis to
+      a plan. Clear the blockers, decide on the warnings, then build.</p>
+  </div>
+
+  {% if gate.gate_status == 'blocked' %}
+  <p class="eyebrow bad">● Blocked — fix the items below to continue</p>
+  {% elif gate.gate_status == 'needs_review' %}
+  <p class="eyebrow">● Review the items below, then generate</p>
+  {% else %}
+  <p class="eyebrow accent">● All clear — ready to build</p>
+  {% endif %}
+
+  {# Blockers first (revise-only — no acknowledge), then warnings, then info. #}
+  {% for sev in ['blocker', 'warning', 'informational'] %}
+  {% set items = grouped.get(sev, []) %}
+  {% if items %}
+  <section class="plan-section">
+    <p class="eyebrow">
+      {% if sev == 'blocker' %}Blockers{% elif sev == 'warning' %}Warnings{% else %}For your awareness{% endif %}
+      · {{ items|length }}
+    </p>
+    <div class="plan-cards">
+      {% for it in items %}
+      <div class="card plan-card">
+        <div class="pl-id">
+          <div class="pl-title">
+            <span class="pl-name">{{ it.title }}</span>
+            {% if it.severity == 'blocker' %}<span class="chip solid">Blocker</span>
+            {% elif it.severity == 'warning' %}<span class="chip accent">Warning</span>
+            {% else %}<span class="chip">FYI</span>{% endif %}
+            <span class="chip">{{ it.source }}</span>
+            {% if it.status == 'acknowledged' %}<span class="chip solid">Acknowledged</span>{% endif %}
+          </div>
+          <p class="pl-meta">{{ it.message }}</p>
+          {% if it.resolution_options %}
+          <p class="pl-meta mono">Options: {{ it.resolution_options|join(' · ') }}</p>
+          {% endif %}
+        </div>
+
+        <div class="pl-actions">
+          {% if it.can_acknowledge and it.status != 'acknowledged' %}
+          <form method="post" action="{{ resolve_url }}" class="stack-sm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="item_key" value="{{ it.item_key }}">
+            <input type="text" name="reasoning" class="input" placeholder="Optional note (why you're OK with this)">
+            <button type="submit" class="btn btn-ghost btn-sm">Acknowledge</button>
+          </form>
+          {% endif %}
+          {% if it.revise_target %}
+          {# Slice 1 surfaces the fix target; the in-place revise cascade is a
+             later slice. The athlete edits the named profile surface, then
+             re-enters the gate. #}
+          <p class="pl-meta mono">Fix via: {{ it.revise_target }}</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+  {% endfor %}
+
+  <section class="plan-section">
+    <div class="gen-actions">
+      {% if gate.gate_status == 'green' %}
+      <form method="post" action="{{ generate_url }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">
+          <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Generate plan
+        </button>
+      </form>
+      {% else %}
+      <button type="button" class="btn btn-primary" disabled title="Resolve every item first">Generate plan</button>
+      {% endif %}
+      <a href="{{ plans_url }}" class="btn btn-ghost">Save as pending &amp; exit</a>
+      <form method="post" action="{{ cancel_url }}"
+            data-confirm="Cancel this plan? This discards the in-progress attempt.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost pl-del">Cancel</button>
+      </form>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
