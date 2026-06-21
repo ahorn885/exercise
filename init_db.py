@@ -2490,6 +2490,11 @@ _PG_MIGRATIONS = [
     # the discipline_baseline_*.{bike_types_available,paddle_craft_types}
     # convention; closed-enum re-asserted in athlete_event_windows_repo.py).
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS brought_craft TEXT",
+    # Event Windows Slice 6 (#593) — VOLUME windows. override_type gains
+    # 'reduced_volume' (retained capacity fraction = volume_pct, 0<pct<1) and
+    # 'no_training' (zeroed day, no column); volume_pct is NULL on every other
+    # type. Closed-enum + range re-asserted in athlete_event_windows_repo.py.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_pct NUMERIC",
     # (b) craft<->locale: a standing "this craft is kept at this locale"
     # association (a bike at the parents' place). Many-to-many, no per-row
     # attribute → a thin join table; athlete-scoped; locale app-validated against
