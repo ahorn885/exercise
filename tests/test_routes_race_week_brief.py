@@ -15,7 +15,11 @@ from typing import Any
 import jinja2
 
 from layer4 import OrchestrationError
-from routes.race_week_brief import _orchestration_error_message, _owns_plan_version
+from routes.race_week_brief import (
+    _log_brief_failure,
+    _orchestration_error_message,
+    _owns_plan_version,
+)
 
 
 _USER_ID = 42
@@ -45,6 +49,8 @@ class _FakeConn:
     def __init__(self):
         self.calls: list[tuple[str, tuple]] = []
         self.responses: list[tuple] = []
+        self.committed = False
+        self.rolled_back = False
 
     def queue(self, row=None, rows=None):
         self.responses.append((row, rows or []))
@@ -56,6 +62,12 @@ class _FakeConn:
         else:
             row, rows = None, []
         return _FakeCursor(row=row, rows=rows)
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
 
 
 # ─── _orchestration_error_message ───────────────────────────────────────────
@@ -107,6 +119,42 @@ class TestOwnsPlanVersion:
         sql, _ = conn.calls[0]
         assert "user_id = ?" in sql
         assert "FROM plan_versions" in sql
+
+
+# ─── _log_brief_failure ─────────────────────────────────────────────────────
+
+
+class TestLogBriefFailure:
+    def test_rolls_back_then_logs_failure_then_commits(self):
+        conn = _FakeConn()
+
+        _log_brief_failure(conn, _USER_ID, _PLAN_VERSION_ID, failure_reason="no_active_plan")
+
+        assert conn.rolled_back is True
+        assert conn.committed is True
+        sql, params = conn.calls[0]
+        assert "INSERT INTO race_week_brief_log" in sql
+        assert params[0] == _USER_ID
+        assert params[1] == _PLAN_VERSION_ID
+        assert params[7] is False  # success
+        assert params[8] == "no_active_plan"
+
+    def test_swallows_logging_errors(self):
+        class _BoomConn(_FakeConn):
+            def execute(self, sql, params=()):
+                raise RuntimeError("transaction poisoned")
+
+        conn = _BoomConn()
+        # Must not raise — telemetry faults can't mask the athlete's flash.
+        _log_brief_failure(conn, _USER_ID, None, failure_reason="etl_version_set_undiscoverable")
+
+    def test_null_plan_version_id_when_unknown(self):
+        conn = _FakeConn()
+
+        _log_brief_failure(conn, _USER_ID, None, failure_reason="no_target_event")
+
+        _, params = conn.calls[0]
+        assert params[1] is None
 
 
 # ─── template parses ────────────────────────────────────────────────────────

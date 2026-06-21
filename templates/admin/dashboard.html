@@ -10,6 +10,8 @@
 {% block topbar_actions %}
 <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.audit') }}">Audit log</a>
 <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.telemetry_refresh') }}">Telemetry</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.curation_flags') }}">Curation gaps</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.evidence_sources') }}">Evidence sources</a>
 <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.fit_inspect') }}">Inspect a FIT file</a>
 {% endblock %}
 

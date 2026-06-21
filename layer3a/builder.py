@@ -31,6 +31,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from llm_invocation import ThinkingToolCallError, invoke_tool_call
+from evidence_catalog import render_catalog_block as _render_evidence_catalog_block
 from layer4.context import (
     ACWREntry,
     ACWRStatus,
@@ -362,6 +363,14 @@ def build_record_athlete_state_tool() -> dict[str, Any]:
                         },
                     },
                 },
+                # #826 — curated research/coaching sources the state assessment
+                # rests on. Slugs from the provided research-source catalog
+                # ONLY (constrained-citation). Optional: omit / empty when no
+                # catalog source applies.
+                "source_citations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
             },
         },
     }
@@ -387,10 +396,12 @@ def _validate_inputs(
         raise Layer3AInputError(
             "incomplete_onboarding", detail="Layer1Payload.identity is None"
         )
-    if layer1_payload.identity.primary_sport is None:
-        raise Layer3AInputError(
-            "incomplete_onboarding", detail="identity.primary_sport is None"
-        )
+    # #447 — do NOT require a profile `primary_sport`. The planning sport now
+    # comes from the target race (PlanGen_Planning_Sport_Spec_v1 §3), so a
+    # race-tier plan must build even when the athlete left primary_sport blank.
+    # The real "do we have a sport to plan" gate is the non-empty 2A discipline
+    # set below; `primary_sport` is only home-discipline context downstream and
+    # renders as "unspecified" when None.
     if layer2a_payload is None:
         raise Layer3AInputError("missing_2a")
     if not layer2a_payload.disciplines:
@@ -972,6 +983,15 @@ Hard rules:
 11. ACWR `combined.units` MUST be "hours" (substrate normalizes to hours
     from cardio_log durations).
 
+12. Research-source citations (`source_citations`): a catalog of curated
+    training-science sources is provided below. When your state assessment
+    rests on the principle in one of them (e.g. citing the aerobic-base or
+    detraining literature for an aerobic-capacity call), list its `slug` in
+    the top-level `source_citations` array. Cite ONLY slugs that appear in the
+    provided catalog — never invent a slug. Cite only what genuinely applies
+    (typically 0–3); an empty array is fine. This is separate from
+    `evidence_basis` (which cites the athlete's own input fields).
+
 Voice: direct endurance-coaching-analyst voice. Match the cadence of a
 real coach scanning a profile. No fluff, no marketing tone. If the data
 is sparse, say so; do not perform certainty you don't have."""
@@ -1015,13 +1035,17 @@ def _render_user_prompt(
         "Health-context note (read-only):",
         _render_health_context_note(layer1_payload),
         "",
+        # #826 — research-source allowlist for `source_citations` (rule 12).
+        _render_evidence_catalog_block(),
+        "",
         f"Today is {as_of.isoformat()}.",
         "",
         "Produce a `Layer3APayload` via the `record_athlete_state` tool. "
-        "Ground every assessment in evidence_basis citations. Apply the "
-        "confidence calibration rules in the system prompt — when in doubt, "
-        "prefer `medium`. Emit observations only when they would change a "
-        "downstream decision.",
+        "Ground every assessment in evidence_basis citations, and cite any "
+        "applicable research sources in `source_citations` (slugs from the "
+        "catalog above only). Apply the confidence calibration rules in the "
+        "system prompt — when in doubt, prefer `medium`. Emit observations "
+        "only when they would change a downstream decision.",
     ]
     if retry_error:
         blocks.extend([

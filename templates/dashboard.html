@@ -67,6 +67,34 @@
 </div>
 
 <div class="stack">
+
+{# ── Plan-ready / plan-failed in-app notifications (#259/#260) ──
+   Fired when generation reaches a terminal status in
+   `_advance_plan_generation`. No JS: dismiss is a real POST to
+   /plans/v2/<id>/notification/dismiss that stamps `notification_seen_at`,
+   so the badge survives reloads until DB-dismissed (mirrors the account
+   nudges banner). #}
+{% if plan_notifications %}
+  {% for n in plan_notifications %}
+    <div class="alert alert-{{ 'success' if n.status == 'ready' else 'danger' }} d-flex align-items-center justify-content-between" role="alert">
+      <div class="me-3">
+        {% if n.status == 'ready' %}
+          Your plan <b>{{ n.plan_name }}</b> is ready.
+          <a href="{{ url_for('plan_create.view_plan', plan_version_id=n.id) }}" class="alert-link ms-1">View plan</a>
+        {% else %}
+          We couldn't generate your plan <b>{{ n.plan_name }}</b>.
+          {% if n.error %}<span class="d-block small">{{ n.error }}</span>{% endif %}
+          <a href="{{ url_for('plan_create.new_plan') }}" class="alert-link ms-1">Try again</a>
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('plan_create.dismiss_notification', plan_version_id=n.id) }}" class="m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn-close" aria-label="Dismiss"></button>
+      </form>
+    </div>
+  {% endfor %}
+{% endif %}
+
 {# ── Today's session + side rail ── #}
 <div class="row">
   <div class="card col">

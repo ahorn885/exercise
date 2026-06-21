@@ -162,5 +162,9 @@
     {% endif %}
   </div>
   {% endif %}
+
+  {# #826 — always-visible "science behind your plan" panel. The brief + race
+     plan reuse this plan version's evidence links. #}
+  {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
 </div>
 {% endblock %}

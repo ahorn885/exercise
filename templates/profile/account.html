@@ -74,6 +74,42 @@
     </form>
   </div>
 
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Two-factor authentication</p>
+    {% if totp_status == 'on' %}
+      <p class="acct-hint">On — you enter a code from your authenticator app each time you sign in.</p>
+      <form method="post" action="{{ url_for('profile.totp_disable') }}" class="acct-pw">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="pf-grid">
+          <label class="field"><span class="lbl">Current password</span>
+            <input type="password" name="current_password" autocomplete="current-password"
+                   class="form-control form-control-sm" required></label>
+        </div>
+        <div class="pf-save">
+          <span class="pf-saved mono">Lost your app? Reset your password to recover.</span>
+          <button type="submit" class="btn btn-ghost">Turn off two-factor</button>
+        </div>
+      </form>
+    {% elif totp_status == 'pending' %}
+      <p class="acct-hint">Setup started but not confirmed yet. Finish scanning the code and enter a
+        digit to turn it on.</p>
+      <div class="pf-save">
+        <form method="post" action="{{ url_for('profile.totp_disable') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost">Cancel</button>
+        </form>
+        <a href="{{ url_for('profile.totp_setup') }}" class="btn btn-primary">Finish setup</a>
+      </div>
+    {% else %}
+      <p class="acct-hint">Add a second step at sign-in using an authenticator app. Recommended —
+        it protects your account even if your password leaks.</p>
+      <form method="post" action="{{ url_for('profile.totp_setup') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">Enable two-factor</button>
+      </form>
+    {% endif %}
+  </div>
+
   <div class="card card-pad acct-signout">
     <div class="acct-signout-txt">
       <p class="eyebrow">● Session</p>

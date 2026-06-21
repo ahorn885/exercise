@@ -19,6 +19,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 
 from datetime import date
 
+import mfa
 from database import get_db
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
@@ -1103,8 +1104,18 @@ def account_settings():
         'FROM users WHERE id=?',
         (uid,)
     ).fetchone()
+    # 2FA status (#265): 'on' (active), 'pending' (secret issued, not yet
+    # verified) or 'off'. Drives the card the account template renders.
+    totp_row = mfa.get_totp(db, uid)
+    if totp_row and totp_row['confirmed_at']:
+        totp_status = 'on'
+    elif totp_row:
+        totp_status = 'pending'
+    else:
+        totp_status = 'off'
     return render_template('profile/account.html',
-                           user_row=dict(user_row) if user_row else {})
+                           user_row=dict(user_row) if user_row else {},
+                           totp_status=totp_status)
 
 
 @bp.route('/memory')
@@ -1202,6 +1213,92 @@ def change_email():
         flash(f'Email updated to {new_email}. Check your inbox to confirm it.', 'success')
     else:
         flash('Email removed.', 'info')
+    return redirect(url_for('profile.account_settings'))
+
+
+# ─── Two-factor auth (TOTP) — #265 ───────────────────────────────────────────
+# Enroll / confirm / disable app-based 2FA from the Account page. The login
+# challenge itself lives in routes/auth.totp_challenge; the secret state machine
+# and crypto live in mfa.py.
+
+
+@bp.route('/totp/setup', methods=['GET', 'POST'])
+def totp_setup():
+    """Begin (or resume) TOTP enrollment: issue a pending secret and render the
+    QR + manual key + verify form.
+
+    POST (the "Enable" button) always rotates to a fresh secret. GET resumes an
+    existing pending enrollment without rotating — so a page refresh doesn't
+    invalidate the secret the athlete just scanned — and 404-equivalents to the
+    account page if there's nothing pending to resume."""
+    db = get_db()
+    uid = current_user_id()
+    if mfa.is_enabled(db, uid):
+        flash('Two-factor authentication is already on.', 'info')
+        return redirect(url_for('profile.account_settings'))
+
+    existing = mfa.get_totp(db, uid)
+    if request.method == 'POST' or existing is None:
+        secret = mfa.start_enrollment(db, uid)
+        db.commit()
+    else:
+        secret = existing['secret']
+
+    user_row = db.execute(
+        'SELECT username, email FROM users WHERE id=?', (uid,)
+    ).fetchone()
+    account_name = (user_row['email'] or user_row['username']) if user_row else 'athlete'
+    uri = mfa.provisioning_uri(secret, account_name)
+    return render_template('profile/totp_setup.html',
+                           secret=secret, otpauth_uri=uri, qr_svg=mfa.qr_svg(uri))
+
+
+@bp.route('/totp/confirm', methods=['POST'])
+def totp_confirm():
+    """Finish enrollment: verify the first code against the pending secret and,
+    on success, flip the row to active so logins start challenging."""
+    db = get_db()
+    uid = current_user_id()
+    row = mfa.get_totp(db, uid)
+    if not row or row['confirmed_at']:
+        # Nothing pending (or already active) — no-op back to account.
+        return redirect(url_for('profile.account_settings'))
+    if not mfa.verify_code(row['secret'], request.form.get('code') or ''):
+        flash('That code didn\'t match. Scan the QR again and enter a fresh code.',
+              'danger')
+        return redirect(url_for('profile.totp_setup'))
+    mfa.confirm_enrollment(db, uid)
+    db.commit()
+    flash('Two-factor authentication is on. You\'ll enter a code from your '
+          'authenticator app each time you sign in.', 'success')
+    return redirect(url_for('profile.account_settings'))
+
+
+@bp.route('/totp/disable', methods=['POST'])
+def totp_disable():
+    """Turn off 2FA, or cancel a not-yet-confirmed enrollment.
+
+    Disabling *active* 2FA requires the current password — re-auth so a walk-up
+    attacker on an unlocked session can't strip the second factor (mirrors the
+    change_password credential check). Cancelling a *pending* enrollment needs
+    no password: nothing's protecting logins yet, so there's no factor to
+    weaken."""
+    db = get_db()
+    uid = current_user_id()
+    if mfa.is_enabled(db, uid):
+        current = request.form.get('current_password') or ''
+        user_row = db.execute(
+            'SELECT password_hash FROM users WHERE id=?', (uid,)
+        ).fetchone()
+        if not user_row or not _check_password(current, user_row['password_hash']):
+            flash('Current password is incorrect.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+        msg = 'Two-factor authentication turned off.'
+    else:
+        msg = 'Two-factor setup cancelled.'
+    mfa.disable(db, uid)
+    db.commit()
+    flash(msg, 'info')
     return redirect(url_for('profile.account_settings'))
 
 

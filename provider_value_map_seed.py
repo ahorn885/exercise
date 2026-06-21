@@ -56,7 +56,6 @@ GARMIN_STRENGTH_ALIASES: dict[str, str] = {
     'Dumbbell Hammer Curl': 'EX234',
     'Dumbbell Reverse Wrist Curl': 'EX111',
     'Mountain Climber': 'EX221',
-    'Rope Climb': 'EX195',
     'Seated Calf Raise': 'EX026',
     'Single Arm Dumbbell Bench Press': 'EX242',
     'Wide Grip Lat Pulldown': 'EX080',
