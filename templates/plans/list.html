@@ -31,6 +31,7 @@
         <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">{{ c.display_name }}</a>
         <span class="chip accent">Pattern {{ c.pattern }}</span>
         {% if c.generation_status == 'generating' %}<span class="chip solid">Generating…</span>{% endif %}
+        {% if c.generation_status == 'needs_review' %}<span class="chip solid">Needs review</span>{% endif %}
         {% if archived %}<span class="chip solid">Archived</span>{% elif c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}
         <span class="chip solid">{{ c.created_via|replace('_', ' ') }}</span>
       </div>
@@ -39,7 +40,14 @@
       </p>
     </div>
     <div class="pl-actions">
-      {% if c.generation_status == 'generating' %}
+      {% if c.generation_status == 'needs_review' %}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.plan_review', plan_version_id=c.id) }}">Review</a>
+      <form method="post" action="{{ url_for('plan_create.delete_plan', plan_version_id=c.id) }}"
+            data-confirm="Cancel this plan? This discards the in-progress attempt.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm pl-del">Cancel</button>
+      </form>
+      {% elif c.generation_status == 'generating' %}
       <a class="btn btn-ghost btn-sm" href="{{ url_for('plan_create.plan_progress', plan_version_id=c.id) }}">View progress</a>
       {% elif archived %}
       <a class="btn btn-primary btn-sm" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">Open</a>
@@ -81,7 +89,7 @@
 {% endmacro %}
 
 {% block content %}
-{% if plans or archived or gen_generating or gen_upcoming or gen_active or gen_completed or gen_archived %}
+{% if plans or archived or gen_needs_review or gen_generating or gen_upcoming or gen_active or gen_completed or gen_archived %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Plan history{% if gen_active %} · {{ gen_active|length }} active{% endif %}{% if gen_upcoming %} · {{ gen_upcoming|length }} upcoming{% endif %}{% if gen_completed %} · {{ gen_completed|length }} completed{% endif %}</p>
@@ -102,6 +110,15 @@
 </div>
 
 <div class="stack">
+
+  {% if gen_needs_review %}
+  <section class="plan-section">
+    <p class="eyebrow">Needs review · {{ gen_needs_review|length }}</p>
+    <div class="plan-cards">
+      {% for c in gen_needs_review %}{{ gen_card(c) }}{% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
   {% if gen_generating %}
   <section class="plan-section">

@@ -75,10 +75,18 @@ from layer2b.builder import Layer2BInputError
 from layer2c.builder import Layer2CInputError
 from layer2d.builder import Layer2DInputError
 from layer2e.builder import Layer2EInputError
+from layer3d.gate import (
+    GateResolution,
+    Layer3DGateBlocked,
+    compute_gate_status,
+    resolved_status,
+)
 from plan_sessions_repo import (
     allocate_plan_version_row,
+    load_hitl_gate,
     load_plan_sessions_by_version,
     persist_layer4_sessions,
+    save_hitl_gate,
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
@@ -558,6 +566,12 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             "error": plan_version['generation_error']
             or "Plan generation failed. Please try again.",
         }
+    # #213 — a plan parked at the Layer 3D HITL gate does NOT advance via the
+    # poller/cron. It resumes only when the athlete resolves on the review screen
+    # and clicks [Generate plan], which flips the row back to 'generating'. The
+    # poller maps this to a redirect onto the review screen (generate_plan).
+    if status == 'needs_review':
+        return {"status": "needs_review"}
 
     # D-77 concurrency guard -- see the `_ADVANCE_LOCK_TTL_S` note. Claim the
     # per-plan advance lock; if another invocation (a concurrent cron fire or the
@@ -779,6 +793,27 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
                     f"for plan_version_id={plan_version_id} (non-fatal): {_cond_exc}"
                 )
         return {"status": "ready"}
+    except Layer3DGateBlocked as exc:
+        # #213 — the Layer 3D HITL gate is non-green: the plan needs athlete
+        # review before synthesis. NOT a failure. The orchestrator already
+        # persisted the gate JSONB inside this transaction (no DB error preceded
+        # the raise, so the txn is healthy — do NOT roll back, or we'd discard the
+        # gate write). Flip the row to `needs_review` and commit both. The athlete
+        # resolves on the review screen and clicks [Generate plan], which flips
+        # back to 'generating' and resumes this loop (the gate re-evaluates with
+        # the stored resolutions).
+        db.execute(
+            "UPDATE plan_versions SET generation_status = 'needs_review', "
+            "generation_error = NULL WHERE id = ? AND user_id = ?",
+            (plan_version_id, uid),
+        )
+        db.commit()
+        print(
+            f"_advance_plan_generation: Layer 3D gate {exc.gate.gate_status} for "
+            f"plan_version_id={plan_version_id} — parked at needs_review with "
+            f"{len(exc.gate.items)} review item(s)"
+        )
+        return {"status": "needs_review"}
     except Layer4GenerationIncomplete as exc:
         # D-77 budget spent mid-pass -- NOT a failure. Blocks synthesized this
         # pass are already cached (per-block cache commits independently), so
@@ -959,6 +994,35 @@ def new_plan():
         if plan_start_date < date.today():
             flash("Plan start date must be today or in the future.", 'danger')
             return redirect(url_for('plan_create.new_plan'))
+
+        # #213 — one plan in flight at a time (Layer3D_Spec §11.1). An athlete may
+        # have at most one plan in `generating`/`needs_review`; starting a new
+        # create while one is parked or building is refused with a pointer back to
+        # it (resume or cancel). Keeps the model simple at handful-of-athletes
+        # scale.
+        in_flight = db.execute(
+            "SELECT id, generation_status FROM plan_versions "
+            "WHERE user_id = ? AND generation_status IN ('generating', 'needs_review') "
+            "AND superseded_at IS NULL "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (uid,),
+        ).fetchone()
+        if in_flight is not None:
+            if in_flight['generation_status'] == 'needs_review':
+                flash(
+                    "You have a plan waiting for review. Resolve or cancel it "
+                    "before starting a new one.", 'warning',
+                )
+                return redirect(url_for(
+                    'plan_create.plan_review', plan_version_id=in_flight['id']
+                ))
+            flash(
+                "A plan is already generating. Let it finish or cancel it before "
+                "starting a new one.", 'warning',
+            )
+            return redirect(url_for(
+                'plan_create.plan_progress', plan_version_id=in_flight['id']
+            ))
 
         race_event = load_target_race_event_payload(db, uid)
         scope_end_date = _resolve_plan_scope_end_date(plan_start_date, race_event)
@@ -1407,6 +1471,12 @@ def plan_progress(plan_version_id: int):
         return redirect(
             _completed_view_url(plan_version_id, plan_version.get('created_via'))
         )
+    # #213 — a plan parked at the HITL gate sends the athlete to the review
+    # screen rather than the (idle) progress poller.
+    if plan_version['generation_status'] == 'needs_review':
+        return redirect(
+            url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+        )
 
     return render_template(
         'plan_create/progress.html',
@@ -1418,6 +1488,159 @@ def plan_progress(plan_version_id: int):
             plan_version_id, plan_version.get('created_via')
         ),
         new_url=url_for('plan_create.new_plan'),
+    )
+
+
+# ─── Layer 3D HITL review screen (#213, Layer3D_Spec §11) ────────────────────
+
+
+def _grouped_gate_items(gate) -> dict:
+    """Group a gate's items by severity for the review template (blockers first).
+    Recomputes each item's display status from its stored resolution (§6.3) so
+    the screen always reflects the latest resolved/pending state."""
+    buckets = {"blocker": [], "warning": [], "informational": []}
+    for it in gate.items:
+        it.status = resolved_status(it)
+        buckets.setdefault(it.severity, []).append(it)
+    return buckets
+
+
+@bp.route('/<int:plan_version_id>/review', methods=['GET'])
+def plan_review(plan_version_id: int):
+    """The HITL review screen for a plan parked at `needs_review`. Lists the
+    aggregated gate items grouped by severity (blockers first), each with its
+    affordance: warnings/informational get [Acknowledge]; blockers are
+    revise-only (Slice 1 surfaces the revise_target; the revise cascade is a
+    later slice). A ready/generating plan redirects to its own screen."""
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None:
+        abort(404)
+    status = plan_version['generation_status']
+    if status == 'ready':
+        return redirect(
+            _completed_view_url(plan_version_id, plan_version.get('created_via'))
+        )
+    if status == 'generating':
+        return redirect(
+            url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
+        )
+
+    gate = load_hitl_gate(db, uid, plan_version_id)
+    if gate is None:
+        # No gate persisted (e.g. a row stuck at needs_review with no blob) —
+        # nothing to review; send the athlete back to the list rather than a
+        # blank screen.
+        flash("No review items found for this plan.", 'secondary')
+        return redirect(url_for('plans.list_plans'))
+
+    return render_template(
+        'plan_create/review.html',
+        plan_version=plan_version,
+        gate=gate,
+        grouped=_grouped_gate_items(gate),
+        resolve_url=url_for(
+            'plan_create.resolve_review_item', plan_version_id=plan_version_id
+        ),
+        generate_url=url_for(
+            'plan_create.generate_from_review', plan_version_id=plan_version_id
+        ),
+        cancel_url=url_for(
+            'plan_create.delete_plan', plan_version_id=plan_version_id
+        ),
+        plans_url=url_for('plans.list_plans'),
+    )
+
+
+@bp.route('/<int:plan_version_id>/review/resolve', methods=['POST'])
+def resolve_review_item(plan_version_id: int):
+    """Record an athlete acknowledgment of a single warning/informational gate
+    item (Slice 1 = acknowledge path only; the revise cascade is a later slice).
+    Recomputes the gate status and persists. A blocker can't be acknowledged
+    (§5.1) — the route rejects it."""
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None or plan_version['generation_status'] != 'needs_review':
+        abort(404)
+
+    gate = load_hitl_gate(db, uid, plan_version_id)
+    if gate is None:
+        abort(404)
+
+    item_key = (request.form.get('item_key') or '').strip()
+    reasoning = (request.form.get('reasoning') or '').strip() or None
+    target = next((it for it in gate.items if it.item_key == item_key), None)
+    if target is None:
+        flash("That review item is no longer present.", 'warning')
+        return redirect(
+            url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+        )
+    if not target.can_acknowledge:
+        # A blocker is revise-only — no acknowledge escape hatch (§5.1/§6.3).
+        flash(
+            "This item is a blocker and can't be acknowledged — it must be fixed "
+            "before the plan can be generated.", 'danger',
+        )
+        return redirect(
+            url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+        )
+
+    from datetime import datetime, timezone
+    target.resolution = GateResolution(
+        kind='acknowledged', reasoning=reasoning,
+        resolved_at=datetime.now(timezone.utc),
+    )
+    for it in gate.items:
+        it.status = resolved_status(it)
+    gate.gate_status = compute_gate_status(gate.items)
+    save_hitl_gate(db, uid, plan_version_id, gate)
+    db.commit()
+
+    flash("Noted.", 'success')
+    return redirect(
+        url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+    )
+
+
+@bp.route('/<int:plan_version_id>/review/generate', methods=['POST'])
+def generate_from_review(plan_version_id: int):
+    """[Generate plan] from the review screen: only proceeds when the persisted
+    gate is green (every item resolved). Flips the row back to `generating` and
+    hands off to the progress poller, which resumes the advance loop — the gate
+    re-evaluates against the stored resolutions and lets synthesis run."""
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None or plan_version['generation_status'] != 'needs_review':
+        abort(404)
+
+    gate = load_hitl_gate(db, uid, plan_version_id)
+    if gate is not None:
+        for it in gate.items:
+            it.status = resolved_status(it)
+        gate.gate_status = compute_gate_status(gate.items)
+    if gate is None or gate.gate_status != 'green':
+        flash(
+            "Resolve every item before generating the plan.", 'warning',
+        )
+        return redirect(
+            url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+        )
+
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'generating', "
+        "generation_error = NULL WHERE id = ? AND user_id = ? "
+        "AND generation_status = 'needs_review'",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    return redirect(
+        url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
     )
 
 
@@ -1447,6 +1670,15 @@ def generate_plan(plan_version_id: int):
         })
     if status == 'failed':
         return jsonify({"status": "failed", "error": outcome['error']})
+    # #213 — the pass parked the plan at the Layer 3D HITL gate; send the poller
+    # to the review screen.
+    if status == 'needs_review':
+        return jsonify({
+            "status": "needs_review",
+            "redirect": url_for(
+                'plan_create.plan_review', plan_version_id=plan_version_id
+            ),
+        })
     # 'generating' — this pass made partial progress and the row is still
     # generating: either the D-77 per-invocation budget stopped before the
     # function cap (`budget_partial_progress`) or the D-77 concurrency guard
