@@ -659,7 +659,7 @@ def compute_recovery_pool_ids(
 # trips the PlanSession invariant (`payload.PlanSession._check_kind_invariants`)
 # and discards the WHOLE block as unparseable (prod plan #74 Build:w1,
 # 2026-06-19). `_repair_recovery_exercises` self-heals it in code BEFORE
-# validation (mirrors `_repair_strength_collisions`), filling from the SAME
+# validation (mirrors `_normalize_day_composition`), filling from the SAME
 # resolved pool the prompt rendered so an auto-fill can't reference an
 # out-of-pool id.
 _RECOVERY_FILL_COUNT = 2  # lean by design (RecoveryExercise docstring, §7.4b)
@@ -724,7 +724,7 @@ def _repair_recovery_exercises(
     *,
     fill_count: int = _RECOVERY_FILL_COUNT,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Deterministic crash-guard (mirrors `_repair_strength_collisions`): for any
+    """Deterministic crash-guard (mirrors `_normalize_day_composition`): for any
     `kind=='recovery'` session the synthesizer left with a null/empty
     `recovery_exercises`, fill the block from `pool_entries` BEFORE pydantic
     validation so the forced recovery day self-heals instead of discarding the
@@ -3140,24 +3140,47 @@ class PhaseSynthesisResult:
     llm_call_count: int
 
 
-def _repair_strength_collisions(
+def _normalize_day_composition(
     sessions: list[PlanSession],
 ) -> tuple[list[PlanSession], list[str]]:
-    """WS-E deterministic crash-guard: resolve any day carrying two `strength`
-    sessions — which `Layer4Payload._check_two_per_day` hard-rejects — BEFORE
-    validation, so the collision self-heals in code instead of forcing a model
-    re-synthesis (the pv=69 / plan-70 stall class). Code decides placement; the
-    LLM is left to compose session content.
+    """Deterministic pre-validation day-composition normalizer. Guarantees every
+    day satisfies the hard `Layer4Payload._check_two_per_day` invariant BEFORE the
+    validator runs, so a day-composition collision self-heals in code instead of
+    fumbling the block + burning a retry — the recurring "first Build block fails"
+    class (pv=69, plan-75, plan-78). Replaces the former
+    `_repair_strength_collisions` (#579/WS-E) + `_repair_day_composition`
+    (#778/#779) pair, unified for plan-78.
 
-    For each offending day, the later (`session_index_in_day==1`) strength is
-    relocated onto the nearest in-list day holding a single non-hard CARDIO
-    session — becoming that day's 2nd session (valid: a cardio is present, not
-    two-strength, not two-hard) — and that target is consumed so a second
-    collision can't reuse it. If no such day exists, the extra strength is
-    dropped. Conservative: only relocates onto days the model already populated,
-    so it never invents an unavailable training day. Pure. Returns
-    (repaired_sessions, notes); empty notes == unchanged. Scoped to
-    strength+strength; other `_check_two_per_day` cases keep the existing retry.
+    Why unify: the two former repairers each bailed on day SHAPES they didn't
+    anticipate. The strength repairer required a day to have EXACTLY two sessions
+    (`len(ss) == 2`), so a day carrying two strength + an additive #698 recovery
+    slot (3 sessions) slipped past it; and the day-composition repairer only fired
+    on same-discipline or two-hard days, never on different-discipline
+    strength+strength. So the plan-78 Build:w1 day (2026-06-25: two
+    different-discipline strength + a recovery) was repaired by NEITHER and
+    hard-failed every synthesis attempt → `synthesis_budget_exhausted`. This
+    function is shape-agnostic: it derives the offenders from the invariant's OWN
+    clauses over ALL days, so a new session shape can't silently re-open the hole.
+
+    HARD clauses (each MUST be satisfied — relocate the offending session, else
+    drop/demote): ≤2 training (cardio/strength); ≤1 recovery; a 2-training day has
+    ≥1 cardio (which subsumes "no strength+strength") and is not two-hard. SOFT
+    preference (#778; relocate best-effort, never drop): two training sharing a
+    `discipline_id` on an otherwise-legal day.
+
+    A mover relocates onto the nearest in-list day holding a single non-hard
+    CARDIO of a DIFFERENT discipline — becoming its 2nd session (always legal: a
+    non-hard cardio is present, so the pair has a cardio and isn't two-hard, and
+    the disciplines differ) — and that target is consumed so a second mover can't
+    reuse it. A two-hard day with no relocation target DEMOTES the mover
+    `intensity_summary` hard→moderate (the intensity-distribution rule reads
+    cardio-block zones, not this summary, so the demotion introduces no drift); a
+    strength+strength / excess day with no target DROPS the mover; a legal
+    same-discipline day with no target is left as-is. Every day's indices are then
+    renumbered contiguous 0..n-1 (recovery keeps the last slot — it carried the
+    highest index). Code decides placement; the LLM keeps composing content. Pure.
+    Returns (sessions, notes); empty notes == unchanged. Logged by the caller
+    (Rule #15).
     """
     by_day: dict = {}
     for s in sessions:
@@ -3168,101 +3191,11 @@ def _repair_strength_collisions(
     drops: set = set()  # session_ids to drop
     notes: list[str] = []
 
-    def _find_target(exclude_date):
-        for td in sorted(by_day):
-            if td == exclude_date or td in consumed:
-                continue
-            ds = by_day[td]
-            if (
-                len(ds) == 1
-                and ds[0].kind == "cardio"
-                and ds[0].intensity_summary != "hard"
-            ):
-                return td, ds[0]
-        return None
-
-    for d in sorted(by_day):
-        ss = by_day[d]
-        strengths = [s for s in ss if s.kind == "strength"]
-        if len(ss) != 2 or len(strengths) != 2:
-            continue
-        mover = max(strengths, key=lambda s: s.session_index_in_day)
-        keeper = min(strengths, key=lambda s: s.session_index_in_day)
-        updates[keeper.session_id] = keeper.model_copy(
-            update={"session_index_in_day": 0}
-        )
-        target = _find_target(d)
-        if target is not None:
-            td, cardio = target
-            consumed.add(td)
-            updates[cardio.session_id] = cardio.model_copy(
-                update={"session_index_in_day": 0}
-            )
-            updates[mover.session_id] = mover.model_copy(
-                update={
-                    "date": td,
-                    "day_of_week": cardio.day_of_week,
-                    "session_index_in_day": 1,
-                }
-            )
-            notes.append(f"{d}: relocated 2nd strength -> {td}")
-        else:
-            drops.add(mover.session_id)
-            notes.append(f"{d}: dropped 2nd strength (no relocation day)")
-
-    if not notes:
-        return sessions, []
-    out: list[PlanSession] = []
-    for s in sessions:
-        if s.session_id in drops:
-            continue
-        out.append(updates.get(s.session_id, s))
-    return out, notes
-
-
-def _repair_day_composition(
-    sessions: list[PlanSession],
-) -> tuple[list[PlanSession], list[str]]:
-    """#778/#779 deterministic pre-validation repair for the two day-compositions
-    the deterministic grid can't constrain up front — day placement AND which
-    session is hard are the LLM's free choice (DeterminismFirst §65-71) — and that
-    the post-LLM guards handle poorly:
-
-    - **two training sessions sharing a `discipline_id`** on one day (#778). NO
-      rule blocks this; it slips through whenever the pair isn't both-hard, so a
-      doubled-MTB day (plan-75, 2026-07-09) passed every guard. Not a hard
-      blocker — repaired best-effort.
-    - **two hard training sessions** on one day (#779). This IS a hard payload
-      invariant (`_check_two_per_day` / `_rule_two_per_day`), so before this
-      repair it forced a block fumble + a wasted retry pass. Self-healed here.
-
-    Mirrors `_repair_strength_collisions`: code decides placement/intensity, the
-    LLM keeps composing content. For each offending day the later
-    (`session_index_in_day` max) training session is the mover. We first try to
-    RELOCATE it onto the nearest in-list single-session day holding a non-hard
-    cardio of a DIFFERENT discipline — which fixes BOTH flags at once and keeps
-    the session's content intact; that target is consumed so a second repair can't
-    reuse it. If no relocation day exists, a two-hard day is resolved by DEMOTING
-    the mover's `intensity_summary` hard→moderate (always available; the
-    intensity-distribution rule reads cardio-block zones, not this summary, so the
-    demotion introduces no drift); a same-discipline-ONLY day with no relocation
-    target is left as-is (it passes validation) with an attributable note.
-
-    Runs AFTER `_repair_strength_collisions`, so no day still holds two strength
-    sessions here (a relocation target is always cardio → never makes the target
-    two-strength). Conservative: only relocates onto days the model already
-    populated. Pure. Returns (repaired_sessions, notes); empty notes == unchanged.
-    Logs the decision (Rule #15) where the strength-collision repair does.
-    """
-    by_day: dict = {}
-    for s in sessions:
-        by_day.setdefault(s.date, []).append(s)
-
-    consumed: set = set()
-    updates: dict = {}  # session_id -> replacement PlanSession
-    notes: list[str] = []
-
     def _find_target(exclude_date, mover):
+        # nearest single-session day whose lone session is a non-hard cardio of a
+        # DIFFERENT discipline — adding the mover keeps it legal AND doesn't mint a
+        # new same-discipline day. Reads original `by_day`: offending days (len>1)
+        # are never targets, and `consumed` blocks reuse.
         for td in sorted(by_day):
             if td == exclude_date or td in consumed:
                 continue
@@ -3271,81 +3204,109 @@ def _repair_day_composition(
                 len(ds) == 1
                 and ds[0].kind == "cardio"
                 and ds[0].intensity_summary != "hard"
-                # a different discipline → relocation can't itself create a NEW
-                # same-discipline day on the target (which #776's accepted-path
-                # logging would then flag).
                 and ds[0].discipline_id != mover.discipline_id
             ):
                 return td, ds[0]
         return None
 
-    for d in sorted(by_day):
-        ss = by_day[d]
-        training = [s for s in ss if s.kind in ("cardio", "strength")]
-        if len(training) != 2:
-            continue
-        disc = [s.discipline_id for s in training if s.discipline_id]
-        same_discipline = len(disc) != len(set(disc))
-        two_hard = all(s.intensity_summary == "hard" for s in training)
-        if not (same_discipline or two_hard):
-            continue
-        mover = max(training, key=lambda s: s.session_index_in_day)
-        flag = "+".join(
-            name
-            for name, on in (
-                ("two_same_discipline", same_discipline),
-                ("two_hard", two_hard),
-            )
-            if on
+    def _relocate(mover, flag, day) -> bool:
+        target = _find_target(day, mover)
+        if target is None:
+            return False
+        td, cardio = target
+        consumed.add(td)
+        updates[cardio.session_id] = cardio.model_copy(
+            update={"session_index_in_day": 0}
         )
-        target = _find_target(d, mover)
-        if target is not None:
-            td, cardio = target
-            consumed.add(td)
-            updates[cardio.session_id] = cardio.model_copy(
-                update={"session_index_in_day": 0}
-            )
-            updates[mover.session_id] = mover.model_copy(
-                update={
-                    "date": td,
-                    "day_of_week": cardio.day_of_week,
-                    "session_index_in_day": 1,
-                }
-            )
-            # the mover's old day now holds its remaining session(s) (the keeper,
-            # plus an additive recovery if present); renumber them to a contiguous
-            # 0..n-1 so `_check_two_per_day`'s index-contiguity check still passes.
-            remaining = sorted(
-                (s for s in ss if s.session_id != mover.session_id),
-                key=lambda x: x.session_index_in_day,
-            )
-            for new_idx, rs in enumerate(remaining):
-                if rs.session_index_in_day != new_idx:
-                    base = updates.get(rs.session_id, rs)
-                    updates[rs.session_id] = base.model_copy(
-                        update={"session_index_in_day": new_idx}
-                    )
-            notes.append(f"{d}: relocated 2nd session ({flag}) -> {td}")
-        elif two_hard:
-            updates[mover.session_id] = mover.model_copy(
-                update={"intensity_summary": "moderate"}
-            )
-            notes.append(
-                f"{d}: demoted 2nd session intensity hard->moderate "
-                f"({flag}; no relocation day)"
-            )
-        else:
-            # same-discipline-only with no relocation target: not a blocker, so
-            # leave it (it passes validation) but log the unrepaired decision.
-            notes.append(
-                f"{d}: left {flag} day unrepaired (no relocation day; "
-                f"passes validation)"
-            )
+        updates[mover.session_id] = mover.model_copy(
+            update={
+                "date": td,
+                "day_of_week": cardio.day_of_week,
+                "session_index_in_day": 1,
+            }
+        )
+        notes.append(f"{day}: relocated 2nd session ({flag}) -> {td}")
+        return True
+
+    for d in sorted(by_day):
+        ss = sorted(by_day[d], key=lambda s: s.session_index_in_day)
+        training = [s for s in ss if s.kind in ("cardio", "strength")]
+        recovery = [s for s in ss if s.kind == "recovery"]
+
+        # Defensive count caps — the grid never allocates >2 training or >1
+        # recovery to a day, but the LLM is free to, and the count clauses are
+        # hard. Evict the highest-index excess (relocate training, drop recovery)
+        # so the count clauses can't fire regardless of shape.
+        for extra in training[2:]:
+            if not _relocate(extra, "excess_training", d):
+                drops.add(extra.session_id)
+                notes.append(f"{d}: dropped excess training (no relocation day)")
+        for extra in recovery[1:]:
+            drops.add(extra.session_id)
+            notes.append(f"{d}: dropped excess recovery")
+        training = training[:2]
+
+        if len(training) < 2:
+            continue
+        a, b = training[0], training[1]  # by index ascending
+        mover = b  # the later session is the mover (lowest-index keeper stays)
+        has_cardio = a.kind == "cardio" or b.kind == "cardio"
+        both_hard = a.intensity_summary == "hard" and b.intensity_summary == "hard"
+        same_discipline = bool(
+            a.discipline_id and b.discipline_id and a.discipline_id == b.discipline_id
+        )
+
+        if not has_cardio:
+            # two strength → hard ("no strength+strength"); must evict the mover.
+            if not _relocate(mover, "strength+strength", d):
+                drops.add(mover.session_id)
+                notes.append(f"{d}: dropped 2nd strength (no relocation day)")
+        elif both_hard:
+            # hard ("no two hard"); relocate, else demote in place.
+            if not _relocate(mover, "two_hard", d):
+                updates[mover.session_id] = mover.model_copy(
+                    update={"intensity_summary": "moderate"}
+                )
+                notes.append(
+                    f"{d}: demoted 2nd session intensity hard->moderate "
+                    "(two_hard; no relocation day)"
+                )
+        elif same_discipline:
+            # SOFT (#778): legal, so relocate best-effort; leave it if no target.
+            if not _relocate(mover, "two_same_discipline", d):
+                notes.append(
+                    f"{d}: left two_same_discipline day unrepaired "
+                    "(no relocation day; passes validation)"
+                )
+        # else: legal, distinct-discipline pair → nothing to do.
 
     if not notes:
         return sessions, []
-    out: list[PlanSession] = [updates.get(s.session_id, s) for s in sessions]
-    return out, notes
+
+    # Materialize relocations/demotions/drops, then renumber every day's indices
+    # to contiguous 0..n-1 (the invariant's last clause). Sorting by current index
+    # keeps a recovery session — which carried the highest index — in the last
+    # slot after a mover left a gap.
+    materialized: list[PlanSession] = []
+    for s in sessions:
+        if s.session_id in drops:
+            continue
+        materialized.append(updates.get(s.session_id, s))
+
+    final_by_day: dict = {}
+    for s in materialized:
+        final_by_day.setdefault(s.date, []).append(s)
+    reindex: dict = {}
+    for day_sessions in final_by_day.values():
+        for new_idx, s in enumerate(
+            sorted(day_sessions, key=lambda x: x.session_index_in_day)
+        ):
+            if s.session_index_in_day != new_idx:
+                reindex[s.session_id] = s.model_copy(
+                    update={"session_index_in_day": new_idx}
+                )
+
+    return [reindex.get(s.session_id, s) for s in materialized], notes
 
 
 def _build_payload_for_validation(
@@ -3794,28 +3755,18 @@ def synthesize_phase(
             final_retries_used = current_pass + 1
             continue
 
-        # WS-E deterministic crash-guard: resolve any strength+strength day in
-        # code BEFORE validation so a collision self-heals instead of forcing a
-        # retry/fumble (the pv=69 / plan-70 stall class). Runs every pass.
-        sessions, _collision_notes = _repair_strength_collisions(sessions)
-        if _collision_notes:
+        # Deterministic crash-guard: normalize every day to the hard
+        # `_check_two_per_day` invariant in code BEFORE validation so a
+        # day-composition collision self-heals instead of forcing a retry/fumble
+        # (the recurring "first Build block fails" class: pv=69, plan-75,
+        # plan-78). Shape-agnostic (handles strength+strength, two-hard,
+        # same-discipline, excess training/recovery — incl. days carrying an
+        # additive #698 recovery slot). Runs every pass.
+        sessions, _norm_notes = _normalize_day_composition(sessions)
+        if _norm_notes:
             print(
-                f"synthesize_phase: {unit_tag} strength-collision repair — "
-                + "; ".join(_collision_notes)
-            )
-
-        # #778/#779 deterministic crash-guard: resolve the two day-compositions the
-        # grid can't constrain up front — two same-discipline training sessions
-        # (#778; unguarded) and two hard sessions (#779; a payload invariant that
-        # otherwise fumbles the block + burns a retry) — in code BEFORE validation,
-        # so a doubled-MTB or two-hard day self-heals (plan-75, 2026-07-09) instead
-        # of passing silently / fumbling. Runs after the strength-collision repair
-        # so no day still holds two strength sessions. Mirrors that repair.
-        sessions, _day_comp_notes = _repair_day_composition(sessions)
-        if _day_comp_notes:
-            print(
-                f"synthesize_phase: {unit_tag} day-composition repair — "
-                + "; ".join(_day_comp_notes)
+                f"synthesize_phase: {unit_tag} day-composition normalize — "
+                + "; ".join(_norm_notes)
             )
 
         latest_sessions = sessions

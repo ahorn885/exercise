@@ -601,16 +601,17 @@ class TestTopLevelPayloadValidationRetryable:
             llm_caller=caller,
         )
 
-    def test_three_sessions_one_day_is_retryable_not_fatal(self):
-        from layer4.errors import Layer4OutputError
-
-        calls = {"n": 0}
+    def test_three_sessions_one_day_is_normalized_not_fatal(self):
         # Three cardio sessions all dated to week-1 day 2 (inside the block
-        # window). Each parses fine on its own — but the cross-session
-        # `_check_two_per_day` invariant, which only fires at payload
-        # construction, rejects 3 TRAINING sessions on a day (recovery is exempt
-        # and additive, #698 Track 1; three cardio are all training). This is
-        # exactly the boundary #47 fell through.
+        # window) — the #47 boundary: 3 TRAINING sessions on a day trips the hard
+        # `_check_two_per_day` "max 2 training" clause at payload construction. As
+        # of the unified `_normalize_day_composition` (plan-78) this is healed
+        # DETERMINISTICALLY pre-validation — the excess training is evicted so the
+        # day caps to ≤2 — rather than fumbling the block + burning retries. The
+        # #47 protection (a raw ValidationError the normalizer can't pre-heal must
+        # still surface as a RETRYABLE schema_violation, never fatal) lives on the
+        # `except ValidationError` backstop, exercised by the sibling test below.
+        calls = {"n": 0}
         bad = {
             "sessions": [
                 _cardio_session(d=_PLAN_START + timedelta(days=1), idx=0),
@@ -629,16 +630,17 @@ class TestTopLevelPayloadValidationRetryable:
                 latency_ms=8000,
             )
 
-        with pytest.raises(Layer4OutputError) as exc:
-            self._run(_caller)
-
-        # Surfaced as the RETRYABLE typed code — not a raw ValidationError that
-        # the route would treat as a fatal "unexpected" and discard the plan.
-        assert exc.value.code == "schema_violation"
-        assert "2 training sessions per day" in str(exc.value.detail)
-        # Retried across the full cap (capped_retries=2 → 3 attempts) before
-        # giving up, rather than failing fatally on the first bad attempt.
-        assert calls["n"] == 3
+        # No exception: the normalizer caps day 2 to 2 training, so the block
+        # validates + accepts on the first attempt (no retries needed).
+        result = self._run(_caller)
+        assert calls["n"] == 1
+        by_day: dict = {}
+        for s in result.sessions:
+            by_day.setdefault(s.date, []).append(s)
+        day2 = by_day[_PLAN_START + timedelta(days=1)]
+        training = [s for s in day2 if s.kind in ("cardio", "strength")]
+        assert len(training) <= 2
+        assert sorted(s.session_index_in_day for s in day2) == list(range(len(day2)))
 
     def test_budget_break_with_no_validator_is_retryable(self):
         # prod plan #52 (2026-05-31), sibling of #47. When EVERY completed pass
