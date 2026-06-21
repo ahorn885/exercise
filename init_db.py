@@ -2455,6 +2455,30 @@ _PG_MIGRATIONS = [
         f"WHERE exercise='{name}' AND layer0_exercise_id IS NULL"
         for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
     ],
+    # ── Catalog unification (Slice B2): migrate injury_exercise_modifications off
+    # the public exercise_inventory.id FK onto layer0 EX-ids. Add TEXT EX-id
+    # columns + backfill from the still-present v1 catalog via the same
+    # STRENGTH_NAME_TO_EX_ID crosswalk; make the legacy int FK column nullable so
+    # new rows (written as EX-ids) need not populate it. The legacy
+    # exercise_id / substitute_exercise_id columns + their FK to exercise_inventory
+    # are dropped with the table in the table-drop slice. Idempotent (ADD COLUMN
+    # IF NOT EXISTS + `… ex_id IS NULL` guards); on a fresh DB both tables are
+    # empty at this point so the backfill is a no-op.
+    "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS exercise_ex_id TEXT",
+    "ALTER TABLE injury_exercise_modifications ADD COLUMN IF NOT EXISTS substitute_ex_id TEXT",
+    "ALTER TABLE injury_exercise_modifications ALTER COLUMN exercise_id DROP NOT NULL",
+    *[
+        f"UPDATE injury_exercise_modifications SET exercise_ex_id='{ex_id}' "
+        f"WHERE exercise_ex_id IS NULL AND exercise_id IN "
+        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
+    ],
+    *[
+        f"UPDATE injury_exercise_modifications SET substitute_ex_id='{ex_id}' "
+        f"WHERE substitute_ex_id IS NULL AND substitute_exercise_id IN "
+        f"(SELECT id FROM exercise_inventory WHERE exercise='{name}')"
+        for name, ex_id in STRENGTH_NAME_TO_EX_ID.items()
+    ],
     # ── Cull non-trainable / mis-classified v1 exercise_inventory entries ──
     # (#694, Andy-ratified 2026-06-17). Five 'Novel' rows that are cardio
     # sessions or coaching cues, not trackable strength exercises — v1-catalog
