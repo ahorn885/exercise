@@ -118,6 +118,19 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # body changed, so cached plans regenerate.
 LAYER4_PROMPT_REVISION = "19"
 
+# Prompt-body revision tag for the Layer 3A/3B LLM stages, mixed into the Layer 3D
+# gate's "Reading B" staleness fingerprint (`compute_gate_input_fingerprint`).
+# The gate's verdict is a function of the upstream 2A/2C/2D/2E/3B payloads; 3B
+# (and 2E's start_phase) ride on the 3A/3B LLM outputs, which depend on the 3A/3B
+# PROMPT bodies in addition to their inputs. The staleness fingerprint hashes the
+# raw INPUTS those stages consume (so it never has to re-run the LLM just to
+# re-check) — this revision tag closes the one determinant the inputs don't carry:
+# a redeployed 3A/3B prompt while a plan sits parked at the review screen. Bump it
+# whenever a 3A or 3B prompt-body change could shift the gate verdict, so a parked
+# plan re-evaluates against the new prompt on review re-entry / [Generate].
+# "1" = initial (#213 Layer 3D gate staleness, Reading B).
+LAYER3_GATE_PROMPT_REVISION = "1"
+
 
 def _to_jsonable(obj: Any) -> Any:
     """Recursive conversion to JSON-safe types with stable serialization.

@@ -115,6 +115,7 @@ from layer4.cache_invalidation import (
 )
 from layer4.orchestrator import (
     OrchestrationError,
+    compute_gate_input_fingerprint,
     orchestrate_plan_create,
     orchestrate_plan_refresh,
     orchestrate_race_week_brief,
@@ -298,6 +299,7 @@ __all__ = [
     "policy_for_layer",
     # Orchestrator (orchestrator.py) — Phase 5.1 + Phase 5.2 vertical slices
     "OrchestrationError",
+    "compute_gate_input_fingerprint",
     "orchestrate_plan_create",
     "orchestrate_plan_refresh",
     "orchestrate_race_week_brief",

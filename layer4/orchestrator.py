@@ -113,7 +113,11 @@ from layer4.context import (
     TrainingSubstitutionPayload,
 )
 from layer4.payload import Layer4Payload, PlanSession
-from layer4.hashing import compute_event_windows_hash
+from layer4.hashing import (
+    LAYER3_GATE_PROMPT_REVISION,
+    compute_event_windows_hash,
+    compute_payload_hash,
+)
 from layer4.phase_structure import phase_structure_from_3b
 from layer4.plan_create import _compute_total_weeks
 from layer4.session_feasibility import (
@@ -1784,6 +1788,25 @@ def orchestrate_plan_create(
         race_event_payload=race_event,
         prior_resolutions=load_prior_resolutions(db, user_id, plan_version_id),
     )
+    if gate.gate_status != "green":
+        # Parking for review — stamp the Reading-B input fingerprint so the review
+        # routes can detect an athlete edit (or new training data) since now and
+        # re-evaluate this verdict against current reality. Only non-green gates
+        # carry it: a green gate proceeds straight to synthesis and is never
+        # re-checked. Same inputs already in hand for the cone, re-read here from a
+        # single helper so park-time and re-check-time digests are computed
+        # identically (no drift between two code paths).
+        gate = gate.model_copy(
+            update={
+                "input_fingerprint": compute_gate_input_fingerprint(
+                    db,
+                    user_id,
+                    target_race_event=race_event,
+                    plan_start_date=plan_start_date,
+                    today=today,
+                )
+            }
+        )
     save_hitl_gate(db, user_id, plan_version_id, gate)
     if gate.gate_status != "green":
         raise Layer3DGateBlocked(gate)
@@ -2000,6 +2023,68 @@ def _q_current_etl_version_set(db: Any) -> dict[str, str]:
             for table, versions in sorted(tables.items())
         )
     return version_set
+
+
+def compute_gate_input_fingerprint(
+    db: Any,
+    user_id: int,
+    *,
+    target_race_event: RaceEventPayload | None,
+    plan_start_date: date,
+    today: date,
+) -> str:
+    """SHA-256 over the deterministic LEAF inputs that decide the Layer 3D gate.
+
+    "Reading B" staleness signal for a plan parked at the HITL review screen. The
+    alternative ("Reading A") would hash the computed 2A/2C/2D/2E/3B payloads, but
+    re-checking those would force a re-run of the LLM stages 3A/3B just to find
+    out whether anything changed. Instead we fingerprint the RAW INPUTS those
+    stages consume, so the re-check is a handful of indexed reads and NO LLM call:
+
+      * athlete profile        -> `build_layer1_payload`
+      * target race            -> the `RaceEventPayload`
+      * equipment / terrain    -> per-cluster-locale effective tags + terrain ids
+      * incoming training data -> `assemble_layer3a_integration_bundle` (3A input)
+      * declared availability  -> `load_event_windows`
+      * platform data version  -> `_q_current_etl_version_set`
+      * 3A/3B prompt revision  -> `LAYER3_GATE_PROMPT_REVISION`
+
+    ...plus the plan start date. A changed digest means the athlete edited
+    something (or new training data synced) since the gate was evaluated, so the
+    parked verdict is stale and the plan must re-evaluate against current reality.
+    False "stale" (an edit to a profile field the gate ignores, or the
+    training-data window sliding a day) is harmless — it only triggers a
+    re-generation that mostly replays from cache. A false "fresh" (missing a real
+    change) is the bug this closes, so the leaf set is deliberately a SUPERSET of
+    the gate's true determinants: when in doubt, include it.
+    """
+    as_of = datetime.combine(today, time.min)
+    primary = _q_primary_locale(db, user_id)
+    cluster = locations.cluster_locale_ids(db, user_id) or [primary]
+    components = {
+        "profile": compute_payload_hash(build_layer1_payload(db, user_id)),
+        "race": (
+            compute_payload_hash(target_race_event)
+            if target_race_event is not None
+            else ""
+        ),
+        "primary_locale": primary,
+        "locale_terrain": {
+            loc: sorted(_q_locale_terrain_ids(db, user_id, loc)) for loc in cluster
+        },
+        "locale_equipment": {
+            loc: sorted(locations.locale_effective_tags(db, user_id, loc))
+            for loc in cluster
+        },
+        "training_data": compute_payload_hash(
+            assemble_layer3a_integration_bundle(db, user_id, as_of)
+        ),
+        "event_windows": compute_event_windows_hash(load_event_windows(db, user_id)),
+        "etl_version_set": _q_current_etl_version_set(db),
+        "plan_start_date": plan_start_date.isoformat(),
+        "prompt_revision": LAYER3_GATE_PROMPT_REVISION,
+    }
+    return compute_payload_hash(components)
 
 
 def _q_primary_locale(db: Any, user_id: int) -> str:
