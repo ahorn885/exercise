@@ -287,6 +287,33 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
     ]
 
 
+def _framework_sport_choices(db) -> list[str]:
+    """Canonical race/event types for the structured "Race event type" select.
+
+    Issue #885 — the field was a free-text `<input>`; an athlete could save a
+    value that didn't exactly match any `layer0.sport_discipline_bridge`
+    `framework_sport`, so `_disciplines_for_framework_sport` returned [] and the
+    discipline grid (plus every per-row terrain `<select>`) collapsed to empty /
+    "Race-wide" — the data-loss bug #892. Sourcing the options from the DISTINCT
+    `framework_sport` values in the same bridge table the discipline grid reads
+    keeps the event type and its disciplines in lockstep: every selectable
+    option resolves to a non-empty discipline set by construction.
+
+    `superseded_at IS NULL` uses the current canonical mapping (runtime pinning
+    is Layer 2A's `etl_version_set` concern, same as `_disciplines_for_…`).
+    """
+    cur = db.execute(
+        """
+        SELECT DISTINCT framework_sport
+          FROM layer0.sport_discipline_bridge
+         WHERE superseded_at IS NULL
+           AND framework_sport IS NOT NULL
+         ORDER BY framework_sport
+        """
+    )
+    return [r['framework_sport'] for r in cur.fetchall() if r['framework_sport']]
+
+
 # ─── #256/#592 race-detail auto-fill (parse a race URL + terrain fallback) ───
 # Build spec: aidstation-sources/designs/Race_URL_Parser_Spec_v1.md. The two
 # JSON endpoints further down (parse_url + infer_terrain_suggestion) back the
@@ -777,6 +804,7 @@ def new_race():
     # `/profile/race-events/disciplines/search` endpoint.
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, None)
     discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    framework_sport_choices = _framework_sport_choices(db)
     # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location picker.
     # The search box + result list are rendered + driven by the inline
     # `<script nonce="..."` block in `templates/_race_locale_picker.html`
@@ -793,6 +821,7 @@ def new_race():
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=True,
@@ -827,6 +856,7 @@ def edit_race(race_event_id: int):
     terrain_choices = _terrain_choices(db)
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
     discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    framework_sport_choices = _framework_sport_choices(db)
     return render_template(
         'profile/race_event_edit.html',
         race=race,
@@ -835,6 +865,7 @@ def edit_race(race_event_id: int):
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=False,
@@ -909,8 +940,9 @@ def update_race(race_event_id: int):
     if framework_sport_will_change and prior_discipline_filter:
         new_discipline_filter = None
         flash(
-            'Sport override changed — your discipline picks were cleared. '
-            'Re-select them for the new sport.',
+            'Race event type changed — your discipline narrowing was reset, so '
+            'the race now includes every discipline for the new event type. '
+            'Re-narrow them below if you only want a subset.',
             'info',
         )
     else:
@@ -1127,8 +1159,15 @@ def disciplines_search():
     db = get_db()
     # Force auth — the bridge data is non-sensitive but keeping the route
     # behind the session preserves the "authed surfaces only" invariant.
-    _ = current_user_id()
+    uid = current_user_id()
     framework_sport = (request.args.get('framework_sport') or '').strip()
+    # #885 — a blank value is the structured select's "Same as my profile
+    # sport" (inherit) option. Resolve it to the athlete's primary_sport the
+    # same way the initial server render does (`_resolve_effective_framework_
+    # sport`), so toggling the select back to inherit repopulates the grid
+    # instead of emptying it.
+    if not framework_sport:
+        framework_sport = _resolve_effective_framework_sport(db, uid, None) or ''
     choices = _disciplines_for_framework_sport(db, framework_sport)
     return jsonify({
         'framework_sport': framework_sport,

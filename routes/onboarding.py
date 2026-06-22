@@ -993,9 +993,11 @@ def target_race():
     from routes.race_events import (
         _resolve_effective_framework_sport,
         _disciplines_for_framework_sport,
+        _framework_sport_choices,
     )
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, target)
     discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    framework_sport_choices = _framework_sport_choices(db)
 
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race-location picker
     # imports the Mapbox disclosure ack helpers from `routes/locales`;
@@ -1008,6 +1010,7 @@ def target_race():
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
         mapbox_acked=_disclosure_acked(db, uid),
@@ -1096,8 +1099,9 @@ def target_race_save():
         if prior_framework_sport != new_framework_sport and prior_discipline_filter:
             new_discipline_filter = None
             flash(
-                'Sport override changed — your discipline picks were cleared. '
-                'Re-select them for the new sport.',
+                'Race event type changed — your discipline narrowing was reset, '
+                'so the race now includes every discipline for the new event '
+                'type. Re-narrow them below if you only want a subset.',
                 'info',
             )
         else:

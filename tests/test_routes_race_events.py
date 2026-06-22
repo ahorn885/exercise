@@ -23,6 +23,7 @@ import pytest
 from routes.race_events import (
     _disciplines_for_framework_sport,
     _extract_mapbox_locale_from_form,
+    _framework_sport_choices,
     _parse_discipline_id_filter,
     _parse_first_time_at_distance,
     _parse_goal_outcome,
@@ -563,6 +564,40 @@ class TestDisciplinesForFrameworkSport:
         conn = _FakeConn(rows=[])
         assert _disciplines_for_framework_sport(conn, '') == []
         assert _disciplines_for_framework_sport(conn, None) == []
+
+
+# ─── _framework_sport_choices ───────────────────────────────────────────────
+
+
+class TestFrameworkSportChoices:
+    """Issue #885 — canonical race/event types for the structured select.
+    Sourced from the DISTINCT `framework_sport` of the same bridge table the
+    discipline grid reads, so every option resolves to a non-empty discipline
+    set (the #892 data-loss fix)."""
+
+    def test_returns_distinct_framework_sports_in_order(self):
+        conn = _FakeConn(rows=[
+            {'framework_sport': 'Adventure Racing'},
+            {'framework_sport': 'Trail Running'},
+            {'framework_sport': 'Triathlon'},
+        ])
+        assert _framework_sport_choices(conn) == [
+            'Adventure Racing', 'Trail Running', 'Triathlon',
+        ]
+
+    def test_filters_blank_and_null_values(self):
+        # Defensive — the SQL already excludes NULL, but a stray empty string
+        # must not become a blank <option> that collides with the inherit row.
+        conn = _FakeConn(rows=[
+            {'framework_sport': 'Adventure Racing'},
+            {'framework_sport': None},
+            {'framework_sport': ''},
+        ])
+        assert _framework_sport_choices(conn) == ['Adventure Racing']
+
+    def test_empty_table_returns_empty_list(self):
+        conn = _FakeConn(rows=[])
+        assert _framework_sport_choices(conn) == []
 
 
 # ─── _resolve_effective_framework_sport ─────────────────────────────────────
