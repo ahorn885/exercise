@@ -28,14 +28,10 @@
 
     <div class="sidebar-section" id="nav-log">Log</div>
     <ul aria-labelledby="nav-log">
-      {{ sidebar_item('log',      'Quick log', 'i-log',   url_for('log.index'), active) }}
-      {{ sidebar_item('insights', 'Wellness',  'i-pulse', url_for('wellness.index'),    active) }}
-      {{ sidebar_item('link',     'Data',      'i-link',  url_for('connections.hub'),   active) }}
-    </ul>
-
-    <div class="sidebar-section" id="nav-account">Account</div>
-    <ul aria-labelledby="nav-account">
-      {{ sidebar_item('locations', 'Locations',   'i-pin',     url_for('locales.list_profiles'), active) }}
+      {{ sidebar_item('log',       'Quick log', 'i-log',   url_for('log.index'), active) }}
+      {{ sidebar_item('insights',  'Wellness',  'i-pulse', url_for('wellness.index'),        active) }}
+      {{ sidebar_item('link',      'Data',      'i-link',  url_for('connections.hub'),       active) }}
+      {{ sidebar_item('locations', 'Locations', 'i-pin',   url_for('locales.list_profiles'), active) }}
     </ul>
   </nav>
 

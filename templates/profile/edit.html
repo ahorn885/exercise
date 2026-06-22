@@ -8,7 +8,7 @@
    so those flows stay in lockstep. #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
-{% set sub = active_tab if active_tab in ['athlete', 'supplements', 'schedule', 'skills', 'locations'] else 'athlete' %}
+{% set sub = active_tab if active_tab in ['athlete', 'supplements', 'schedule', 'skills'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
    or profile.weekly_hours_target or profile.body_weight_kg or profile.coach_notes) %}
 {% set unit_pref = profile.unit_preference or 'imperial' %}
@@ -40,8 +40,7 @@
        ('athlete', 'Athlete', 'baselines + notes'),
        ('supplements', 'Supplements', 'supps · meds · health'),
        ('schedule', 'Schedule', 'training windows'),
-       ('skills', 'Skills', 'race-day capabilities'),
-       ('locations', 'Locations', 'where you train')] %}
+       ('skills', 'Skills', 'race-day capabilities')] %}
   <a class="conn-tab{{ ' is-on' if sub == key else '' }}" role="tab"
      aria-selected="{{ 'true' if sub == key else 'false' }}"
      href="{{ url_for('profile.edit', tab=key) }}">
@@ -378,10 +377,6 @@
     <button type="submit" class="btn btn-primary">Save schedule</button>
   </div>
 </form>
-
-{# ════════════════════ LOCATIONS ════════════════════ #}
-{% elif sub == 'locations' %}
-{% include 'locales/_list_body.html' %}
 
 {# ════════════════════ SKILLS ════════════════════ #}
 {% else %}

@@ -24,14 +24,14 @@
       </ul>
       <div class="sidebar-section" id="dnav-log">Log</div>
       <ul aria-labelledby="dnav-log">
-        {{ drawer_item('log',      'Quick log', 'i-log',   url_for('log.index'), active) }}
-        {{ drawer_item('insights', 'Wellness',  'i-pulse', url_for('wellness.index'),    active) }}
-        {{ drawer_item('link',     'Data',      'i-link',  url_for('connections.hub'),   active) }}
+        {{ drawer_item('log',       'Quick log', 'i-log',   url_for('log.index'), active) }}
+        {{ drawer_item('insights',  'Wellness',  'i-pulse', url_for('wellness.index'),        active) }}
+        {{ drawer_item('link',      'Data',      'i-link',  url_for('connections.hub'),       active) }}
+        {{ drawer_item('locations', 'Locations', 'i-pin',   url_for('locales.list_profiles'), active) }}
       </ul>
       <div class="sidebar-section" id="dnav-account">Account</div>
       <ul aria-labelledby="dnav-account">
         {{ drawer_item('athlete',   'Athlete',     'i-athlete', url_for('profile.edit'),          active) }}
-        {{ drawer_item('locations', 'Locations',   'i-pin',     url_for('locales.list_profiles'), active) }}
         <li><a class="drawer-item" href="{{ url_for('nudges.feed') }}">
           <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-bell"></use></svg>
           <span>Notifications{% if active_nudges %} <span class="chip solid">{{ active_nudges|length }}</span>{% endif %}</span></a></li>
