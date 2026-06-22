@@ -13,6 +13,14 @@ Rolling-state for items spanning multiple sessions. **Edit in place** — don't 
 
 ---
 
+## Layer 3 / process — Slice 3 gating + collision + CI quirk (2026-06-22)
+
+- **Parallel-build collision (lesson).** #865 (a session branch) and #868 (another session) both built #214/#213 Slice 2; #868 merged first, #865 closed as superseded. The duplicate was invisible until `git fetch origin main` during rebase. **When running concurrent Claude sessions on one epic, at session start `git fetch origin main` + check the issue (e.g. #213/#214) for an existing PR/branch/merged commit before building.** Rule #9 extended to the remote.
+- **CI-trigger quirk.** Commits pushed from a Claude session branch (container git path) may **not** trigger the `CI` workflow (`.github/workflows/ci.yml`), even though the commit reaches GitHub and Vercel builds it (Vercel uses its own webhook). Symptom: PR head shows only the `Vercel` status; `actions_list` shows zero CI runs for the branch while other `claude/*` PRs trigger fine. **Workaround:** `actions_run_trigger run_workflow` (`workflow_dispatch`) on `ci.yml` against the branch — its jobs post the required check contexts on the head commit by name, satisfying branch protection; auto-merge then fires. (Confirmed 2026-06-22, run #763.)
+- **Layer 3D Slice 3 is design-gated** on a Trigger #3 contract change (`evaluated_against` → per-athlete upstream fingerprint) + async recompute (Andy 2026-06-22). Design direction + 3a/3b split + file map in `handoffs/V5_Layer3D_Slice3_DesignGate_865Superseded_213_2026_06_22_Closing_Handoff_v1.md`. Spec-first (`Layer3D_Spec` §6.1/§11.2) next session before any code.
+
+---
+
 ## Provider integrations & API — ACTIVE THREAD (next focus, Andy 2026-06-20)
 
 The #767 manual file-upload sub-track is **COMPLETE** (slices 1+2+4 merged, 3 retired, **5 merged `#785`**, **#767 CLOSED**) — any device that *exports a file* (`.fit/.tcx/.gpx/.csv`, incl. zips) ingests via the one auto-detecting uploader on the Data hub. But "integration/API work" as a whole is **not** done. Three open work-streams, in rough build order:
