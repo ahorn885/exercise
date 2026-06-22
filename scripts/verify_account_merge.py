@@ -20,6 +20,10 @@ import os
 import sys
 import traceback
 
+# Resolve repo-root imports (`database`, `routes`) regardless of CWD — invoked
+# as `python scripts/verify_account_merge.py`, sys.path[0] is scripts/, not root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 def main() -> int:
     os.environ.setdefault('ACCOUNT_MERGE_ENABLED', '1')
