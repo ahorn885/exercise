@@ -213,9 +213,15 @@ documents now agree on the target state.
 | `received_at` | TIMESTAMP | |
 | `processed_at` | TIMESTAMP NULL | NULL until dispatched |
 | `error` | TEXT NULL | non-NULL if dispatch failed |
+| `dead_lettered_at` | TIMESTAMP NULL | stamped (#250) when a failed delivery ages past its retry window; the dead-letter path is `WHERE dead_lettered_at IS NOT NULL` |
 
 Index: `(provider, provider_user_id, entity_id, event_type)` for dedup
-and replay queries.
+and replay queries; partial `(received_at) WHERE dead_lettered_at IS NOT NULL`
+for the dead-letter path.
+
+**Housekeeping (#250):** the daily cron `/integrations/webhooks/cron/maintenance`
+(`routes/webhook_maintenance.py`, Bearer-`CRON_SECRET`) dead-letters failed
+deliveries that aged past their retry window, then prunes rows older than 90 days.
 
 ### 5.2 Provider-specific tables
 

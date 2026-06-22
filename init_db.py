@@ -1092,10 +1092,17 @@ _PG_MIGRATIONS = [
         signature_ok BOOLEAN,
         received_at TIMESTAMP DEFAULT NOW(),
         processed_at TIMESTAMP,
-        error TEXT
+        error TEXT,
+        dead_lettered_at TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_lookup ON webhook_events (provider, provider_user_id, entity_id, event_type)",
     "CREATE INDEX IF NOT EXISTS idx_webhook_events_pending ON webhook_events (received_at) WHERE processed_at IS NULL",
+    # #250: dead-letter column for failed deliveries that aged past their retry
+    # window. ALTER keeps existing deployments in sync (CREATE only fires on a
+    # fresh DB). The partial index backs the dead-letter path / prune sweep
+    # (routes/webhook_maintenance.py).
+    "ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS dead_lettered_at TIMESTAMP",
+    "CREATE INDEX IF NOT EXISTS idx_webhook_events_dead_letter ON webhook_events (received_at) WHERE dead_lettered_at IS NOT NULL",
     # Slice 3 (#681 §4): the per-provider Polar wellness tables are retired.
     # Polar sleep / nightly-recharge / cardio-load now record into the canonical
     # provider_raw_record (record-don't-drop, provider-tagged), and continuous HR

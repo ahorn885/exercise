@@ -9,6 +9,7 @@
   "crons": [
     { "path": "/cron/nudges/connect_provider_14d", "schedule": "0 14 * * *" },
     { "path": "/plans/v2/cron/generate-pending", "schedule": "* * * * *" },
-    { "path": "/ride-with-gps/cron/process", "schedule": "* * * * *" }
+    { "path": "/ride-with-gps/cron/process", "schedule": "* * * * *" },
+    { "path": "/integrations/webhooks/cron/maintenance", "schedule": "0 3 * * *" }
   ]
 }
