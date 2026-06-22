@@ -120,7 +120,7 @@ At inference: `race_terrain_inference: race=<id> loc=<place_name>@<lat,lng> conf
 The race model, the manual terrain editor, the LLM harness, the terrain vocabulary + 2B validation, the weather client, and the entire downstream consumption **all exist**. The new pieces are one LLM inference call (§4), the terrain-gap fallback hook in the auto-fill flow (§5), and the §6 input-hash key. Plan-gen is untouched. **v2 is even smaller than v1 — the persisted column is gone.**
 
 ## 12. Open items / sign-off
-- **Trigger #1 — PROMPT BODY OWED (Andy).** §4 fixes inputs / output schema / validation / intent; the prompt wording needs sign-off before build.
+- **Trigger #1 — PROMPT BODY DRAFTED, sign-off owed (Andy).** Drafted at `prompts/RaceTerrainInference_v1.md`; §4 fixes inputs / output schema / validation / intent; the prompt wording needs Andy's sign-off before wiring.
 - **Fold / subordinate role — SETTLED (Andy 2026-06-21).** Spec'd.
 - **Storage — SETTLED (Andy 2026-06-21):** transient; persisted column dropped; durable store → #856. Spec'd (§3).
 - **Per-discipline terrain — SETTLED:** breakdown scoped per `discipline_id`, pct ~100 within each. Spec'd (§4/§8).
