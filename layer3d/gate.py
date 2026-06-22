@@ -593,6 +593,49 @@ def _coherent_etl_version_set(
 # ─── Entry point (§3 / §5) ───────────────────────────────────────────────────
 
 
+# ─── evaluated_against fingerprint (§6.1.1) ──────────────────────────────────
+
+
+def compute_gate_fingerprint(
+    *,
+    layer1_payload: Any,
+    layer2a_payload: Layer2APayload,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+    etl_version_set: dict[str, str],
+    race_event_id: int | None,
+    section_h2_kwargs: dict[str, Any] | None,
+) -> dict[str, str]:
+    """The §6.1.1 input fingerprint stored in `Layer3DGate.evaluated_against` and
+    compared on review re-entry to decide whether a persisted gate is stale.
+
+    Composed only of inputs cheap to recompute **without an LLM call**: the three
+    deterministic query layers the gate depends on (2A/2C/2D), Layer 1, the
+    target-race/goal inputs 3B consumes (`3B_inputs`), and the etl set. 2E/3A/3B
+    are covered transitively (each a pure function of these inputs); 2E in
+    particular runs after 3B in the pipeline, so it is never hashed standalone.
+    `current_date` + the 3A/3B model params are deliberately omitted and
+    backstopped by the generate-click re-run (§6.1.1 / §11.2)."""
+    from layer4.hashing import (
+        canonical_json,
+        compute_layer2c_bundle_hash,
+        compute_payload_hash,
+    )
+
+    layer2c_bundle = {
+        locale: compute_payload_hash(p) for locale, p in layer2c_payloads.items()
+    }
+    h2_raw = f"{race_event_id}|{canonical_json(section_h2_kwargs or {})}"
+    return {
+        "layer1": compute_payload_hash(layer1_payload),
+        "2A": compute_payload_hash(layer2a_payload),
+        "2C": compute_layer2c_bundle_hash(layer2c_bundle),
+        "2D": compute_payload_hash(layer2d_payload),
+        "3B_inputs": hashlib.sha256(h2_raw.encode("utf-8")).hexdigest(),
+        "etl": canonical_json(etl_version_set),
+    }
+
+
 def evaluate_layer3d_gate(
     *,
     user_id: int,
@@ -607,6 +650,7 @@ def evaluate_layer3d_gate(
     total_weeks: int | None = None,
     race_event_payload: Any = None,
     prior_resolutions: dict[str, GateResolution] | None = None,
+    evaluated_against: dict[str, str] | None = None,
 ) -> Layer3DGate:
     """Aggregate upstream HITL items, apply prior resolutions, and compute the
     gate status (§3 / §5). Pure + deterministic given inputs — no clock, no RNG,
@@ -618,6 +662,11 @@ def evaluate_layer3d_gate(
     `plan_start_date` is None the detectors are skipped and only the aggregation
     items gate. `race_event_payload` is accepted for signature stability; the
     detectors read availability/bands from `layer1_payload` / 2A directly.
+
+    `evaluated_against` is the §6.1.1 input fingerprint the caller computed (via
+    `compute_gate_fingerprint`) and what the staleness check (§11.2) compares on
+    re-entry; when omitted it falls back to the coherent `etl_version_set` (the
+    Slice-1 aggregation-only callers + unit tests that don't fingerprint).
     """
     # 1. Preconditions (§4) — fail-fast.
     if plan_version_id <= 0:
@@ -730,6 +779,8 @@ def evaluate_layer3d_gate(
         plan_version_id=plan_version_id,
         gate_status=gate_status,
         items=items,
-        evaluated_against=etl_version_set,
+        evaluated_against=(
+            evaluated_against if evaluated_against is not None else etl_version_set
+        ),
         evaluated_at=None,  # caller stamps on persist (§6.1)
     )
