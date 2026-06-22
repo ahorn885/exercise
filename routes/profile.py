@@ -339,6 +339,12 @@ def edit():
     db = get_db()
     uid = current_user_id()
 
+    # #887 — Locations is consolidated under the Log nav group and no longer
+    # has a profile tab. Redirect any lingering ?tab=locations links/bookmarks
+    # to the canonical standalone surface.
+    if request.method == 'GET' and request.args.get('tab') == 'locations':
+        return redirect(url_for('locales.list_profiles'))
+
     if request.method == 'POST':
         # Profile section — POST body carries the profile fields. Empty
         # strings are coerced to None so we don't store '' for unset.
@@ -356,12 +362,6 @@ def edit():
                 return cast(v)
             except (ValueError, TypeError):
                 return None
-
-        def _csv(key, allowed):
-            # Multi-select checkbox group -> comma-separated storage. Filter to
-            # the known vocab so a tampered POST can't store junk tokens.
-            picked = [v for v in f.getlist(key) if v in allowed]
-            return ','.join(picked) or None
 
         # #469 — body weight is entered in the athlete's chosen display unit
         # but stored canonically in kg. The form posts BOTH the in-effect
@@ -397,12 +397,6 @@ def edit():
         experience_level = _str('experience_level')
         if experience_level not in EXPERIENCE_LEVEL_CHOICES:
             experience_level = None
-        # Altitude acclimatization is a tri-state select: yes / no / unset.
-        # Map to BOOLEAN | None; anything outside the pair stays None.
-        _alt_raw = _str('altitude_acclimatization_history')
-        altitude_acclimatization_history = (
-            True if _alt_raw == 'yes' else False if _alt_raw == 'no' else None
-        )
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -413,23 +407,10 @@ def edit():
             coach_notes=_str('coach_notes'),
             experience_level=experience_level,
             unit_preference=submitted_unit_pref,
-            # §I.2 nutrition & fueling protocol.
-            dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
-            fueling_format_preference=_csv(
-                'fueling_format_preference', FUELING_FORMAT_CHOICES),
-            caffeine_tolerance=_str('caffeine_tolerance'),
-            caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
-            caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
-            salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
-            gi_triggers_known=_str('gi_triggers_known'),
-            # §I altitude exposure — acclimatization history (tri-state),
-            # highest sustained exposure, and how many distinct exposures.
-            altitude_acclimatization_history=altitude_acclimatization_history,
-            altitude_max_exposure_m=_num('altitude_max_exposure_m', cast=int),
-            altitude_exposure_count=_num('altitude_exposure_count', cast=int),
-            # supplement_protocol_notes is no longer edited here — supplements
-            # moved to structured records (athlete_supplements). The legacy
-            # column is left untouched (not passed) rather than wiped to NULL.
+            # #894 — the nutrition / fueling / altitude protocol moved to its own
+            # Fuel & health tab (profile.save_nutrition); supplements moved to
+            # structured records (athlete_supplements). None of those columns are
+            # passed here, so a basics-only save leaves them untouched (not wiped).
             **prefill_values,
         )
         _record_self_report_provenance(db, uid, prefill_values)
@@ -440,14 +421,9 @@ def edit():
     profile = get_athlete_profile(db, uid) or {}
     memory = _load_memory(db, uid)
 
-    days = get_daily_availability_windows(db, uid)
-    doubles = (profile.get('doubles_feasible') or 'no').lower()
-    if doubles not in DOUBLES_FEASIBLE_CHOICES:
-        doubles = 'no'
-
-    two_a_day = (profile.get('two_a_day_preference') or 'occasionally').lower()
-    if two_a_day not in TWO_A_DAY_CHOICES:
-        two_a_day = 'occasionally'
+    # #894 — the Schedule surface left the profile tab strip for its own page
+    # under "Train" (profile.schedule); per-day windows + doubles / two-a-day
+    # context now load there, not here.
 
     user_row = db.execute(
         'SELECT username, display_name, email, last_login FROM users WHERE id=?', (uid,)
@@ -539,15 +515,6 @@ def edit():
     # §C pack-load history — load-carriage base, summarized into Layer 3B.
     pack_loads = list_pack_loads(db, uid)
 
-    # Locations tab (#619) embeds the full locales surface. Build its context
-    # only when that tab is active so the per-locale equipment-tag queries don't
-    # run on every profile view. Local import avoids a routes.locales <-> profile
-    # import cycle (connections already imports load_connections from here).
-    locales_ctx = {}
-    if request.args.get('tab') == 'locations':
-        from routes.locales import build_locales_list_context
-        locales_ctx = build_locales_list_context(db, uid)
-
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
@@ -582,12 +549,6 @@ def edit():
         just_connected_slug=just_connected_slug,
         oauth_error_label=oauth_error_label,
         active_tab=request.args.get('tab'),
-        days=days,
-        doubles_feasible=doubles,
-        doubles_choices=DOUBLES_FEASIBLE_CHOICES,
-        two_a_day_preference=two_a_day,
-        two_a_day_choices=TWO_A_DAY_CHOICES,
-        peak_sessions_max=profile.get('peak_sessions_max'),
         dietary_pattern_choices=DIETARY_PATTERN_CHOICES,
         fueling_format_choices=FUELING_FORMAT_CHOICES,
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
@@ -603,18 +564,51 @@ def edit():
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
-        **locales_ctx,
+    )
+
+
+@bp.route('/schedule', methods=['GET'])
+def schedule():
+    """Render the standing Schedule & Availability surface (#894).
+
+    Lifted out of the athlete-profile tab strip onto its own page under
+    "Train" in the sidebar. Reuses the shared `_schedule_form.html` partial
+    (also used by onboarding Step 3b) so the two capture surfaces stay in
+    lockstep; the matching POST handler is `save_schedule` on the same URL.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    profile = get_athlete_profile(db, uid) or {}
+    days = get_daily_availability_windows(db, uid)
+
+    doubles = (profile.get('doubles_feasible') or 'no').lower()
+    if doubles not in DOUBLES_FEASIBLE_CHOICES:
+        doubles = 'no'
+
+    two_a_day = (profile.get('two_a_day_preference') or 'occasionally').lower()
+    if two_a_day not in TWO_A_DAY_CHOICES:
+        two_a_day = 'occasionally'
+
+    return render_template(
+        'profile/schedule.html',
+        days=days,
+        doubles_feasible=doubles,
+        doubles_choices=DOUBLES_FEASIBLE_CHOICES,
+        two_a_day_preference=two_a_day,
+        two_a_day_choices=TWO_A_DAY_CHOICES,
+        peak_sessions_max=profile.get('peak_sessions_max'),
     )
 
 
 @bp.route('/schedule', methods=['POST'])
 def save_schedule():
-    """Persist the v5 §G schedule form when submitted from the
-    `/profile?tab=schedule` surface. Identical write semantics to
-    `onboarding.schedule_save` — per-day windows replace existing rows,
-    athlete_profile carries the `doubles_feasible` toggle — differing
-    only in the redirect target (stays on the profile tab instead of
-    forwarding to the §A profile entry).
+    """Persist the v5 §G schedule form submitted from `/profile/schedule`.
+
+    Identical write semantics to `onboarding.schedule_save` — per-day windows
+    replace existing rows, athlete_profile carries the `doubles_feasible`
+    toggle — differing only in the redirect target (stays on the standalone
+    Schedule page instead of forwarding to the §A profile entry).
 
     `_parse_schedule_form` is lazy-imported from `routes.onboarding`
     because `onboarding` already imports from this module (load_connections
@@ -636,16 +630,17 @@ def save_schedule():
     if not errors:
         flash('Schedule saved.', 'success')
 
-    return redirect(url_for('profile.edit', tab='schedule'))
+    return redirect(url_for('profile.schedule'))
 
 
 @bp.route('/skills', methods=['POST'])
 def save_skills():
-    """Persist the Skills-tab form submitted from `/profile?tab=skills`.
+    """Persist the Skills form submitted from the Gear & skills tab
+    (`/profile?tab=gear`).
 
     Mirrors the onboarding-step write path: parse the form against the
     canonical vocab, UPSERT one row per toggle, evict Layer 1 caches.
-    Lands the athlete back on the Skills tab.
+    Lands the athlete back on the Gear & skills tab.
     """
     db = get_db()
     uid = current_user_id()
@@ -656,7 +651,7 @@ def save_skills():
         db.commit()
         evict_layer1_on_skill_toggle_change(db, uid)
         flash('Skills saved.', 'success')
-    return redirect(url_for('profile.edit', tab='skills'))
+    return redirect(url_for('profile.edit', tab='gear'))
 
 
 @bp.route('/disciplines', methods=['POST'])
@@ -695,7 +690,7 @@ def save_disciplines():
 
 @bp.route('/crafts', methods=['POST'])
 def save_crafts():
-    """Persist the owned-craft form (Athlete tab) — 2c.2b (#540).
+    """Persist the owned-craft form (Gear & skills tab) — 2c.2b (#540).
 
     The athlete checks the bike types + paddle crafts they own; each family is
     replace-all (unchecked = not owned). Slugs are validated against the closed
@@ -714,11 +709,72 @@ def save_crafts():
         )
     except CraftSelectionError as exc:
         flash(str(exc), 'error')
-        return redirect(url_for('profile.edit', tab='athlete'))
+        return redirect(url_for('profile.edit', tab='gear'))
     db.commit()
     evict_layer1_on_crafts_change(db, uid)
     flash('Gear saved.', 'success')
-    return redirect(url_for('profile.edit', tab='athlete'))
+    return redirect(url_for('profile.edit', tab='gear'))
+
+
+@bp.route('/nutrition', methods=['POST'])
+def save_nutrition():
+    """Persist the standing nutrition / fueling / altitude protocol — the
+    Fuel & health tab (#894).
+
+    Carved out of the main profile save so these fields can live on their own
+    tab alongside supplements without a partial POST wiping the athlete-tab
+    baselines (`upsert_athlete_profile` only touches the columns it's handed).
+    Coercion mirrors `profile.edit`; lands back on the Fuel & health tab.
+    """
+    db = get_db()
+    uid = current_user_id()
+    f = request.form
+
+    def _str(key):
+        v = (f.get(key) or '').strip()
+        return v or None
+
+    def _num(key, cast=float):
+        v = (f.get(key) or '').strip()
+        if not v:
+            return None
+        try:
+            return cast(v)
+        except (ValueError, TypeError):
+            return None
+
+    def _csv(key, allowed):
+        # Multi-select checkbox group -> comma-separated storage. Filter to the
+        # known vocab so a tampered POST can't store junk tokens.
+        picked = [v for v in f.getlist(key) if v in allowed]
+        return ','.join(picked) or None
+
+    # Altitude acclimatization is a tri-state select: yes / no / unset.
+    # Map to BOOLEAN | None; anything outside the pair stays None.
+    _alt_raw = _str('altitude_acclimatization_history')
+    altitude_acclimatization_history = (
+        True if _alt_raw == 'yes' else False if _alt_raw == 'no' else None
+    )
+    upsert_athlete_profile(
+        db, uid,
+        # §I.2 nutrition & fueling protocol.
+        dietary_pattern=_csv('dietary_pattern', DIETARY_PATTERN_CHOICES),
+        fueling_format_preference=_csv(
+            'fueling_format_preference', FUELING_FORMAT_CHOICES),
+        caffeine_tolerance=_str('caffeine_tolerance'),
+        caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
+        caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
+        salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
+        gi_triggers_known=_str('gi_triggers_known'),
+        # §I altitude exposure — acclimatization history (tri-state), highest
+        # sustained exposure, and how many distinct exposures.
+        altitude_acclimatization_history=altitude_acclimatization_history,
+        altitude_max_exposure_m=_num('altitude_max_exposure_m', cast=int),
+        altitude_exposure_count=_num('altitude_exposure_count', cast=int),
+    )
+    db.commit()
+    flash('Nutrition & fueling saved.', 'success')
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 # ─── Event windows — Slice 1 (#581 WS-H) ─────────────────────────────────────
@@ -1001,7 +1057,7 @@ def add_supplement():
     vocab_row = index.get(supplement_id)
     if vocab_row is None:
         flash('Unknown supplement.', 'danger')
-        return redirect(url_for('profile.edit'))
+        return redirect(url_for('profile.edit', tab='health'))
 
     def _opt(key):
         return (request.form.get(key) or '').strip() or None
@@ -1020,7 +1076,7 @@ def add_supplement():
     )
     db.commit()
     flash('Supplement added.', 'success')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 @bp.route('/supplement/<int:supp_id>/delete', methods=['POST'])
@@ -1031,7 +1087,7 @@ def delete_supplement(supp_id):
     delete_athlete_supplement(db, current_user_id(), supp_id)
     db.commit()
     flash('Supplement removed.', 'info')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 @bp.route('/condition/add', methods=['POST'])
@@ -1058,7 +1114,7 @@ def add_condition():
         flash('Health condition added.', 'success')
     else:
         flash('Pick a category and enter a condition name.', 'danger')
-    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+    return redirect(url_for('profile.edit', tab='health') + '#conditions')
 
 
 @bp.route('/condition/<int:condition_id>/edit', methods=['POST'])
@@ -1079,7 +1135,7 @@ def update_condition(condition_id):
         flash('Health condition updated.', 'success')
     else:
         flash('Pick a category and enter a condition name.', 'danger')
-    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+    return redirect(url_for('profile.edit', tab='health') + '#conditions')
 
 
 @bp.route('/condition/<int:condition_id>/resolve', methods=['POST'])
@@ -1094,7 +1150,7 @@ def resolve_condition(condition_id):
     )
     db.commit()
     flash('Health condition marked resolved.', 'info')
-    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+    return redirect(url_for('profile.edit', tab='health') + '#conditions')
 
 
 @bp.route('/condition/<int:condition_id>/reactivate', methods=['POST'])
@@ -1107,7 +1163,7 @@ def reactivate_condition(condition_id):
     )
     db.commit()
     flash('Health condition reactivated.', 'info')
-    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+    return redirect(url_for('profile.edit', tab='health') + '#conditions')
 
 
 @bp.route('/condition/<int:condition_id>/delete', methods=['POST'])
@@ -1117,7 +1173,7 @@ def delete_condition(condition_id):
     delete_health_condition(db, current_user_id(), condition_id)
     db.commit()
     flash('Health condition removed.', 'info')
-    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+    return redirect(url_for('profile.edit', tab='health') + '#conditions')
 
 
 @bp.route('/medication/add', methods=['POST'])
@@ -1136,7 +1192,7 @@ def add_medication_route():
         flash('Medication added.', 'success')
     else:
         flash('Pick a medication class.', 'danger')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 @bp.route('/medication/<int:medication_id>/delete', methods=['POST'])
@@ -1146,7 +1202,7 @@ def delete_medication_route(medication_id):
     delete_medication(db, current_user_id(), medication_id)
     db.commit()
     flash('Medication removed.', 'info')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 @bp.route('/pack-load/add', methods=['POST'])
@@ -1167,7 +1223,7 @@ def add_pack_load_route():
         flash('Pack-load record added.', 'success')
     else:
         flash('Enter a pack weight (kg).', 'danger')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='gear'))
 
 
 @bp.route('/pack-load/<int:pack_load_id>/delete', methods=['POST'])
@@ -1177,7 +1233,7 @@ def delete_pack_load_route(pack_load_id):
     delete_pack_load(db, current_user_id(), pack_load_id)
     db.commit()
     flash('Pack-load record removed.', 'info')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='gear'))
 
 
 @bp.route('/feedback/<int:fb_id>')

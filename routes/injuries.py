@@ -52,7 +52,7 @@ def _after_save_redirect():
     the injuries card) instead of the standalone log. Fixed endpoints only —
     no user-supplied URL, so no open-redirect surface."""
     if request.values.get('return') == 'profile':
-        return redirect(url_for('profile.edit', tab='supplements') + '#injuries')
+        return redirect(url_for('profile.edit', tab='health') + '#injuries')
     return redirect(url_for('injuries.list_entries'))
 
 

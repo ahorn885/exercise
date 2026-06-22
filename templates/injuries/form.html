@@ -63,7 +63,7 @@
     <div class="form-actions">
       <button type="submit" class="btn btn-primary btn-sm">{{ 'Update entry' if entry else 'Save entry' }}</button>
       {% if return_to == 'profile' %}
-      <a href="{{ url_for('profile.edit', tab='supplements') }}#injuries" class="btn btn-ghost btn-sm">Cancel</a>
+      <a href="{{ url_for('profile.edit', tab='health') }}#injuries" class="btn btn-ghost btn-sm">Cancel</a>
       {% else %}
       <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-ghost btn-sm">Cancel</a>
       {% endif %}
