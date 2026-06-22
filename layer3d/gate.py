@@ -6,15 +6,20 @@ nodes already emit (and that were, until now, produced and silently discarded)
 into one typed `GateItem` list, applies the athlete's prior acknowledge/revise
 resolutions, and computes a `gate_status` that gates Layer 4 synthesis.
 
-**Slice 1 (this module).** Aggregation of the already-emitted upstream items
+**Slice 1.** Aggregation of the already-emitted upstream items
 (2A `prompt_required` / `unresolved_flags`, 2D `hitl_items`, 2E `hitl_items` +
 `supplement_integration.contraindication_hitl_items`, 3B `hitl_surface`) +
 severity normalization (§5.1) + the resolution/status rules (§6.3) + the
-gate-status computation (§5 step 6). The two pre-synthesis feasibility detectors
-(§5.2 injury-empties-the-pool blocker; §5.3 schedule-volume-under-target
-warning) and the 3C source are deferred to later slices; the algorithm is
-written so they drop in at the marked call sites with no `Layer3DGate` /
-`GateItem` contract change (§13).
+gate-status computation (§5 step 6).
+
+**Slice 2 (added here).** The two pre-synthesis feasibility detectors that need
+3B's periodization shape: §5.2 `detect_injury_pool_empty` (blocker — 2D
+exclusions empty the strength pool below the 3-exercise floor, or ban an
+included discipline with no usable substitute) and §5.3
+`detect_schedule_volume_under_target` (warning — available weekly hours fall
+below a phase's whole-sport target band). They append `GateItem`s at the marked
+call site with no `Layer3DGate` / `GateItem` contract change. The 3C source is
+still deferred (§13); it drops in at the same aggregation point.
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -27,7 +32,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +43,9 @@ from layer4.context import (
     Layer2EPayload,
     Layer3BPayload,
 )
+
+if TYPE_CHECKING:
+    from layer4.payload import PhaseStructure
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +274,247 @@ def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
     return items
 
 
+# ─── Feasibility detectors (§5.2 / §5.3) ─────────────────────────────────────
+
+# §5.2 — a workable strength session needs ≥3 distinct exercises; a pool below
+# that can't fill one (Andy's v1 floor, Layer3D_Spec §5.2).
+_STRENGTH_POOL_MIN = 3
+
+
+def _phase_needs_strength(layer2a_payload: Layer2APayload, phase_name: str) -> bool:
+    """True when a phase trains ≥1 included discipline with a non-zero phase_load
+    band (§5.2 "a strength-weighted discipline with a non-zero phase band"). The
+    usable strength pool is plan-wide / phase-invariant; this scopes *which*
+    phases an emptied pool actually breaks (e.g. a Taper that tapers a discipline
+    to a zero band does not need its strength surface)."""
+    lo_attr, hi_attr = f"{phase_name.lower()}_low", f"{phase_name.lower()}_high"
+    for d in layer2a_payload.disciplines:
+        if d.inclusion != "included" or d.phase_load is None:
+            continue
+        if (getattr(d.phase_load, lo_attr, None) or 0) > 0 or (
+            getattr(d.phase_load, hi_attr, None) or 0
+        ) > 0:
+            return True
+    return False
+
+
+def detect_injury_pool_empty(
+    phase_structure: "PhaseStructure",
+    layer2a_payload: Layer2APayload,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+) -> list[GateItem]:
+    """§5.2 — blockers when 2D exclusions leave the plan infeasible.
+
+    1. **Strength pool empty.** The post-2D usable strength pool (the union of
+       resolvable strength-type, equipment-feasible exercises across locales,
+       minus 2D exclusions — `per_phase.compute_feasible_pool_ids`, the exact
+       surface synthesis prescribes from) drops below the `_STRENGTH_POOL_MIN`
+       floor, *and* it was feasible (≥ floor) before the exclusions — i.e. an
+       injury, not a structurally strength-light plan, emptied it. One plan-wide
+       blocker (the pool is phase-invariant); the phases that program strength
+       ride in `evidence`. A plan that never had a strength surface (pure
+       MTB/climbing) is not flagged — its sport sessions cover it, matching
+       `per_phase._format_strength_exercise_pool`'s "no resolved exercises → no
+       blocker" behavior.
+    2. **Cardio modality banned.** An included discipline whose 2D risk profile is
+       `high` with no usable substitute (every `suggested_substitutes` still at
+       risk, or none) — the discipline can't be trained and nothing replaces it.
+       Suppressed when 2D already surfaced a `no_substitute_for_high_risk` /
+       `gap_x_high_risk_concurrent` hitl_item for the same discipline (that 2D
+       item already carries the finding; §9 de-dup can't merge it across sources).
+
+    Both are revise-only blockers (`revise_target` → the §B injury record); the
+    athlete relaxes the injury input or drops the discipline."""
+    from layer4.per_phase import compute_feasible_pool_ids
+
+    items: list[GateItem] = []
+
+    # 1. Strength pool empty (injury emptied a pool that was feasible before).
+    pool_before = compute_feasible_pool_ids(layer2c_payloads, None)
+    pool_after = compute_feasible_pool_ids(layer2c_payloads, layer2d_payload)
+    needs_strength_phases = [
+        p.phase_name
+        for p in phase_structure.phases
+        if _phase_needs_strength(layer2a_payload, p.phase_name)
+    ]
+    if (
+        len(pool_before) >= _STRENGTH_POOL_MIN
+        and len(pool_after) < _STRENGTH_POOL_MIN
+        and needs_strength_phases
+    ):
+        excluding_2d_ids = sorted(
+            set(pool_before)
+            & {er.exercise_id for er in layer2d_payload.excluded_exercises}
+        )
+        logger.info(
+            "layer3d.detect_injury_pool_empty: strength pool emptied by 2D "
+            "(before=%d after=%d floor=%d phases=%s excluding=%s)",
+            len(pool_before),
+            len(pool_after),
+            _STRENGTH_POOL_MIN,
+            needs_strength_phases,
+            excluding_2d_ids,
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3D_feasibility", "injury_pool_empty", "strength_pool"
+                ),
+                source="3D_feasibility",
+                source_item_id="injury_pool_empty",
+                severity="blocker",
+                title="Strength training blocked by your injury limits",
+                message=(
+                    f"After applying your injury limits, only {len(pool_after)} "
+                    f"strength exercise(s) remain — a workable strength session needs "
+                    f"at least {_STRENGTH_POOL_MIN}. Relax an injury limit or drop the "
+                    "discipline that needs strength so the plan can program it."
+                ),
+                resolution_options=[],
+                revise_target="profile.injuries",
+                can_acknowledge=False,
+                evidence={
+                    "usable_count": len(pool_after),
+                    "pool_before_count": len(pool_before),
+                    "excluding_2d_ids": excluding_2d_ids,
+                    "phases": needs_strength_phases,
+                    "headline_phase": needs_strength_phases[0],
+                },
+            )
+        )
+
+    # 2. Cardio modality banned (included discipline high-risk, no usable
+    #    substitute, not already surfaced by 2D's own hitl_items).
+    included_ids = {
+        d.discipline_id
+        for d in layer2a_payload.disciplines
+        if d.inclusion == "included"
+    }
+    covered_by_2d = {
+        hi.discipline_id
+        for hi in layer2d_payload.hitl_items
+        if hi.hitl_type in ("no_substitute_for_high_risk", "gap_x_high_risk_concurrent")
+        and hi.discipline_id is not None
+    }
+    for risk in layer2d_payload.discipline_risk_profiles:
+        if (
+            risk.discipline_id not in included_ids
+            or risk.risk_level != "high"
+            or risk.discipline_id in covered_by_2d
+        ):
+            continue
+        if any(not s.still_at_risk for s in risk.suggested_substitutes):
+            continue  # a usable substitute exists → trainable → not a blocker
+        logger.info(
+            "layer3d.detect_injury_pool_empty: discipline %s banned "
+            "(risk=high, no usable substitute; substitutes=%s)",
+            risk.discipline_id,
+            [s.substitute_discipline_id for s in risk.suggested_substitutes],
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3D_feasibility", "cardio_modality_banned", risk.discipline_id
+                ),
+                source="3D_feasibility",
+                source_item_id="cardio_modality_banned",
+                severity="blocker",
+                title=f"{risk.discipline_name} can't be trained around your injuries",
+                message=(
+                    f"Your injury limits rule out {risk.discipline_name}, and there's "
+                    "no usable alternative to train it. Relax an injury limit or drop "
+                    f"{risk.discipline_name} from the plan."
+                ),
+                resolution_options=[],
+                revise_target="profile.injuries",
+                can_acknowledge=False,
+                evidence={
+                    "discipline_id": risk.discipline_id,
+                    "risk_level": risk.risk_level,
+                    "substitutes_considered": [
+                        s.substitute_discipline_id for s in risk.suggested_substitutes
+                    ],
+                },
+            )
+        )
+
+    return items
+
+
+def detect_schedule_volume_under_target(
+    phase_structure: "PhaseStructure",
+    layer2a_payload: Layer2APayload,
+    layer1_payload: dict[str, Any],
+) -> GateItem | None:
+    """§5.3 — one warning when the athlete's bounded available weekly hours
+    (`validator.weekly_capacity_hours` — Σ enabled §K daily windows, capped by
+    `weekly_hours_target`) fall below a phase's whole-sport target low band (2A
+    `weekly_total_hours_by_phase`). Does **not** block: Layer 4 already clamps
+    prescribed volume to capacity, so the plan auto-trims to fit; 3D just makes
+    the trim visible so the athlete can choose to add time. The worst (highest-
+    target) phase headlines the message; the rest ride in `evidence`. Returns
+    None when capacity is unknown or no phase is under target."""
+    from layer4.validator import weekly_capacity_hours
+
+    avail = weekly_capacity_hours(layer1_payload)
+    if avail is None or avail <= 0:
+        return None
+    totals = layer2a_payload.weekly_total_hours_by_phase or {}
+    under: list[tuple[str, float, float]] = []  # (phase, target_low, target_high)
+    for p in phase_structure.phases:
+        band = totals.get(p.phase_name)
+        if not band:
+            continue
+        low, high = float(band[0]), float(band[1])
+        if avail < low:
+            under.append((p.phase_name, low, high))
+    if not under:
+        return None
+    # Worst = highest target low edge (avail is fixed, so that is the widest gap).
+    under.sort(key=lambda t: t[1], reverse=True)
+    headline_phase, low, high = under[0]
+
+    def _h(x: float) -> str:
+        return f"{round(x, 1):g}"
+
+    logger.info(
+        "layer3d.detect_schedule_volume_under_target: avail=%.1f h/wk under target "
+        "on %s (headline=%s low=%.1f high=%.1f)",
+        avail,
+        [u[0] for u in under],
+        headline_phase,
+        low,
+        high,
+    )
+    return GateItem(
+        item_key=make_item_key(
+            "3D_feasibility", "schedule_volume_under_target", "schedule"
+        ),
+        source="3D_feasibility",
+        source_item_id="schedule_volume_under_target",
+        severity="warning",
+        title="Your schedule is below this plan's target volume",
+        message=(
+            f"Your schedule gives about {_h(avail)} h/week; the {headline_phase} block "
+            f"targets {_h(low)}–{_h(high)} h. The plan will be built to the time you "
+            "have, but expect it to under-prepare you for the demand — add training "
+            "days or a longer runway if you can."
+        ),
+        resolution_options=[],
+        revise_target="profile.availability",
+        can_acknowledge=True,
+        evidence={
+            "available_hours": round(avail, 2),
+            "headline_phase": headline_phase,
+            "phases": [
+                {"phase": ph, "target_low": lo, "target_high": hi}
+                for ph, lo, hi in under
+            ],
+        },
+    )
+
+
 # ─── Resolution / status rules (§6.3) + gate-status (§5 step 6) ───────────────
 
 
@@ -351,9 +600,11 @@ def evaluate_layer3d_gate(
     no DB access. The caller persists the returned `Layer3DGate` (stamping
     `evaluated_at`) and re-invokes on each resolution round.
 
-    `plan_start_date` / `total_weeks` / `race_event_payload` are part of the §3
-    contract for the §5.2/§5.3 feasibility detectors (next slice); they are
-    accepted now so the signature is stable and unused until the detectors land.
+    `plan_start_date` / `total_weeks` drive the §5.2/§5.3 feasibility detectors
+    (they build the phase structure via `phase_structure_from_3b`); when
+    `plan_start_date` is None the detectors are skipped and only the aggregation
+    items gate. `race_event_payload` is accepted for signature stability; the
+    detectors read availability/bands from `layer1_payload` / 2A directly.
     """
     # 1. Preconditions (§4) — fail-fast.
     if plan_version_id <= 0:
@@ -395,13 +646,40 @@ def evaluate_layer3d_gate(
     items += map_3b_items(layer3b_payload)
     # 3C deferred (§13). When built: items += map_3c_items(layer3c_payload)
 
-    # 4. Feasibility detectors (§5.2/§5.3) — deferred to the next slice; they
-    #    need the phase structure × 2A bands × 2D exclusions × §K availability.
-    #    The call sites land here with no contract change:
-    #      phase_structure = phase_structure_from_3b(layer3b_payload, ...)
-    #      items += detect_injury_pool_empty(phase_structure, ...)   # blocker(s)
-    #      item = detect_schedule_volume_under_target(phase_structure, ...)
-    #      if item: items.append(item)
+    # 4. Feasibility detectors (§5.2/§5.3) — need 3B's periodization shape ×
+    #    2A bands × 2C pool × 2D exclusions × §K availability. They run only when
+    #    `plan_start_date` is supplied (the real orchestrator path always supplies
+    #    it; the aggregation-only Slice-1 callers leave it None and skip these).
+    #    An unusable periodization shape skips the detectors but never fails the
+    #    gate — the aggregation items still gate (Rule #15: log the skip).
+    if plan_start_date is not None:
+        from layer4.errors import Layer4InputError
+        from layer4.phase_structure import phase_structure_from_3b
+
+        try:
+            phase_structure = phase_structure_from_3b(
+                layer3b_payload, plan_start_date, total_weeks=total_weeks
+            )
+        except Layer4InputError as exc:
+            logger.warning(
+                "layer3d: skipping feasibility detectors — unusable periodization "
+                "shape (plan_version_id=%s): %s",
+                plan_version_id,
+                exc,
+            )
+        else:
+            if phase_structure.phases:
+                items += detect_injury_pool_empty(
+                    phase_structure,
+                    layer2a_payload,
+                    layer2c_payloads,
+                    layer2d_payload,
+                )
+                vol_item = detect_schedule_volume_under_target(
+                    phase_structure, layer2a_payload, layer1_payload
+                )
+                if vol_item is not None:
+                    items.append(vol_item)
 
     # De-dup by item_key (§9: a 2E contraindication item that duplicates a
     # hitl_items entry surfaces once; also guards any accidental collision).
