@@ -1,0 +1,17 @@
+AIDSTATION
+Your route is plotted
+────────────────────────────────────────
+
+Nice work, {{display_name}}.
+
+Your plan "{{plan_name}}" is ready — periodized from base camp to summit.
+
+View your plan:
+{{plan_url}}
+
+The route adapts as you go. Log your sessions and AIDSTATION re-draws tomorrow to match today’s load.
+
+────────────────────────────────────────
+AIDSTATION — the aid station for your training.
+aidstation.pro  ·  {{support_email}}
+AIDSTATION · {{company_address}}

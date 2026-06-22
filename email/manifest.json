@@ -1,0 +1,90 @@
+{
+  "$comment": "AIDSTATION transactional email templates. Placeholders use {{double_brace}} (CSS-safe). expiry and timestamp are preformatted human strings rendered verbatim.",
+  "tokenSyntax": "{{ variable }}",
+  "shell": {
+    "logo": {
+      "currentSrc": "aidstation-lockup.png",
+      "action": "Replace with an absolute hosted URL before sending; clients cannot load relative paths.",
+      "alt": "AIDSTATION",
+      "width": 170
+    },
+    "sharedVariables": ["support_email", "company_address"],
+    "colorScheme": "dark",
+    "colorFormat": "hex",
+    "layout": "table-based, Outlook-safe",
+    "sendsBothParts": true
+  },
+  "templates": [
+    {
+      "id": "confirm-email",
+      "html": "emails/confirm-email.html",
+      "text": "emails/text/confirm-email.txt",
+      "subject": "AIDSTATION — confirm your email",
+      "cta": { "label": "Confirm email", "urlVar": "verify_url" },
+      "variables": ["verify_url", "expiry"],
+      "greeting": false,
+      "codeRef": "routes/auth.py:631",
+      "triggers": ["register", "email-change", "resend", "oura", "wahoo"],
+      "notes": "One template serves all 5 triggers; intentionally no name/greeting. expiry in hours, preformatted."
+    },
+    {
+      "id": "password-reset",
+      "html": "emails/password-reset.html",
+      "text": "emails/text/password-reset.txt",
+      "subject": "AIDSTATION — password reset",
+      "cta": { "label": "Set a new password", "urlVar": "reset_url" },
+      "variables": ["display_name", "reset_url", "expiry"],
+      "greeting": true,
+      "rawUrlFallback": true,
+      "codeRef": "routes/auth.py:533",
+      "notes": "expiry = '30 minutes', preformatted. Shows raw reset_url as copy-paste fallback."
+    },
+    {
+      "id": "plan-ready",
+      "html": "emails/plan-ready.html",
+      "text": "emails/text/plan-ready.txt",
+      "subject": "AIDSTATION — your plan \"{{plan_name}}\" is ready",
+      "cta": { "label": "View your plan", "urlVar": "plan_url" },
+      "variables": ["display_name", "plan_name", "plan_url"],
+      "greeting": true,
+      "codeRef": "plan_notifications.py:91"
+    },
+    {
+      "id": "plan-failed",
+      "html": "emails/plan-failed.html",
+      "text": "emails/text/plan-failed.txt",
+      "subject": "AIDSTATION — couldn't generate \"{{plan_name}}\"",
+      "cta": { "label": "Try again", "urlVar": "retry_url" },
+      "variables": ["display_name", "plan_name", "error_message", "retry_url"],
+      "greeting": true,
+      "codeRef": "plan_notifications.py:91",
+      "notes": "error_message rendered in a bordered detail block."
+    },
+    {
+      "id": "password-changed",
+      "html": "emails/password-changed.html",
+      "text": "emails/text/password-changed.txt",
+      "subject": "AIDSTATION — your password was changed",
+      "cta": { "label": "Secure your account", "urlVar": "security_url", "secondary": true },
+      "variables": ["display_name", "timestamp", "security_url"],
+      "greeting": true,
+      "informational": true,
+      "codeRef": "routes/auth.py (post mfa.disable / session.clear)",
+      "notes": "Security receipt: no primary CTA, leads with 'wasn't you?' + support path. timestamp preformatted."
+    },
+    {
+      "id": "email-changed",
+      "html": "emails/email-changed.html",
+      "text": "emails/text/email-changed.txt",
+      "subject": "AIDSTATION — your email address was changed",
+      "cta": { "label": "Secure your account", "urlVar": "security_url", "secondary": true },
+      "variables": ["display_name", "old_email", "new_email", "timestamp", "security_url"],
+      "greeting": true,
+      "informational": true,
+      "isNew": true,
+      "sendTo": "OLD email address",
+      "codeRef": "routes/profile.py:1223",
+      "notes": "Anti-takeover guard. Sent to the previous address. Lists old + new email."
+    }
+  ]
+}
