@@ -154,11 +154,10 @@ A composite of cheap hashes of the upstream **inputs** the gate consumed. Its on
 | `2A` | `compute_payload_hash(layer2a_payload)` | deterministic query node (`q_layer2a_*`) — rebuild + hash |
 | `2C` | `compute_layer2c_bundle_hash(locale→hash)` | deterministic query node (per-locale bundle) |
 | `2D` | `compute_payload_hash(layer2d_payload)` | deterministic query node |
-| `2E` | `compute_payload_hash(layer2e_payload)` | deterministic query node |
-| `3B_inputs` | `sha256(race_event_id ‖ non_event_goal_type ‖ canonical_json(section_h2_kwargs))` | the target-race/goal inputs 3B consumes that aren't yet folded into `layer1` (the §H.2 D11 kwargs — `goal_outcome`, `event_date`, `race_distance_km`, …); this is what makes an `h2.*` race edit register as staleness. Redundant-but-harmless once D11 folds them into `layer1`. |
+| `3B_inputs` | `sha256(race_event_id ‖ canonical_json(section_h2_kwargs))` | the target-race/goal inputs 3B consumes that aren't yet folded into `layer1` (the §H.2 D11 kwargs — `goal_outcome`, `event_date`, `race_distance_km`, …); this is what makes an `h2.*` race edit register as staleness. Redundant-but-harmless once D11 folds them into `layer1`. |
 | `etl` | `canonical_json(etl_version_set)` | platform reference data (the pre-slice value, retained) |
 
-**3A/3B are covered without re-running them.** The gate consumes 3B (and 3A only via 3B); both are pure functions of inputs already fingerprinted — 3A = f(`layer1`, `etl`, model params); 3B = f(`layer1`, 3A, `2A`, `etl`, `3B_inputs`, `current_date`, model params) — so any input change that would move them is caught by the `layer1`/`2A`/`etl`/`3B_inputs` keys. **Two determinants are deliberately omitted** from the cheap check, both backstopped by the `[Generate plan]` guard's real re-run (§11.2):
+**2E, 3A and 3B are covered without re-running them.** The gate consumes 2E + 3B (and 3A only via 3B); all are pure functions of inputs already fingerprinted — 3A = f(`layer1`, `etl`, model params); 3B = f(`layer1`, 3A, `2A`, `etl`, `3B_inputs`, `current_date`, model params); **2E** = f(`layer1`, 3B, `etl`) — 2E runs *after* 3B in the pipeline (it consumes 3B's `start_phase`), so it can't be hashed standalone without re-running 3B, but its only non-`layer1`/`etl` input is 3B, already covered. So any input change that would move them is caught by the `layer1`/`2A`/`etl`/`3B_inputs` keys. **Two determinants are deliberately omitted** from the cheap check, both backstopped by the `[Generate plan]` guard's real re-run (§11.2):
 
 - **`current_date`** — 3B's viability is day-granular, so a parked plan technically drifts as the timeline compresses with no edit. Fingerprinting it would mark every parked plan stale on the next calendar day and fire a 3B LLM re-derivation on mere page-views — the synchronous-on-GET cost the async model (§11.2) exists to avoid. Time-passage drift is instead caught at the generate click (real re-run against today's date).
 - **3A/3B model/prompt params** — change only on a (global, rare) deploy; a plan parked across one is re-checked by the generate-click guard.
@@ -288,7 +287,7 @@ A parked plan can go stale: while it sits at `needs_review`, a profile edit, a t
 
 **Resolutions survive recompute by `item_key` (§6.4):** an already acknowledged/revised item that still applies keeps its resolution; one that no longer applies drops off; a newly-surfaced item is `pending`. So a stale-but-since-fixed warning clears itself, and a newly-introduced blocker correctly re-blocks a plan the athlete thought was ready. A `green` plan that recomputes to non-`green` reverts to `needs_review` and cannot generate until re-resolved.
 
-*(Build order: the fingerprint + the cheap on-view/at-click check + the generate-guard land first; the async "re-evaluating" poll + auto-recompute-on-view follows. Until that lands, a detected-stale on-view falls back to the generate-click guard's real re-run.)*
+*(Build order: the fingerprint is computed + persisted on every gate evaluation first (so the generate-time re-gate — the existing advance-loop re-run — already never generates stale, and logs the fingerprint per Rule #15); the cheap on-view check + the async "re-evaluating" poll land together next, since both need the same off-request-path partial-cone rebuild. Until then, a parked plan's review screen shows its last-evaluated gate and re-checks at the generate click.)*
 
 ---
 

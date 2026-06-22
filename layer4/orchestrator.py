@@ -206,6 +206,11 @@ class _UpstreamFullCone:
     training_substitution_payload: TrainingSubstitutionPayload
     layer3a_payload: Layer3APayload
     layer3b_payload: Layer3BPayload
+    # §6.1.1 input fingerprint for the Layer 3D gate's `evaluated_against`
+    # staleness guard — composed below from the cheap query layers (2A/2C/2D) +
+    # Layer 1 + the 3B race/goal inputs (no LLM); consumed by the gate hook in
+    # `orchestrate_plan_create`.
+    gate_fingerprint: dict[str, str]
 
 
 def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
@@ -1235,6 +1240,23 @@ def _upstream_full_cone(
         craft_discipline_aliases=_q_craft_discipline_aliases(db),
     )
 
+    # §6.1.1 — the Layer 3D gate staleness fingerprint, composed here where all
+    # the cheap query payloads + the 3B race/goal inputs are in scope (no LLM
+    # call). Lazy import keeps the layer4↔layer3d graph acyclic (same pattern as
+    # the gate hook in orchestrate_plan_create).
+    from layer3d.gate import compute_gate_fingerprint
+
+    gate_fingerprint = compute_gate_fingerprint(
+        layer1_payload=layer1_payload,
+        layer2a_payload=layer2a_payload,
+        layer2c_payloads=layer2c_payloads,
+        layer2d_payload=layer2d_payload,
+        etl_version_set=etl_version_set,
+        race_event_id=(
+            target_race_event.race_event_id if target_race_event is not None else None
+        ),
+        section_h2_kwargs=section_h2_kwargs,
+    )
     return _UpstreamFullCone(
         etl_version_set=etl_version_set,
         framework_sport=framework_sport,
@@ -1248,6 +1270,7 @@ def _upstream_full_cone(
         training_substitution_payload=training_substitution_payload,
         layer3a_payload=layer3a_payload,
         layer3b_payload=layer3b_payload,
+        gate_fingerprint=gate_fingerprint,
     )
 
 
@@ -1783,6 +1806,16 @@ def orchestrate_plan_create(
         total_weeks=total_weeks,
         race_event_payload=race_event,
         prior_resolutions=load_prior_resolutions(db, user_id, plan_version_id),
+        evaluated_against=cone.gate_fingerprint,  # §6.1.1 staleness fingerprint
+    )
+    # Rule #15 — log the gate decision + the inputs it was evaluated against (the
+    # §6.1.1 fingerprint, hashes truncated). On a generate-time re-gate this is the
+    # staleness signal: a fingerprint differing from the parked gate's means an
+    # input moved while the plan sat at needs_review (§11.2).
+    fp_short = {k: v[:12] for k, v in cone.gate_fingerprint.items()}
+    print(
+        f"layer3d gate: pv={plan_version_id} status={gate.gate_status} "
+        f"items={len(gate.items)} fp={fp_short}"
     )
     save_hitl_gate(db, user_id, plan_version_id, gate)
     if gate.gate_status != "green":

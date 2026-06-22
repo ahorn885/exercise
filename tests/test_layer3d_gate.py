@@ -18,6 +18,7 @@ import pytest
 from layer3d.gate import (
     GateResolution,
     Layer3DGateError,
+    compute_gate_fingerprint,
     compute_gate_status,
     evaluate_layer3d_gate,
     make_item_key,
@@ -855,3 +856,77 @@ def test_schedule_no_warning_when_capacity_meets_target():
     )
     assert gate.gate_status == "green"
     assert [it for it in gate.items if it.source == "3D_feasibility"] == []
+
+
+# ─── §6.1.1 evaluated_against fingerprint ────────────────────────────────────
+
+
+def _fingerprint(**overrides):
+    kwargs = dict(
+        layer1_payload={},
+        layer2a_payload=_layer2a(),
+        layer2c_payloads={"home": _layer2c()},
+        layer2d_payload=_layer2d(),
+        etl_version_set=dict(_EVS),
+        race_event_id=55,
+        section_h2_kwargs={"goal_outcome": "finish"},
+    )
+    kwargs.update(overrides)
+    return compute_gate_fingerprint(**kwargs)
+
+
+def test_fingerprint_has_expected_keys_and_omits_llm_layers():
+    fp = _fingerprint()
+    # the cheap query layers (2A/2C/2D) + layer1 + the 3B race/goal inputs + etl
+    assert set(fp) == {"layer1", "2A", "2C", "2D", "3B_inputs", "etl"}
+    # 2E/3A/3B carry no key of their own — covered transitively (§6.1.1)
+    assert not ({"2E", "3A", "3B"} & set(fp))
+
+
+def test_fingerprint_is_deterministic():
+    assert _fingerprint() == _fingerprint()
+
+
+def test_fingerprint_layer1_change_moves_only_layer1():
+    base = _fingerprint()
+    moved = _fingerprint(layer1_payload={"identity": {"primary_sport": "AR"}})
+    assert moved["layer1"] != base["layer1"]
+    assert all(moved[k] == base[k] for k in base if k != "layer1")
+
+
+def test_fingerprint_etl_change_moves_only_etl():
+    base = _fingerprint()
+    moved = _fingerprint(etl_version_set={"0A": "v8", "0B": "v7", "0C": "v7"})
+    assert moved["etl"] != base["etl"]
+    assert all(moved[k] == base[k] for k in base if k != "etl")
+
+
+def test_fingerprint_2d_change_moves_only_2d():
+    base = _fingerprint()
+    moved = _fingerprint(
+        layer2d_payload=_layer2d(excluded_exercises=[_excluded_ex(exercise_id="EX001")])
+    )
+    assert moved["2D"] != base["2D"]
+    assert all(moved[k] == base[k] for k in base if k != "2D")
+
+
+def test_fingerprint_h2_and_race_event_move_only_3b_inputs():
+    base = _fingerprint()
+    # an h2.* edit (e.g. the goal outcome — a 3B item's revise target)
+    moved = _fingerprint(section_h2_kwargs={"goal_outcome": "podium"})
+    assert moved["3B_inputs"] != base["3B_inputs"]
+    assert all(moved[k] == base[k] for k in base if k != "3B_inputs")
+    # switching the target race also moves it
+    assert _fingerprint(race_event_id=999)["3B_inputs"] != base["3B_inputs"]
+
+
+def test_evaluate_stores_passed_fingerprint():
+    fp = _fingerprint()
+    gate = _evaluate(evaluated_against=fp)
+    assert gate.evaluated_against == fp
+    assert gate.evaluated_against != _EVS  # not the etl fallback
+
+
+def test_evaluate_without_fingerprint_falls_back_to_etl():
+    # Slice-1 aggregation-only callers + legacy rows: no fingerprint → etl set
+    assert _evaluate().evaluated_against == _EVS
