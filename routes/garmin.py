@@ -3,7 +3,7 @@ import json
 import os
 import tempfile
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
 from werkzeug.utils import secure_filename
@@ -538,6 +538,40 @@ def _record_provider_raw_cardio(db, raw: dict, uid: int, external_id,
     )
 
 
+def _normalize_started_at(data: dict):
+    """Resolve one comparable UTC start instant for a cardio activity — the #196
+    Phase 3 cross-source clustering fingerprint input (Slice 1).
+
+    Reads an explicit ``data['started_at']`` when a provider set one (Strava
+    passes its true-UTC ``start_date`` there, since its
+    ``_provider_raw.observed_at`` is local wall-clock), else falls back to
+    ``_provider_raw.observed_at`` (the activity start for Wahoo/RWGPS; date-only
+    for manual FIT/TCX/GPX, so those land at 00:00 UTC). Accepts a ``datetime``
+    or an ISO-8601 string (``Z``, numeric offset, or date-only) and returns a
+    naive UTC ``datetime``, or ``None`` if absent/unparseable. Never raises — a
+    bad start must not break the import (Rule #15 logs the miss)."""
+    raw = (data.get('started_at')
+           or (data.get('_provider_raw') or {}).get('observed_at'))
+    if raw is None or raw == '':
+        return None
+    dt = raw
+    if isinstance(dt, str):
+        s = dt.strip().replace('Z', '+00:00')
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            try:  # date-only fallback (manual FIT/TCX/GPX observed_at)
+                dt = datetime.fromisoformat(s[:10])
+            except ValueError:
+                print(f"[cardio-started_at] unparseable start {raw!r} — storing NULL")
+                return None
+    if not isinstance(dt, datetime):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
                         plan_item_id=None, notes=None, source: str = 'garmin') -> int:
     """Insert one parsed cardio activity. Returns the new cardio_log id.
@@ -547,6 +581,7 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
     COROS / Wahoo / Polar / Strava manual upload. The column comes from the
     fixed _SOURCE_MAP allowlist (no user-supplied identifier reaches the SQL)."""
     col = _source_column(source)
+    started_at = _normalize_started_at(data)  # #196 P3 Slice 1 — UTC fingerprint input
     cur = db.execute(
         f'''INSERT INTO cardio_log
            (date, activity, activity_name, duration_min, moving_time_min,
@@ -555,8 +590,8 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
             avg_power, max_power, norm_power, aerobic_te, anaerobic_te,
             swolf, active_lengths,
             stride_length_m, vert_oscillation_cm, vert_ratio_pct,
-            gct_ms, gct_balance, discipline_id, {col}, plan_item_id, notes, user_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            gct_ms, gct_balance, started_at, discipline_id, {col}, plan_item_id, notes, user_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
         (data.get('date'), data.get('activity'), data.get('activity_name'),
          data.get('duration_min'), data.get('moving_time_min'),
          data.get('distance_mi'), data.get('avg_pace'), data.get('avg_speed'),
@@ -568,10 +603,15 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
          data.get('swolf'), data.get('active_lengths'),
          data.get('stride_length_m'), data.get('vert_oscillation_cm'),
          data.get('vert_ratio_pct'), data.get('gct_ms'), data.get('gct_balance'),
-         data.get('discipline_id'), gid, plan_item_id,
+         started_at, data.get('discipline_id'), gid, plan_item_id,
          (notes if notes is not None else (data.get('notes') or None)), uid)
     )
     rec_id = cur.lastrowid
+    print(  # Rule #15 — the resolved UTC start fingerprint input (#196 P3 Slice 1)
+        f"[cardio-insert] id={rec_id} source={source} gid={gid!r} "
+        f"date={data.get('date')!r} sport={data.get('activity')!r} "
+        f"started_at={started_at}"
+    )
     _record_provider_raw_cardio(db, data.get('_provider_raw'), uid, gid, provider=source)
     return rec_id
 

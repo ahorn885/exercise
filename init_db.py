@@ -2786,6 +2786,39 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx DROP COLUMN IF EXISTS inventory_sugg_volume",
     "DROP TABLE IF EXISTS exercise_equipment",
     "DROP TABLE IF EXISTS exercise_inventory",
+    # ── #196 Phase 3 (cross-source activity dedup + merge) — Slice 1 schema ────
+    # One real-world activity reaching us via N connected providers (e.g. a Wahoo
+    # ride auto-forwarded to Strava) lands as N cardio_log rows. Slice 1 lays the
+    # substrate for cross-source clustering + canonical merge WITHOUT any matching
+    # logic (Slice 2), canonical materialization (Slice 3), or consumer repoint
+    # (Slice 4). Storage shape B (Andy 2026-06-22, Trigger-#3 DDL ratification):
+    # a real activity_clusters table + cardio_log.cluster_id FK — not a flag on
+    # cardio_log.
+    #   - started_at: a comparable UTC start instant — the fingerprint input —
+    #     populated at ingest by routes/garmin.py:_bulk_insert_cardio. DISTINCT
+    #     from the existing start_time TEXT (D-56 race/time-of-day display, local
+    #     HH:MM:SS paired with the TEXT date); this is a true UTC TIMESTAMP.
+    #   - activity_clusters: one row per real-world activity, carrying the
+    #     fingerprint anchor (coarse sport_class + started_at + duration/distance
+    #     — match on the coarse class, not the fine discipline_id, per the kickoff
+    #     §6 gut-check). EMPTY until Slice 2's clusterer — its immediate first
+    #     writer — populates it; the FK below stays NULL until then.
+    # canonical_activity + per-field provenance land in Slice 3 with their first
+    # writer (materialization), not created speculatively here.
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS started_at TIMESTAMP",
+    """CREATE TABLE IF NOT EXISTS activity_clusters (
+        id           SERIAL PRIMARY KEY,
+        user_id      INTEGER NOT NULL REFERENCES users(id),
+        sport_class  TEXT NOT NULL,
+        started_at   TIMESTAMP,
+        duration_min REAL,
+        distance_mi  REAL,
+        created_at   TIMESTAMP DEFAULT NOW(),
+        updated_at   TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS activity_clusters_user_start_idx ON activity_clusters (user_id, started_at)",
+    "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS cluster_id INTEGER REFERENCES activity_clusters(id)",
+    "CREATE INDEX IF NOT EXISTS cardio_log_cluster_idx ON cardio_log (cluster_id) WHERE cluster_id IS NOT NULL",
     # #892 — heal race_events.framework_sport values that drifted from the
     # canonical `sport_discipline_bridge` vocabulary only by case / surrounding
     # whitespace. The retired free-text "sport override" let these through, and

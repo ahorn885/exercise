@@ -83,6 +83,11 @@ def normalize_strava_activity(a: dict) -> dict:
         'avg_power': _as_int(a.get('average_watts')),
         'max_power': _as_int(a.get('max_watts')),
         'norm_power': _as_int(a.get('weighted_average_watts')),
+        # #196 P3 Slice 1 — true-UTC start for the cross-source fingerprint.
+        # `start` (→ observed_at) prefers start_date_local (local wall-clock); the
+        # clustering instant must be UTC-comparable to the Wahoo/RWGPS copies, so
+        # pass start_date (UTC) explicitly for _normalize_started_at to pick up.
+        'started_at': a.get('start_date'),
         'discipline_id': res.discipline_id,
         '_provider_raw': {
             'provider': 'strava',

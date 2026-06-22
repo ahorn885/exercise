@@ -16,6 +16,7 @@ Covers:
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -26,6 +27,7 @@ from routes.garmin import (
     _bulk_insert_cardio,
     _bulk_insert_strength,
     _fit_dedup_id,
+    _normalize_started_at,
     _source_column,
     _source_prefix,
 )
@@ -183,3 +185,77 @@ class TestAlreadyImported:
         assert _already_imported(conn, "strava-file:x", source="strava") is False
         assert len(conn.calls) == 1
         assert "cardio_log" in conn.calls[0][0]
+
+
+# ─── started_at — cross-source fingerprint input (#196 P3 Slice 1) ───────────
+
+
+class TestNormalizeStartedAt:
+    """The UTC start instant clustering will fingerprint on (Slice 2). The
+    normalizer must collapse every provider's start representation to one
+    naive-UTC datetime so a Wahoo ride and its Strava auto-forward compare equal."""
+
+    def test_utc_z_string_to_naive_utc(self):
+        # Wahoo-style ISO-8601 with a Z designator (observed_at fallback).
+        assert _normalize_started_at(
+            {"_provider_raw": {"observed_at": "2026-06-22T06:28:56Z"}}
+        ) == datetime(2026, 6, 22, 6, 28, 56)
+
+    def test_fractional_seconds_z(self):
+        assert _normalize_started_at(
+            {"_provider_raw": {"observed_at": "2026-06-22T06:28:56.000Z"}}
+        ) == datetime(2026, 6, 22, 6, 28, 56)
+
+    def test_numeric_offset_converted_to_utc(self):
+        # RWGPS departed_at carries a real offset → shift to UTC.
+        assert _normalize_started_at(
+            {"_provider_raw": {"observed_at": "2026-06-22T07:00:00-08:00"}}
+        ) == datetime(2026, 6, 22, 15, 0, 0)
+
+    def test_date_only_lands_at_midnight(self):
+        # Manual FIT/TCX/GPX observed_at is date-only → 00:00 UTC.
+        assert _normalize_started_at(
+            {"_provider_raw": {"observed_at": "2026-06-22"}}
+        ) == datetime(2026, 6, 22, 0, 0, 0)
+
+    def test_explicit_started_at_wins_over_observed_at(self):
+        # Strava passes its true-UTC start_date as started_at; observed_at is the
+        # local start_date_local. The explicit UTC value must win.
+        d = {"started_at": "2026-06-22T06:28:56Z",
+             "_provider_raw": {"observed_at": "2026-06-22T01:28:56Z"}}
+        assert _normalize_started_at(d) == datetime(2026, 6, 22, 6, 28, 56)
+
+    def test_aware_datetime_object_normalized(self):
+        aware = datetime(2026, 6, 22, 7, 0, tzinfo=timezone(timedelta(hours=-8)))
+        assert _normalize_started_at({"started_at": aware}) == datetime(2026, 6, 22, 15, 0)
+
+    def test_absent_is_none(self):
+        assert _normalize_started_at({}) is None
+        assert _normalize_started_at({"_provider_raw": {"observed_at": None}}) is None
+        assert _normalize_started_at({"_provider_raw": {"observed_at": ""}}) is None
+
+    def test_unparseable_is_none_not_raise(self):
+        # A bad start must degrade to NULL, never break the import (Rule #15).
+        assert _normalize_started_at(
+            {"_provider_raw": {"observed_at": "not-a-date"}}
+        ) is None
+
+
+class TestCardioInsertStartedAt:
+    def test_started_at_column_and_resolved_value_in_insert(self):
+        conn = _FakeConn()
+        _bulk_insert_cardio(
+            conn,
+            {"date": "2026-06-22",
+             "_provider_raw": {"observed_at": "2026-06-22T06:28:56Z"}},
+            uid=3, gid="wahoo-file:x", source="wahoo")
+        sql, params = _insert(conn, "cardio_log")
+        assert "started_at" in sql
+        assert datetime(2026, 6, 22, 6, 28, 56) in params
+
+    def test_started_at_null_does_not_break_insert(self):
+        conn = _FakeConn()
+        rec_id = _bulk_insert_cardio(conn, {"date": "2026-06-22"}, uid=3, gid="fit:x")
+        sql, _ = _insert(conn, "cardio_log")
+        assert "started_at" in sql
+        assert rec_id == 1  # inserted cleanly despite no resolvable start
