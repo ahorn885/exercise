@@ -130,6 +130,11 @@ def test_target_race_render(monkeypatch):
     assert 'What race are you training for?' in html
     # Bootstrap-grid form body kept under the gutter-restoring wrapper.
     assert 'onb-form' in html
+    # Issue #885 — structured "Race event type" <select>, moved up by the
+    # race format; the free-text "sport override" is gone.
+    assert 'Race event type' in html
+    assert '<select class="form-select" id="framework_sport" name="framework_sport">' in html
+    assert 'Sport (override' not in html
 
 
 def test_route_locales_render(monkeypatch):
