@@ -11,7 +11,7 @@ the in-memory `_FakeConn` substrate.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 from routes.dashboard import (
@@ -173,11 +173,12 @@ class TestRestDayCard:
 
 
 class TestFillRestDays:
-    """`_fill_rest_days` is the home Today/Tomorrow rest-day backfill (#888): it
-    turns an empty day that an active plan still covers into an explicit rest
-    card, while leaving a genuine no-plan day empty."""
+    """`_fill_rest_days` is the home Today/Tomorrow rest-day backfill (#888): a
+    covered-but-session-less `DayPlan` (and no legacy item on the list) becomes
+    an explicit rest card; a no-plan day (DayPlan None) stays empty, and a
+    legacy item is never shadowed."""
 
-    _PV = {
+    _PLAN = {
         "id": 65,
         "scope_start_date": date(2026, 6, 1),
         "scope_end_date": date(2026, 8, 31),
@@ -185,35 +186,39 @@ class TestFillRestDays:
     TODAY = date(2026, 6, 22)
     TOMORROW = date(2026, 6, 23)
 
-    def _patch(self, monkeypatch, *, covers, race_name="Pocket Gopher 2026"):
-        from routes import dashboard as dash
-        monkeypatch.setattr(dash, "target_race_name", lambda db, uid: race_name)
-        monkeypatch.setattr(
-            dash, "load_active_plan_version_for_date",
-            lambda db, uid, d: dict(self._PV) if covers(d) else None,
-        )
+    def _rest_dp(self, d):
+        from plan_sessions_repo import DayPlan
+        return DayPlan(d, d.strftime("%a"), [], dict(self._PLAN))
+
+    def _session_dp(self, d):
+        from plan_sessions_repo import DayPlan
+        return DayPlan(d, d.strftime("%a"), [SimpleNamespace(plan_version_id=65)], None)
 
     def test_noop_when_both_days_have_sessions(self, monkeypatch):
-        # Fast path: no plan lookups at all when both days are already filled.
+        # Fast path: no race-name lookup when neither day is a rest gap.
         from routes import dashboard as dash
         calls = []
         monkeypatch.setattr(
-            dash, "load_active_plan_version_for_date",
-            lambda db, uid, d: calls.append(d),
-        )
+            dash, "target_race_name", lambda db, uid: calls.append(1) or "X")
         today = [{"workout_name": "Run"}]
         tomorrow = [{"workout_name": "Ride"}]
         out_today, out_tomorrow = _fill_rest_days(
-            None, 42, today_d=self.TODAY, tomorrow_d=self.TOMORROW,
+            None, 42,
+            today_dp=self._session_dp(self.TODAY),
+            tomorrow_dp=self._session_dp(self.TOMORROW),
             today_workouts=today, tomorrow_workouts=tomorrow,
         )
         assert out_today is today and out_tomorrow is tomorrow
         assert calls == []
 
     def test_empty_today_inside_scope_becomes_rest(self, monkeypatch):
-        self._patch(monkeypatch, covers=lambda d: True)
+        from routes import dashboard as dash
+        monkeypatch.setattr(
+            dash, "target_race_name", lambda db, uid: "Pocket Gopher 2026")
         out_today, out_tomorrow = _fill_rest_days(
-            None, 42, today_d=self.TODAY, tomorrow_d=self.TOMORROW,
+            None, 42,
+            today_dp=self._rest_dp(self.TODAY),
+            tomorrow_dp=self._session_dp(self.TOMORROW),
             today_workouts=[], tomorrow_workouts=[{"workout_name": "Ride"}],
         )
         assert len(out_today) == 1
@@ -221,23 +226,39 @@ class TestFillRestDays:
         assert out_today[0]["sport_type"] == "rest"
         assert out_today[0]["plan_version_id"] == 65
         assert out_today[0]["plan_name"] == "Pocket Gopher 2026 — 13-week build"
-        # Tomorrow already had a session → untouched.
         assert out_tomorrow == [{"workout_name": "Ride"}]
 
-    def test_empty_day_with_no_active_plan_stays_empty(self, monkeypatch):
-        # No active plan covers the date → genuine "no session" (not a rest day).
-        self._patch(monkeypatch, covers=lambda d: False)
+    def test_no_active_plan_stays_empty(self, monkeypatch):
+        # DayPlan None → no active plan covers the day → genuine "no session".
+        from routes import dashboard as dash
+        monkeypatch.setattr(dash, "target_race_name", lambda db, uid: "X")
         out_today, out_tomorrow = _fill_rest_days(
-            None, 42, today_d=self.TODAY, tomorrow_d=self.TOMORROW,
+            None, 42, today_dp=None, tomorrow_dp=None,
             today_workouts=[], tomorrow_workouts=[],
         )
         assert out_today == []
         assert out_tomorrow == []
 
+    def test_legacy_item_not_shadowed_by_rest(self, monkeypatch):
+        # A legacy plan_item already fills the day → no rest card, even though
+        # the (v2) DayPlan would otherwise be a rest gap.
+        from routes import dashboard as dash
+        monkeypatch.setattr(dash, "target_race_name", lambda db, uid: "X")
+        legacy = [{"workout_name": "Imported run"}]
+        out_today, _ = _fill_rest_days(
+            None, 42,
+            today_dp=self._rest_dp(self.TODAY), tomorrow_dp=None,
+            today_workouts=legacy, tomorrow_workouts=[],
+        )
+        assert out_today is legacy
+
     def test_both_empty_inside_scope_both_become_rest(self, monkeypatch):
-        self._patch(monkeypatch, covers=lambda d: True)
+        from routes import dashboard as dash
+        monkeypatch.setattr(dash, "target_race_name", lambda db, uid: "X")
         out_today, out_tomorrow = _fill_rest_days(
-            None, 42, today_d=self.TODAY, tomorrow_d=self.TOMORROW,
+            None, 42,
+            today_dp=self._rest_dp(self.TODAY),
+            tomorrow_dp=self._rest_dp(self.TOMORROW),
             today_workouts=[], tomorrow_workouts=[],
         )
         assert out_today[0]["sport_type"] == "rest"
@@ -397,26 +418,35 @@ class TestHomeRouteRestDayRender:
         import plan_notifications
         from routes import dashboard as dash
 
+        from plan_sessions_repo import DayPlan
+
         for mod in list(sys.modules.values()):
             if mod is not None and getattr(mod, 'get_db', None) is not None:
                 monkeypatch.setattr(
                     mod, 'get_db', lambda: _DashConn(), raising=False)
 
-        # No legacy/v2 sessions today or tomorrow → the rest-fill path decides.
-        monkeypatch.setattr(
-            dash, 'load_scheduled_sessions_for_window',
-            lambda db, uid, *, start, end: [])
+        # The dashboard resolves Today/Tomorrow via the shared rest-aware window
+        # resolver. Covered case → both days come back as explicit rest DayPlans
+        # (no sessions); no-plan case → empty window (genuine "no session").
+        pv = {'id': 65, 'scope_start_date': date(2026, 6, 1),
+              'scope_end_date': date(2026, 8, 31)}
+
+        def _fake_window(db, uid, *, start, end):
+            if not plan_covers_today:
+                return []
+            out, d = [], start
+            while d <= end:
+                out.append(DayPlan(d, d.strftime('%a'), [], dict(pv)))
+                d += timedelta(days=1)
+            return out
+
+        monkeypatch.setattr(dash, 'load_active_window_with_rest', _fake_window)
         monkeypatch.setattr(dash, '_get_weather', lambda db: None)
         monkeypatch.setattr(
             dash, '_supplement_summary', lambda db, uid, ts, td: None)
         monkeypatch.setattr(
             plan_notifications, 'get_unseen_plan_notifications',
             lambda db, uid: [])
-        pv = {'id': 65, 'scope_start_date': date(2026, 6, 1),
-              'scope_end_date': date(2026, 8, 31)}
-        monkeypatch.setattr(
-            dash, 'load_active_plan_version_for_date',
-            lambda db, uid, d: pv if plan_covers_today else None)
 
         _appmod.app.config['TESTING'] = True
         c = _appmod.app.test_client()

@@ -34,9 +34,12 @@ from layer4.payload import (
 )
 from plan_sessions_repo import (
     _PRIOR_WINDOW_DAYS_BY_TIER,
+    DayPlan,
     allocate_plan_version_row,
+    fill_rest_gaps,
     load_active_plan_version_for_date,
     load_active_plan_version_id,
+    load_active_window_with_rest,
     load_plan_sessions_by_version,
     load_prior_plan_session_window,
     persist_layer4_sessions,
@@ -685,6 +688,94 @@ class TestLoadActivePlanVersionForDate:
         assert "ORDER BY created_at DESC" in sql
         # User + the date bound to both scope comparisons.
         assert params == (_USER_ID, date(2026, 6, 22), date(2026, 6, 22))
+
+
+# ─── fill_rest_gaps ─────────────────────────────────────────────────────────
+
+
+class TestFillRestGaps:
+    """The shared rest-day-as-absence rule (#618/#888): every covered day in
+    range present, empty days as explicit rest (empty session list)."""
+
+    def test_fills_interior_gaps_default_range(self):
+        mon = _make_plan_session(d=date(2026, 6, 1), day_of_week="Mon")
+        thu = _make_plan_session(d=date(2026, 6, 4), day_of_week="Thu")
+        out = fill_rest_gaps({mon.date: [mon], thu.date: [thu]})
+        # Mon..Thu inclusive, Tue + Wed synthesized as rest (empty sessions).
+        assert [d for d, _dow, _ss in out] == [
+            date(2026, 6, 1), date(2026, 6, 2), date(2026, 6, 3), date(2026, 6, 4)]
+        assert [bool(ss) for _d, _dow, ss in out] == [True, False, False, True]
+
+    def test_explicit_range_fills_beyond_sessions(self):
+        mon = _make_plan_session(d=date(2026, 6, 2), day_of_week="Mon")
+        out = fill_rest_gaps(
+            {mon.date: [mon]}, start=date(2026, 6, 1), end=date(2026, 6, 3))
+        assert [d for d, _dow, _ss in out] == [
+            date(2026, 6, 1), date(2026, 6, 2), date(2026, 6, 3)]
+        # The bracketing days (no session) are rest.
+        assert out[0][2] == [] and out[2][2] == [] and out[1][2] == [mon]
+
+    def test_empty_with_explicit_range_is_all_rest(self):
+        out = fill_rest_gaps({}, start=date(2026, 6, 1), end=date(2026, 6, 2))
+        assert [d for d, _dow, _ss in out] == [date(2026, 6, 1), date(2026, 6, 2)]
+        assert all(ss == [] for _d, _dow, ss in out)
+
+    def test_empty_without_range_is_empty(self):
+        assert fill_rest_gaps({}) == []
+
+    def test_non_date_keys_passthrough_without_range(self):
+        # Render-harness fakes: non-date keys, no explicit range → no synthetic
+        # gaps, just the dated days as-is.
+        s = _make_plan_session(d=date(2026, 6, 1))
+        out = fill_rest_gaps({"not-a-date": [s]})
+        assert len(out) == 1
+        assert out[0][0] == "not-a-date"
+
+
+# ─── load_active_window_with_rest ───────────────────────────────────────────
+
+
+class TestLoadActiveWindowWithRest:
+    def test_composes_sessions_rest_days_and_omits_no_plan(self, monkeypatch):
+        """Session day → DayPlan w/ sessions; covered-empty day → rest DayPlan
+        carrying the plan; a day no active plan covers → omitted (#888)."""
+        import plan_sessions_repo as repo
+        mon = _make_plan_session(plan_version_id=5, d=date(2026, 6, 1),
+                                 day_of_week="Mon")
+        monkeypatch.setattr(
+            repo, "load_scheduled_sessions_for_window",
+            lambda db, uid, *, start, end: [mon])
+        plan = {"id": 5, "scope_start_date": date(2026, 6, 1),
+                "scope_end_date": date(2026, 6, 30)}
+        # Tue (6/2) + Thu (6/4) covered; Wed (6/3) has no active plan.
+        cover = {date(2026, 6, 2): plan, date(2026, 6, 4): plan}
+        monkeypatch.setattr(
+            repo, "load_active_plan_version_for_date",
+            lambda db, uid, d: cover.get(d))
+
+        out = repo.load_active_window_with_rest(
+            _FakeConn(), _USER_ID, start=date(2026, 6, 1), end=date(2026, 6, 4))
+
+        # Wed omitted (no active plan); the rest present in order.
+        assert [dp.date for dp in out] == [
+            date(2026, 6, 1), date(2026, 6, 2), date(2026, 6, 4)]
+        day_mon, day_tue, day_thu = out
+        assert isinstance(day_mon, DayPlan)
+        assert day_mon.sessions == [mon] and day_mon.plan is None
+        assert day_tue.sessions == [] and day_tue.plan == plan
+        assert day_thu.sessions == [] and day_thu.plan == plan
+
+    def test_all_days_no_plan_returns_empty(self, monkeypatch):
+        import plan_sessions_repo as repo
+        monkeypatch.setattr(
+            repo, "load_scheduled_sessions_for_window",
+            lambda db, uid, *, start, end: [])
+        monkeypatch.setattr(
+            repo, "load_active_plan_version_for_date",
+            lambda db, uid, d: None)
+        out = repo.load_active_window_with_rest(
+            _FakeConn(), _USER_ID, start=date(2026, 6, 1), end=date(2026, 6, 3))
+        assert out == []
 
 
 class TestTierDefaultMapping:

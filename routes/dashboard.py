@@ -6,10 +6,7 @@ from flask import Blueprint, render_template
 from database import get_db
 from datetime import date, timedelta
 from routes.auth import current_user_id
-from plan_sessions_repo import (
-    load_active_plan_version_for_date,
-    load_scheduled_sessions_for_window,
-)
+from plan_sessions_repo import load_active_window_with_rest
 from plan_naming import target_race_name, generated_plan_name
 from athlete_event_windows_repo import resolve_weather_city
 
@@ -109,42 +106,40 @@ def _rest_day_card(plan_version_id: int, plan_name: str | None, d: date) -> dict
 
 
 def _fill_rest_days(
-    db, user_id: int, *, today_d, tomorrow_d, today_workouts, tomorrow_workouts
+    db, user_id: int, *, today_dp, tomorrow_dp, today_workouts, tomorrow_workouts
 ):
-    """Fill an empty Today/Tomorrow with an explicit REST card when the date
-    still falls inside an active plan's scope (#888).
+    """Turn a covered-but-session-less day into an explicit REST card (#888).
 
-    The v2 generator encodes ordinary rest days as the ABSENCE of a session, so
-    an otherwise-empty day that an active plan still covers is a rest day — the
-    plan's daily view already renders it as one (gap-fill in
-    `plan_create._plan_days_with_rest_gaps`); this brings the home card in line
-    rather than leaving it on the "No session scheduled / no plan" empty state.
-
-    Only fires per day when that day has NO legacy or v2 session, and only
-    against an active plan covering the date, so a genuine no-plan day still
-    reads as "no session". Returns the (today, tomorrow) lists, filled in place.
+    `today_dp` / `tomorrow_dp` are the `DayPlan`s from
+    `load_active_window_with_rest` (None when no active plan covers the date —
+    a genuine no-session day, left on the empty state). A REST card is added
+    only when the day is covered (`dp.plan`), carries no session
+    (`not dp.sessions`), AND has no legacy item already on the card list — so a
+    real no-plan day still reads "No session scheduled" and a legacy workout is
+    never shadowed. Returns the (today, tomorrow) lists, filled in place.
     """
-    if today_workouts and tomorrow_workouts:
-        return today_workouts, tomorrow_workouts
-    race_name = target_race_name(db, user_id)
-    if not today_workouts:
-        pv = load_active_plan_version_for_date(db, user_id, today_d)
-        if pv is not None:
-            today_workouts = [_rest_day_card(
-                pv['id'],
+    def _is_rest_gap(dp, workouts):
+        return (not workouts and dp is not None
+                and not dp.sessions and dp.plan is not None)
+
+    today_rest = _is_rest_gap(today_dp, today_workouts)
+    tomorrow_rest = _is_rest_gap(tomorrow_dp, tomorrow_workouts)
+    if today_rest or tomorrow_rest:
+        race_name = target_race_name(db, user_id)
+
+        def _card(dp):
+            return _rest_day_card(
+                dp.plan['id'],
                 generated_plan_name(
-                    race_name, pv['scope_start_date'], pv['scope_end_date']),
-                today_d,
-            )]
-    if not tomorrow_workouts:
-        pv = load_active_plan_version_for_date(db, user_id, tomorrow_d)
-        if pv is not None:
-            tomorrow_workouts = [_rest_day_card(
-                pv['id'],
-                generated_plan_name(
-                    race_name, pv['scope_start_date'], pv['scope_end_date']),
-                tomorrow_d,
-            )]
+                    race_name, dp.plan['scope_start_date'],
+                    dp.plan['scope_end_date']),
+                dp.date,
+            )
+
+        if today_rest:
+            today_workouts = [_card(today_dp)]
+        if tomorrow_rest:
+            tomorrow_workouts = [_card(tomorrow_dp)]
     return today_workouts, tomorrow_workouts
 
 
@@ -291,10 +286,16 @@ def index():
     # rows and v2 cards coexist in the same lists; `is_v2` switches the links.
     today_d = date.today()
     tomorrow_d = today_d + timedelta(days=1)
-    today_v2 = load_scheduled_sessions_for_window(db, uid, start=today_d, end=today_d)
-    tomorrow_v2 = load_scheduled_sessions_for_window(
-        db, uid, start=tomorrow_d, end=tomorrow_d
-    )
+    # One rest-aware resolver for the 2-day window: active per-day sessions, with
+    # a covered-but-empty day handed back as an explicit rest DayPlan and a
+    # no-plan day omitted. Shares the rest-day-as-absence rule with the plan's
+    # daily view, so the home card can't silently drop a rest day again (#888).
+    window = {dp.date: dp for dp in
+              load_active_window_with_rest(db, uid, start=today_d, end=tomorrow_d)}
+    today_dp = window.get(today_d)
+    tomorrow_dp = window.get(tomorrow_d)
+    today_v2 = today_dp.sessions if today_dp else []
+    tomorrow_v2 = tomorrow_dp.sessions if tomorrow_dp else []
     v2_names = _v2_plan_names(db, uid, today_v2 + tomorrow_v2)
     today_workouts = list(today_workouts) + [
         _v2_session_card(s, v2_names.get(s.plan_version_id)) for s in today_v2
@@ -304,7 +305,7 @@ def index():
     ]
     today_workouts, tomorrow_workouts = _fill_rest_days(
         db, uid,
-        today_d=today_d, tomorrow_d=tomorrow_d,
+        today_dp=today_dp, tomorrow_dp=tomorrow_dp,
         today_workouts=today_workouts, tomorrow_workouts=tomorrow_workouts,
     )
 

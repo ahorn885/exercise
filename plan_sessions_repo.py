@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 
 from layer4.payload import Layer4Payload, PlanSession
 
@@ -591,6 +591,115 @@ def load_active_plan_version_for_date(
         "scope_start_date": row["scope_start_date"],
         "scope_end_date": row["scope_end_date"],
     }
+
+
+def _coerce_day(value: Any) -> date | None:
+    """Coerce a session-map key to a `date`. psycopg returns DATE as `date`
+    already; tolerate ISO strings (and the render harness's fake keys) and
+    return None for anything unparseable so a bad key degrades to a no-fill
+    passthrough rather than raising."""
+    if value is None or isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return None
+
+
+def fill_rest_gaps(
+    sessions_by_date: dict[Any, list[PlanSession]],
+    *,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[tuple[Any, str, list[PlanSession]]]:
+    """THE rest-day-as-absence rule, in one place (#618/#888).
+
+    Given `{date: [PlanSession, ...]}`, return an ordered list of
+    `(date, day_of_week, sessions)` covering every calendar day in the range,
+    where a day with no persisted session surfaces as an explicit REST day
+    (empty `sessions`). The v2 generator schedules NO session on a rest day
+    (per_phase `=== Schedule ===` — "Disabled days are rest days"), so every
+    surface that renders "what's on day X" must fill those gaps; centralizing
+    it here keeps the plan's daily view and the home Today/Tomorrow cards from
+    drifting apart (the #888 regression).
+
+    Range: `[start, end]` inclusive when given; otherwise derived from the
+    first/last session date (the daily-view default). An explicit range lets a
+    caller fill days even when `sessions_by_date` is empty (a fully-rest
+    window). Pure — no DB, no I/O.
+
+    Keys that can't be coerced to a `date` (render-harness fakes) and no
+    explicit range → passthrough the dated days as-is, no synthetic gaps.
+    """
+    coerced = [(_coerce_day(d), d, ss) for d, ss in sessions_by_date.items()]
+    if start is None and end is None and any(cd is None for cd, _, _ in coerced):
+        ordered = sorted(coerced, key=lambda t: str(t[1]))
+        return [(raw, (ss[0].day_of_week if ss else ""), ss)
+                for _cd, raw, ss in ordered]
+    by_date = {cd: ss for cd, _raw, ss in coerced if cd is not None}
+    if start is None and end is None:
+        if not by_date:
+            return []
+        keys = sorted(by_date)
+        start, end = keys[0], keys[-1]
+    elif start is None:
+        start = min(by_date) if by_date else end
+    elif end is None:
+        end = max(by_date) if by_date else start
+    days: list[tuple[Any, str, list[PlanSession]]] = []
+    d = start
+    while d <= end:
+        days.append((d, d.strftime("%a"), by_date.get(d, [])))
+        d += timedelta(days=1)
+    return days
+
+
+class DayPlan(NamedTuple):
+    """One day of an active-schedule window (`load_active_window_with_rest`).
+    `sessions` empty == an explicit REST day; `plan` carries the covering
+    active plan version (id + scope) on rest days so the surface can still link
+    back to the plan, and is None on session-bearing days (the session already
+    carries its `plan_version_id`)."""
+
+    date: date
+    day_of_week: str
+    sessions: list[PlanSession]
+    plan: dict[str, Any] | None
+
+
+def load_active_window_with_rest(
+    db: Any, user_id: int, *, start: date, end: date
+) -> list[DayPlan]:
+    """Per-day active schedule over `[start, end]`, with covered-but-empty days
+    surfaced as explicit REST and days no active plan covers OMITTED.
+
+    Composes the three single-purpose reads so every "what's scheduled on these
+    days" surface shares one rest-aware resolver (#888):
+    - `load_scheduled_sessions_for_window` — the active per-day version pointer
+      supplies each day's sessions;
+    - `fill_rest_gaps` — applies the rest-day-as-absence rule across the window;
+    - `load_active_plan_version_for_date` — gates each empty (gap) day on active
+      scope coverage, so a gap INSIDE a plan becomes rest while a gap with no
+      active plan is omitted (a genuine no-plan day, not a rest day) and carries
+      the covering plan so a rest day can name/link its plan.
+
+    The dashboard Today/Tomorrow cards consume this; any future window surface
+    (e.g. a week strip) gets rest days for free.
+    """
+    sessions = load_scheduled_sessions_for_window(db, user_id, start=start, end=end)
+    by_date: dict[date, list[PlanSession]] = {}
+    for s in sessions:
+        by_date.setdefault(s.date, []).append(s)
+    out: list[DayPlan] = []
+    for d, dow, day_sessions in fill_rest_gaps(by_date, start=start, end=end):
+        if day_sessions:
+            out.append(DayPlan(d, dow, day_sessions, None))
+            continue
+        pv = load_active_plan_version_for_date(db, user_id, d)
+        if pv is not None:
+            out.append(DayPlan(d, dow, [], pv))
+        # else: no active plan covers d — omit (a genuine no-session day).
+    return out
 
 
 def _decode_json(raw: Any) -> Any:
