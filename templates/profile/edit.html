@@ -2,13 +2,17 @@
    profile.edit reskinned onto the new shell. The 7-tab legacy monolith is
    decomposed: Race events → §10, Connections → §17, Account → §19
    (profile.account_settings), Coach memory → §20 (profile.coach_memory).
-   What's left here is the athlete proper — Athlete / Schedule / Skills —
-   as server-rendered sub-tabs (?tab=, CSP-clean). Every field name + POST
-   action is preserved; Schedule/Skills reuse the shared onboarding partials
-   so those flows stay in lockstep. #}
+   #894 IA reorg groups the athlete proper into three server-rendered sub-tabs
+   (?tab=, CSP-clean): Athlete (baselines + notes + discipline weighting),
+   Fuel & health (nutrition/fueling + supplements + conditions + meds), and
+   Gear & skills (owned crafts + race-day skills + pack-load experience).
+   Schedule moved out onto "Train" in the sidebar (profile.schedule); Locations
+   moved under "Log" (#887 — a ?tab=locations hit redirects to locales). Every
+   field name + POST action is preserved; the Gear / Fuel / Schedule surfaces
+   reuse the shared onboarding partials so those flows stay in lockstep. #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
-{% set sub = active_tab if active_tab in ['athlete', 'supplements', 'schedule', 'skills'] else 'athlete' %}
+{% set sub = active_tab if active_tab in ['athlete', 'health', 'gear'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
    or profile.weekly_hours_target or profile.body_weight_kg or profile.coach_notes) %}
 {% set unit_pref = profile.unit_preference or 'imperial' %}
@@ -30,7 +34,8 @@
 <div class="card pf-firstrun">
   <p class="eyebrow accent">● First run</p>
   <p class="pf-firstrun-txt">Nothing saved yet. Fill in what you know — age, sport, weekly hours, and
-    any baselines — then set your training windows on <b>Schedule</b>. You can always come back and refine.</p>
+    any baselines — then set your training windows on <b>Schedule</b> in the sidebar. You can always
+    come back and refine.</p>
 </div>
 {% endif %}
 
@@ -38,9 +43,8 @@
 <div class="conn-tabs" role="tablist" aria-label="Profile sections">
   {% for key, label, hint in [
        ('athlete', 'Athlete', 'baselines + notes'),
-       ('supplements', 'Supplements', 'supps · meds · health'),
-       ('schedule', 'Schedule', 'training windows'),
-       ('skills', 'Skills', 'race-day capabilities')] %}
+       ('health', 'Fuel & health', 'nutrition · supps · meds'),
+       ('gear', 'Gear & skills', 'gear · skills · loads')] %}
   <a class="conn-tab{{ ' is-on' if sub == key else '' }}" role="tab"
      aria-selected="{{ 'true' if sub == key else 'false' }}"
      href="{{ url_for('profile.edit', tab=key) }}">
@@ -145,10 +149,70 @@
     </label>
   </div>
 
-  {# §I.2 standing nutrition + fueling protocol — fed to the coach when building
-     plans. Per-day fuel targets are computed per plan (shown on the plan + below). #}
-  {% set sel_diet = (profile.dietary_pattern or '').split(',') %}
-  {% set sel_fuel = (profile.fueling_format_preference or '').split(',') %}
+  <div class="pf-save">
+    <span class="pf-saved mono">{% if profile.updated_at %}Last saved {{ (profile.updated_at|string)[:19] }}{% else %}Not yet saved{% endif %}</span>
+    <button type="submit" class="btn btn-primary">Save profile</button>
+  </div>
+</form>
+
+{# ── Discipline weighting (X2) — separate form so its sum-to-100 rule can't
+   block the profile save above. #}
+<form method="post" action="{{ url_for('profile.save_disciplines') }}" class="pf-form"
+      id="dw-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad stack">
+    <div>
+      <p class="eyebrow">● Discipline weighting</p>
+      <p class="pf-hint">Optional. Split your training load across the disciplines you race —
+        the percentages must add up to <strong>100</strong>. Leave every box blank to let the
+        coach infer the split from your race's discipline mix (the default).</p>
+    </div>
+    <div class="pf-grid">
+      {% for d in discipline_catalog %}
+      <label class="field"><span class="lbl">{{ d.label }}</span>
+        <input type="number" step="1" min="0" max="100" name="dw_{{ d.id }}"
+               class="form-control form-control-sm dw-input"
+               value="{{ discipline_weighting.get(d.id, '') }}"></label>
+      {% endfor %}
+    </div>
+    <p class="pf-hint">Total: <strong id="dw-total" class="mono">0</strong>%
+      <span id="dw-warn" class="mono" hidden> — must equal 100 to save</span></p>
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save weighting</button>
+  </div>
+</form>
+<script>
+  (function () {
+    var form = document.getElementById('dw-form');
+    if (!form) return;
+    var totalEl = document.getElementById('dw-total');
+    var warnEl = document.getElementById('dw-warn');
+    function recompute() {
+      var sum = 0;
+      form.querySelectorAll('.dw-input').forEach(function (el) {
+        var v = parseFloat(el.value);
+        if (!isNaN(v)) sum += v;
+      });
+      totalEl.textContent = sum;
+      warnEl.hidden = !(sum !== 0 && sum !== 100);
+    }
+    form.addEventListener('input', recompute);
+    recompute();
+  })();
+</script>
+
+{# ════════════════════ FUEL & HEALTH ════════════════════ #}
+{% elif sub == 'health' %}
+{# §I.2 standing nutrition + fueling protocol — fed to the coach when building
+   plans. Carved onto its own form (profile.save_nutrition) so a partial save
+   can't wipe the athlete-tab baselines. Per-day fuel targets are computed per
+   plan (shown on the plan + below). #}
+{% set sel_diet = (profile.dietary_pattern or '').split(',') %}
+{% set sel_fuel = (profile.fueling_format_preference or '').split(',') %}
+<form method="post" action="{{ url_for('profile.save_nutrition') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card card-pad stack pf-nutrition">
     <div>
       <p class="eyebrow">● Nutrition &amp; fueling</p>
@@ -219,61 +283,40 @@
                value="{{ profile.altitude_exposure_count if profile.altitude_exposure_count is not none else '' }}"></label>
     </div>
   </div>
-
   <div class="pf-save">
     <span class="pf-saved mono">{% if profile.updated_at %}Last saved {{ (profile.updated_at|string)[:19] }}{% else %}Not yet saved{% endif %}</span>
-    <button type="submit" class="btn btn-primary">Save profile</button>
+    <button type="submit" class="btn btn-primary">Save nutrition</button>
   </div>
 </form>
 
-{# ── Discipline weighting (X2) — separate form so its sum-to-100 rule can't
-   block the profile save above. #}
-<form method="post" action="{{ url_for('profile.save_disciplines') }}" class="pf-form"
-      id="dw-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="card card-pad stack">
-    <div>
-      <p class="eyebrow">● Discipline weighting</p>
-      <p class="pf-hint">Optional. Split your training load across the disciplines you race —
-        the percentages must add up to <strong>100</strong>. Leave every box blank to let the
-        coach infer the split from your race's discipline mix (the default).</p>
-    </div>
-    <div class="pf-grid">
-      {% for d in discipline_catalog %}
-      <label class="field"><span class="lbl">{{ d.label }}</span>
-        <input type="number" step="1" min="0" max="100" name="dw_{{ d.id }}"
-               class="form-control form-control-sm dw-input"
-               value="{{ discipline_weighting.get(d.id, '') }}"></label>
-      {% endfor %}
-    </div>
-    <p class="pf-hint">Total: <strong id="dw-total" class="mono">0</strong>%
-      <span id="dw-warn" class="mono" hidden> — must equal 100 to save</span></p>
-  </div>
-  <div class="pf-save">
-    <span></span>
-    <button type="submit" class="btn btn-primary">Save weighting</button>
-  </div>
-</form>
-<script>
-  (function () {
-    var form = document.getElementById('dw-form');
-    if (!form) return;
-    var totalEl = document.getElementById('dw-total');
-    var warnEl = document.getElementById('dw-warn');
-    function recompute() {
-      var sum = 0;
-      form.querySelectorAll('.dw-input').forEach(function (el) {
-        var v = parseFloat(el.value);
-        if (!isNaN(v)) sum += v;
-      });
-      totalEl.textContent = sum;
-      warnEl.hidden = !(sum !== 0 && sum !== 100);
-    }
-    form.addEventListener('input', recompute);
-    recompute();
-  })();
-</script>
+{# Structured supplements · health conditions · medications (#619). #}
+{% include 'profile/_health_tab.html' %}
 
+{# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
+{% if plan_nutrition %}
+<div class="card card-pad stack pf-nutrition">
+  <div>
+    <p class="eyebrow accent">● Active plan · daily baseline</p>
+    <p class="pf-hint">Phase baselines from your current plan — the every-day average. Per-day targets
+      shift with training load; <a href="{{ url_for('plan_create.view_plan', plan_version_id=active_plan_id) }}">see the plan</a>.</p>
+  </div>
+  <div class="nutri-phases">
+    {% for phase, t in plan_nutrition.per_phase_baseline.items() %}
+    <div class="nutri-phase">
+      <span class="chip">{{ phase }}</span>
+      <span class="nutri-kcal">{{ t.daily_calorie_target_kcal }} kcal</span>
+      <span class="rail-note nutri-macros">C {{ t.macros.cho_g }} · P {{ t.macros.protein_g }} · F {{ t.macros.fat_g }} g</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if plan_nutrition.standing_supplement_notes %}
+  <p class="sess-notes">💊 {{ plan_nutrition.standing_supplement_notes }}</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ════════════════════ GEAR & SKILLS ════════════════════ #}
+{% elif sub == 'gear' %}
 {# ── Owned crafts (2c.2b, #540) — bike + paddle gear the athlete owns. Feeds
    the craft-substitution narrowing in plan-gen. Separate form; the checkbox
    block is the shared _crafts_form partial (also used by onboarding Skills). #}
@@ -283,6 +326,24 @@
   <div class="pf-save">
     <span></span>
     <button type="submit" class="btn btn-primary">Save gear</button>
+  </div>
+</form>
+
+{# Race-day skills — shared _skills_form partial (also used by onboarding). #}
+<form method="post" action="{{ url_for('profile.save_skills') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad">
+    <p class="eyebrow">● Race-day skills</p>
+    <p class="pf-hint">Check the technical skills you've trained enough to apply on race day. Default
+      is OFF. Each unchecked skill that matches your race terrain surfaces a coaching flag so the
+      plan addresses the gap.</p>
+    {% with toggle_defs=skill_toggle_defs, current_states=skill_toggle_states %}
+      {% include 'onboarding/_skills_form.html' %}
+    {% endwith %}
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save skills</button>
   </div>
 </form>
 
@@ -335,66 +396,5 @@
   </form>
 </div>
 
-{# Plan-specific daily baseline — only when a plan is live (slice 4 PlanNutrition). #}
-{% if plan_nutrition %}
-<div class="card card-pad stack pf-nutrition">
-  <div>
-    <p class="eyebrow accent">● Active plan · daily baseline</p>
-    <p class="pf-hint">Phase baselines from your current plan — the every-day average. Per-day targets
-      shift with training load; <a href="{{ url_for('plan_create.view_plan', plan_version_id=active_plan_id) }}">see the plan</a>.</p>
-  </div>
-  <div class="nutri-phases">
-    {% for phase, t in plan_nutrition.per_phase_baseline.items() %}
-    <div class="nutri-phase">
-      <span class="chip">{{ phase }}</span>
-      <span class="nutri-kcal">{{ t.daily_calorie_target_kcal }} kcal</span>
-      <span class="rail-note nutri-macros">C {{ t.macros.cho_g }} · P {{ t.macros.protein_g }} · F {{ t.macros.fat_g }} g</span>
-    </div>
-    {% endfor %}
-  </div>
-  {% if plan_nutrition.standing_supplement_notes %}
-  <p class="sess-notes">💊 {{ plan_nutrition.standing_supplement_notes }}</p>
-  {% endif %}
-</div>
-{% endif %}
-
-{# ════════════════════ SUPPLEMENTS ════════════════════ #}
-{% elif sub == 'supplements' %}
-{% include 'profile/_health_tab.html' %}
-
-{# ════════════════════ SCHEDULE ════════════════════ #}
-{% elif sub == 'schedule' %}
-<form method="post" action="{{ url_for('profile.save_schedule') }}" class="pf-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="card card-pad">
-    <p class="eyebrow">● Training windows</p>
-    <p class="pf-hint">Mark the days you have a window, the earliest you can start, and how long it
-      runs. Plans schedule sessions inside these windows — never past <em>start + duration</em>.</p>
-    {% include 'onboarding/_schedule_form.html' %}
-  </div>
-  <div class="pf-save">
-    <span></span>
-    <button type="submit" class="btn btn-primary">Save schedule</button>
-  </div>
-</form>
-
-{# ════════════════════ SKILLS ════════════════════ #}
-{% else %}
-<form method="post" action="{{ url_for('profile.save_skills') }}" class="pf-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  <div class="card card-pad">
-    <p class="eyebrow">● Race-day skills</p>
-    <p class="pf-hint">Check the technical skills you've trained enough to apply on race day. Default
-      is OFF. Each unchecked skill that matches your race terrain surfaces a coaching flag so the
-      plan addresses the gap.</p>
-    {% with toggle_defs=skill_toggle_defs, current_states=skill_toggle_states %}
-      {% include 'onboarding/_skills_form.html' %}
-    {% endwith %}
-  </div>
-  <div class="pf-save">
-    <span></span>
-    <button type="submit" class="btn btn-primary">Save skills</button>
-  </div>
-</form>
 {% endif %}
 {% endblock %}

@@ -755,7 +755,7 @@ def schedule_save():
         # the rows that didn't make it through validation.
         return redirect(url_for('onboarding.schedule'))
 
-    flash('Schedule saved. You can edit per-day windows any time from your profile.', 'success')
+    flash('Schedule saved. You can edit per-day windows any time from Schedule in the sidebar.', 'success')
     return redirect(_POST_STEP3B_TARGET)
 
 

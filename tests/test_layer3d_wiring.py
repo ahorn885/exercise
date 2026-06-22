@@ -485,22 +485,26 @@ def _revise_surfaces_app():
     """A bare app that registers the real revise-target endpoint NAMES (with
     throwaway view funcs) so `url_for` in `_build_revise_urls` resolves them
     without importing the heavy `routes.injuries`/`profile`/`race_events`
-    modules."""
+    modules. The `profile` blueprint carries both `edit` (Athlete / Fuel &
+    health tabs) and `schedule` (the standalone Schedule page, #894)."""
     app = Flask(__name__)
-    specs = [
-        ("injuries", "/injuries", "list_entries", lambda: ""),
-        ("profile", "/profile/", "edit", lambda: ""),
-        (
-            "race_events",
-            "/profile/race-events/<int:race_event_id>/edit",
-            "edit_race",
-            lambda race_event_id: "",
-        ),
-    ]
-    for name, rule, endpoint, view in specs:
-        sub = Blueprint(name, __name__)
-        sub.add_url_rule(rule, endpoint, view)
-        app.register_blueprint(sub)
+
+    injuries = Blueprint("injuries", __name__)
+    injuries.add_url_rule("/injuries", "list_entries", lambda: "")
+    app.register_blueprint(injuries)
+
+    profile = Blueprint("profile", __name__)
+    profile.add_url_rule("/profile/", "edit", lambda: "")
+    profile.add_url_rule("/profile/schedule", "schedule", lambda: "")
+    app.register_blueprint(profile)
+
+    race_events = Blueprint("race_events", __name__)
+    race_events.add_url_rule(
+        "/profile/race-events/<int:race_event_id>/edit",
+        "edit_race",
+        lambda race_event_id: "",
+    )
+    app.register_blueprint(race_events)
     return app
 
 
@@ -529,10 +533,12 @@ class TestReviseUrls:
         with _revise_surfaces_app().test_request_context():
             urls = plan_create._build_revise_urls(object(), 3, gate)
         assert urls["profile.injuries"] == "/injuries"
-        # disciplines / nutrition / availability all edit on the profile page.
+        # #894 — each profile revise target resolves to its own surface now:
+        # disciplines stay on the Athlete tab, nutrition on the Fuel & health
+        # tab, availability on the standalone Schedule page.
         assert urls["profile.disciplines"] == "/profile/"
-        assert urls["profile.nutrition"] == "/profile/"
-        assert urls["profile.availability"] == "/profile/"
+        assert urls["profile.nutrition"] == "/profile/?tab=health"
+        assert urls["profile.availability"] == "/profile/schedule"
         assert urls["h2.goal_outcome"] == "/profile/race-events/42/edit"
         # 3B h3.* (open-ended plan duration) has no athlete edit surface → no link.
         assert "h3.plan_duration_weeks" not in urls

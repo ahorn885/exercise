@@ -1,6 +1,6 @@
-"""Tests for the profile-tab Skills capture surface — `/profile?tab=skills`
-GET render + `/profile/skills` POST handler. Mirrors the
-`tests/test_onboarding_skills.py` `_FakeConn` substrate.
+"""Tests for the profile Skills capture surface — the Gear & skills tab
+(`/profile?tab=gear`, #894) GET render + `/profile/skills` POST handler.
+Mirrors the `tests/test_onboarding_skills.py` `_FakeConn` substrate.
 """
 
 from __future__ import annotations
@@ -104,9 +104,9 @@ class TestSaveSkillsRoute:
         }
         assert conn.commits == 1
         assert evictions == [7]
-        # Redirects back to the Skills tab on /profile.
+        # Redirects back to the Gear & skills tab on /profile (#894).
         assert response.status_code == 302
-        assert 'tab=skills' in response.location
+        assert 'tab=gear' in response.location
 
     def test_empty_vocab_no_ops_but_still_redirects(self, monkeypatch):
         app = _make_profile_app()
@@ -130,4 +130,4 @@ class TestSaveSkillsRoute:
         assert conn.commits == 0
         assert evictions == []
         assert response.status_code == 302
-        assert 'tab=skills' in response.location
+        assert 'tab=gear' in response.location
