@@ -122,6 +122,12 @@ class Layer3DGate(_Base):
     evaluated_against: dict[str, str] = Field(default_factory=dict)
     # Stamped by the caller on persist (§6.1), not inside the pure function.
     evaluated_at: datetime | None = None
+    # §11.2 staleness re-fire. Set True when a parked plan's upstream inputs may
+    # have changed (the athlete hit [Fix this] and edited a profile surface) so
+    # the review screen knows to re-evaluate before showing. A fresh evaluation
+    # always produces stale=False (the default), so re-gating clears it. Persisted
+    # in the hitl_gate JSONB blob — no schema column.
+    stale: bool = False
 
 
 # ─── item_key derivation (§6.4) ──────────────────────────────────────────────

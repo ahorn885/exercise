@@ -567,10 +567,17 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
             or "Plan generation failed. Please try again.",
         }
     # #213 — a plan parked at the Layer 3D HITL gate does NOT advance via the
-    # poller/cron. It resumes only when the athlete resolves on the review screen
-    # and clicks [Generate plan], which flips the row back to 'generating'. The
-    # poller maps this to a redirect onto the review screen (generate_plan).
+    # poller/cron into synthesis. It resumes only when the athlete clicks
+    # [Generate plan], which flips the row back to 'generating'. EXCEPTION
+    # (Layer3D §11.2 staleness re-fire): when the athlete hit [Fix this] and
+    # edited a profile surface, the gate was marked `stale`; re-evaluate it
+    # against the fresh upstream payloads (gate_only, no synthesis) and re-park,
+    # so the review screen shows the post-edit gate. A non-stale parked plan is a
+    # no-op here.
     if status == 'needs_review':
+        gate = load_hitl_gate(db, uid, plan_version_id)
+        if gate is not None and getattr(gate, 'stale', False):
+            return _regate_parked_plan(db, uid, plan_version_id, plan_version)
         return {"status": "needs_review"}
 
     # D-77 concurrency guard -- see the `_ADVANCE_LOCK_TTL_S` note. Claim the
@@ -595,6 +602,55 @@ def _advance_plan_generation(db, uid: int, plan_version_id: int) -> dict:
     # — that's the leak window the TTL stamp bounds (it lapses on its own).
     try:
         return _advance_plan_generation_locked(db, uid, plan_version_id, plan_version)
+    finally:
+        _release_advance_lock(db, plan_version_id)
+
+
+def _regate_parked_plan(db, uid: int, plan_version_id: int,
+                        plan_version: dict) -> dict:
+    """Layer3D §11.2 re-gate: re-evaluate a parked plan's HITL gate against the
+    CURRENT upstream payloads (the athlete edited a profile surface via
+    [Fix this]) and re-park at needs_review — WITHOUT synthesizing. Runs the cone
+    in `gate_only` mode under the advance lock so a concurrent cron/poll doesn't
+    double-run it. The injury/equipment/discipline layers are deterministic DB
+    queries, so they reflect the edit immediately; the LLM layers (3A/3B) hit
+    cache. The fresh gate is `stale=False`, so this clears the staleness flag.
+    Never synthesizes — the athlete still clicks [Generate plan] once green."""
+    if not _try_acquire_advance_lock(db, plan_version_id):
+        # Another pass is already re-gating (or generating); let it finish.
+        return {"status": "needs_review", "note": "regate_in_progress_elsewhere"}
+    try:
+        with generation_deadline(_INVOCATION_BUDGET_S):
+            orchestrate_plan_create(
+                db, uid,
+                plan_start_date=plan_version['scope_start_date'],
+                plan_version_id=plan_version_id,
+                cache=_build_layer4_cache(),
+                gate_only=True,
+            )
+        # gate_only ALWAYS raises Layer3DGateBlocked; reaching here is unexpected.
+        return {"status": "needs_review"}
+    except Layer3DGateBlocked as exc:
+        # orchestrate persisted the fresh gate (stale=False) inside this txn; the
+        # row already sits at needs_review (re-gate never flips status). Commit the
+        # gate write so the review screen reads the post-edit aggregation.
+        db.commit()
+        print(
+            f"_regate_parked_plan: re-evaluated Layer 3D gate "
+            f"{exc.gate.gate_status} for plan_version_id={plan_version_id} "
+            f"({len(exc.gate.items)} item(s))"
+        )
+        return {"status": "needs_review"}
+    except Exception as exc:  # noqa: BLE001 — a re-gate failure must not crash the
+        # review GET or fail the plan; leave it parked with its prior gate so the
+        # athlete can retry (Rule #15: log the cause).
+        db.rollback()
+        print(
+            f"_regate_parked_plan: cone re-evaluation failed for "
+            f"plan_version_id={plan_version_id} — left parked at needs_review: "
+            f"{exc!r}"
+        )
+        return {"status": "needs_review"}
     finally:
         _release_advance_lock(db, plan_version_id)
 
@@ -1505,6 +1561,24 @@ def _grouped_gate_items(gate) -> dict:
     return buckets
 
 
+# §11 revise cascade — map a gate item's `revise_target` to the Layer 1 edit
+# surface the athlete fixes it on. Unknown targets (e.g. a 3B-emitted one) fall
+# back to the profile page rather than 404.
+_REVISE_TARGET_ENDPOINTS = {
+    "profile.injuries": ("injuries.list_entries", {}),
+    "profile.availability": ("profile.edit", {"tab": "schedule"}),
+    "profile.disciplines": ("profile.edit", {"tab": "athlete"}),
+    "profile.nutrition": ("profile.edit", {}),
+}
+
+
+def _revise_target_url(revise_target) -> str:
+    endpoint, kw = _REVISE_TARGET_ENDPOINTS.get(
+        revise_target or "", ("profile.edit", {})
+    )
+    return url_for(endpoint, **kw)
+
+
 @bp.route('/<int:plan_version_id>/review', methods=['GET'])
 def plan_review(plan_version_id: int):
     """The HITL review screen for a plan parked at `needs_review`. Lists the
@@ -1536,6 +1610,26 @@ def plan_review(plan_version_id: int):
         flash("No review items found for this plan.", 'secondary')
         return redirect(url_for('plans.list_plans'))
 
+    if getattr(gate, 'stale', False):
+        # §11.2 — a [Fix this] edit marked the gate stale. Re-evaluate against the
+        # fresh profile before showing it (gate_only re-gate via the advance loop;
+        # the cone's injury/equipment layers are deterministic DB reads + the LLM
+        # layers hit cache, so this is fast). Then reload the now-fresh gate.
+        _advance_plan_generation(db, uid, plan_version_id)
+        plan_version = _load_plan_version(db, uid, plan_version_id)
+        if plan_version is None:
+            abort(404)
+        if plan_version['generation_status'] != 'needs_review':
+            # A re-gate never flips status, but guard rather than render a stale
+            # view if something else moved the row.
+            return redirect(
+                url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+            )
+        gate = load_hitl_gate(db, uid, plan_version_id)
+        if gate is None:
+            flash("No review items found for this plan.", 'secondary')
+            return redirect(url_for('plans.list_plans'))
+
     return render_template(
         'plan_create/review.html',
         plan_version=plan_version,
@@ -1556,10 +1650,12 @@ def plan_review(plan_version_id: int):
 
 @bp.route('/<int:plan_version_id>/review/resolve', methods=['POST'])
 def resolve_review_item(plan_version_id: int):
-    """Record an athlete acknowledgment of a single warning/informational gate
-    item (Slice 1 = acknowledge path only; the revise cascade is a later slice).
-    Recomputes the gate status and persists. A blocker can't be acknowledged
-    (§5.1) — the route rejects it."""
+    """Resolve a single gate item. Two kinds (form field `kind`): `acknowledge`
+    (default) records an athlete acknowledgment of a warning/informational item
+    (a blocker can't be acknowledged, §5.1 — rejected); `revise` (§11 [Fix this])
+    records the revise intent, marks the gate stale so the review screen
+    re-evaluates against the edited profile on return (§11.2), and redirects to
+    the Layer 1 edit surface. Recomputes status + persists."""
     db = get_db()
     uid = current_user_id()
 
@@ -1579,6 +1675,25 @@ def resolve_review_item(plan_version_id: int):
         return redirect(
             url_for('plan_create.plan_review', plan_version_id=plan_version_id)
         )
+
+    kind = (request.form.get('kind') or 'acknowledge').strip()
+    if kind == 'revise':
+        # [Fix this] (§11 revise cascade) — valid for blockers too (revise is a
+        # blocker's only resolution path). Record the revise intent, mark the gate
+        # stale so the review screen re-evaluates against the edited profile on
+        # return (§11.2), then send the athlete to the fix surface.
+        from datetime import datetime, timezone
+        target.resolution = GateResolution(
+            kind='revised', resolved_at=datetime.now(timezone.utc),
+        )
+        gate.stale = True
+        for it in gate.items:
+            it.status = resolved_status(it)
+        gate.gate_status = compute_gate_status(gate.items)
+        save_hitl_gate(db, uid, plan_version_id, gate)
+        db.commit()
+        return redirect(_revise_target_url(target.revise_target))
+
     if not target.can_acknowledge:
         # A blocker is revise-only — no acknowledge escape hatch (§5.1/§6.3).
         flash(

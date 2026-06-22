@@ -58,10 +58,15 @@
           </form>
           {% endif %}
           {% if it.revise_target %}
-          {# Slice 1 surfaces the fix target; the in-place revise cascade is a
-             later slice. The athlete edits the named profile surface, then
-             re-enters the gate. #}
-          <p class="pl-meta mono">Fix via: {{ it.revise_target }}</p>
+          {# §11 revise cascade: [Fix this] records the revise intent + marks the
+             gate stale, then sends the athlete to the Layer 1 edit surface. On
+             return the review screen re-evaluates against the edit (§11.2). #}
+          <form method="post" action="{{ resolve_url }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="item_key" value="{{ it.item_key }}">
+            <input type="hidden" name="kind" value="revise">
+            <button type="submit" class="btn btn-ghost btn-sm">Fix this</button>
+          </form>
           {% endif %}
         </div>
       </div>

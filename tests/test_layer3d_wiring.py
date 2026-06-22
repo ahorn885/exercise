@@ -135,6 +135,15 @@ def _blocker_item(item_key="b1"):
     )
 
 
+def _stale_gate_json(status="blocked", items=None):
+    """A persisted (JSON) gate with stale=True, for the §11.2 re-fire tests."""
+    tmp = _GateConn()
+    g = _gate(status, items=items if items is not None else [_blocker_item()])
+    g.stale = True
+    plan_sessions_repo.save_hitl_gate(tmp, 3, 7, g)
+    return tmp.hitl_gate_json
+
+
 def _plan_row(status="needs_review", pvid=7, uid=3):
     return {
         "id": pvid, "user_id": uid, "created_at": "ts", "created_via": "plan_create",
@@ -254,6 +263,58 @@ class TestAdvanceLoopGate:
         assert not any("generation_status = 'failed'" in c[0] for c in conn.calls)
         assert not any("DELETE FROM plan_sessions" in c[0] for c in conn.calls)
 
+    def test_needs_review_stale_triggers_regate(self, monkeypatch):
+        # §11.2 — a parked plan whose gate was marked stale (athlete hit [Fix
+        # this]) re-runs the cone in gate_only mode on the next advance, instead
+        # of the no-op short-circuit.
+        conn = _QueueConn()
+        conn.queue(row=_plan_row(status="needs_review"))      # _load_plan_version
+        conn.queue(row={"hitl_gate": _stale_gate_json()})     # load_hitl_gate (stale)
+        conn.queue(row={"id": 7})                             # advance-lock claim won
+        captured = {}
+
+        def _raise_blocked(*a, **k):
+            captured["gate_only"] = k.get("gate_only")
+            raise Layer3DGateBlocked(_gate("needs_review", items=[_blocker_item()]))
+
+        monkeypatch.setattr(plan_create, "orchestrate_plan_create", _raise_blocked)
+        monkeypatch.setattr(plan_create, "_build_layer4_cache", lambda: "CACHE")
+        out = plan_create._advance_plan_generation(conn, 3, 7)
+        assert out == {"status": "needs_review"}
+        assert captured["gate_only"] is True  # re-gate, NOT synthesis
+
+    def test_regate_parked_plan_runs_gate_only_and_parks(self, monkeypatch):
+        conn = _QueueConn()
+        conn.queue(row={"id": 7})  # advance-lock claim won
+        captured = {}
+
+        def _raise_blocked(*a, **k):
+            captured["gate_only"] = k.get("gate_only")
+            raise Layer3DGateBlocked(_gate("needs_review", items=[_blocker_item()]))
+
+        monkeypatch.setattr(plan_create, "orchestrate_plan_create", _raise_blocked)
+        monkeypatch.setattr(plan_create, "_build_layer4_cache", lambda: "CACHE")
+
+        def _persist_must_not_run(*a, **k):
+            raise AssertionError("a re-gate must never synthesize/persist sessions")
+
+        monkeypatch.setattr(plan_create, "persist_layer4_sessions", _persist_must_not_run)
+        out = plan_create._regate_parked_plan(conn, 3, 7, _plan_row("needs_review"))
+        assert out == {"status": "needs_review"}
+        assert captured["gate_only"] is True
+        assert conn.commits >= 1
+        # Never flips to 'generating'/'ready' — the row stays parked for review.
+        assert not any("generation_status = 'generating'" in c[0] for c in conn.calls)
+        assert not any("generation_status = 'ready'" in c[0] for c in conn.calls)
+
+
+def test_revise_target_endpoint_map():
+    m = plan_create._REVISE_TARGET_ENDPOINTS
+    assert m["profile.injuries"] == ("injuries.list_entries", {})
+    assert m["profile.availability"] == ("profile.edit", {"tab": "schedule"})
+    assert m["profile.disciplines"] == ("profile.edit", {"tab": "athlete"})
+    assert "profile.nutrition" in m
+
 
 # ─── Review routes ───────────────────────────────────────────────────────────
 
@@ -297,8 +358,10 @@ class TestReviewRoutes:
         body = resp.get_data(as_text=True)
         assert "First Time Competitive Goal" in body
         assert "Post Surgical Clearance" in body
-        # The blocker is revise-only — no Acknowledge control for it.
-        assert "Fix via: profile.injuries" in body
+        # §11 revise cascade: items with a revise_target render a [Fix this]
+        # revise form (POST kind=revise) — the blocker's only resolution path.
+        assert "Fix this" in body
+        assert 'name="kind" value="revise"' in body
 
     def test_review_get_ready_redirects(self, monkeypatch):
         conn = _GateConn(plan_row=_plan_row("ready"))
@@ -330,6 +393,23 @@ class TestReviewRoutes:
         # Still blocked; the blocker was not acknowledged.
         assert reloaded.gate_status == "blocked"
         assert reloaded.items[0].resolution is None
+
+    def test_revise_records_revised_marks_stale_and_redirects(self, monkeypatch):
+        # §11 [Fix this]: a revise on the blocker records a `revised` resolution,
+        # marks the gate stale (so the next /review re-evaluates), and redirects to
+        # the fix surface. Valid for a blocker (its only resolution path).
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate("blocked", items=[_blocker_item("b1")]))
+        monkeypatch.setattr(plan_create, "_revise_target_url", lambda t: "/fix?for=" + (t or ""))
+        client = self._client(monkeypatch, conn)
+        resp = client.post(
+            "/plans/v2/7/review/resolve", data={"item_key": "b1", "kind": "revise"}
+        )
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/fix?for=profile.injuries"
+        reloaded = plan_sessions_repo.load_hitl_gate(conn, 3, 7)
+        assert reloaded.stale is True
+        assert reloaded.items[0].resolution.kind == "revised"
 
     def test_generate_from_review_refused_when_not_green(self, monkeypatch):
         conn = _GateConn(plan_row=_plan_row("needs_review"))

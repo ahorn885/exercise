@@ -1683,8 +1683,17 @@ def orchestrate_plan_create(
     plan_version_id: int,
     cache: Layer4Cache,
     today: date | None = None,
+    gate_only: bool = False,
 ) -> Layer4Payload:
     """End-to-end Pattern A plan-create pipeline for `user_id`.
+
+    `gate_only=True` is the Layer 3D **re-gate** path (Layer3D_Spec §11.2): run
+    the upstream cone + re-evaluate the gate + persist it, then ALWAYS raise
+    `Layer3DGateBlocked` (even when green) so the plan re-parks at `needs_review`
+    instead of synthesizing. The athlete still clicks [Generate plan] to build
+    (§11 step 3 "on green, offer Generate" — a revise re-eval must not auto-build).
+    Used by the advance loop to refresh a parked plan's gate after the athlete
+    edits a profile surface. Never returns a `Layer4Payload` in this mode.
 
     Algorithm:
     1. Load target race event (None OK — open-ended plans are first-class;
@@ -1785,7 +1794,15 @@ def orchestrate_plan_create(
         prior_resolutions=load_prior_resolutions(db, user_id, plan_version_id),
     )
     save_hitl_gate(db, user_id, plan_version_id, gate)
-    if gate.gate_status != "green":
+    # §11.2 re-gate: in gate_only mode park even when green (the fresh gate is
+    # stale=False, so this re-evaluation also clears any prior staleness flag).
+    if gate_only or gate.gate_status != "green":
+        if gate_only:
+            print(
+                f"orchestrate_plan_create: gate_only re-gate for "
+                f"plan_version_id={plan_version_id} → {gate.gate_status} "
+                f"({len(gate.items)} item(s)); re-parking at needs_review"
+            )
         raise Layer3DGateBlocked(gate)
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
