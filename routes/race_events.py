@@ -287,6 +287,147 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
     ]
 
 
+# ─── #892 — discipline persistence across a sport/event-type change ──────────
+# The "race event type" (framework_sport) gates which disciplines the bridge
+# considers "included." Changing it used to WIPE the race's discipline picks
+# (and silently orphan per-terrain-row couplings), so the picker collapsed to
+# "Race-wide" / "not included in disciplines." These helpers keep the race's
+# own disciplines rendering, and re-map (rather than wipe) the narrowing when
+# the sport changes. Paired with the #885 structured select (which stops new
+# free-text drift) + the init_db normalize-match backfill (which heals existing
+# case/whitespace drift).
+
+
+def _race_saved_discipline_ids(race: dict | None) -> list[str]:
+    """Canonical discipline IDs a race already references.
+
+    Its `included_discipline_ids` narrowing plus any per-terrain-row
+    `discipline_id` couplings, de-duplicated with order preserved (included
+    first, then terrain couplings). Empty list for a new / None race.
+    """
+    if not race:
+        return []
+    out: list[str] = []
+    for did in (race.get('included_discipline_ids') or []):
+        if did and did not in out:
+            out.append(did)
+    for entry in (race.get('race_terrain') or []):
+        did = entry.get('discipline_id') if isinstance(entry, dict) else None
+        if did and did not in out:
+            out.append(did)
+    return out
+
+
+def _discipline_choices_for_race(db, framework_sport, race) -> list[dict]:
+    """`{id, label}` discipline choices for the race-form pickers (#892).
+
+    The `framework_sport` bridge set UNION the race's already-saved
+    disciplines. Surfacing the saved disciplines keeps the checkbox grid + the
+    per-row terrain `<select>` rendering the race's own disciplines instead of
+    collapsing to "Race-wide" when the sport is blank, doesn't resolve in the
+    bridge, or maps to a set that no longer contains a previously-saved pick.
+    Bridge order first; saved-but-unlisted IDs append in id order for stable
+    rendering. For a healthy race (every saved id is in the bridge) the union
+    equals the bridge set, so this is a no-op there.
+    """
+    choices = _disciplines_for_framework_sport(db, framework_sport or '')
+    present = {c['id'] for c in choices}
+    extras = sorted(
+        did for did in _race_saved_discipline_ids(race) if did not in present
+    )
+    choices.extend(
+        {'id': did, 'label': discipline_display_name(did)} for did in extras
+    )
+    return choices
+
+
+def _remap_discipline_filter_on_sport_change(
+    db, new_framework_sport, submitted_filter, prior_filter
+) -> tuple[list[str] | None, list[str]]:
+    """Carry the discipline narrowing across a framework_sport change instead
+    of wiping it (#892).
+
+    Canonical discipline IDs are global, so a prior pick can stay valid for the
+    new sport. Keep the subset that resolves in the new sport's bridge and drop
+    the rest. Prefer the freshly-submitted grid (the athlete may have re-picked
+    for the new sport) but fall back to the prior selection when the grid
+    round-tripped empty — e.g. the new sport didn't resolve client-side and the
+    picker collapsed — so editing the sport alone never silently clears the
+    disciplines. When the new sport doesn't resolve in the bridge at all there
+    is no set to validate against, so the selection is kept verbatim (Layer 2A
+    surfaces `no_disciplines_for_sport` for the sport itself — the
+    resolvable-sport concern #885 owns, not data loss).
+
+    Returns `(new_filter, dropped_ids)`:
+      - new_filter: the re-mapped narrowing list, or None meaning "use the new
+        sport's full bridge defaults" (empty intersection / nothing selected).
+      - dropped_ids: prior picks that did not survive, for the flash hint.
+    """
+    source = list(submitted_filter) if submitted_filter else list(prior_filter or [])
+    valid_ids = {
+        d['id'] for d in _disciplines_for_framework_sport(db, new_framework_sport or '')
+    }
+    if not valid_ids:
+        kept = source
+        dropped: list[str] = []
+    else:
+        kept = [d for d in source if d in valid_ids]
+        dropped = [d for d in (prior_filter or []) if d not in valid_ids]
+    deduped: list[str] = []
+    for d in kept:
+        if d not in deduped:
+            deduped.append(d)
+    return (deduped or None), dropped
+
+
+def _rescope_terrain_to_included(race_terrain, included_filter):
+    """Drop per-row terrain discipline couplings that fall outside the
+    effective included set (#892 / #342).
+
+    Preserves each row's `terrain_id` + `pct_of_race`; only resets
+    `discipline_id` to None (race-wide) when it isn't in `included_filter`, so
+    a sport change re-scopes an orphaned coupling instead of tripping the #342
+    mismatch block on a simple edit. A falsy `included_filter` means "use
+    bridge defaults" (no narrowing), so couplings are left untouched.
+    """
+    if not included_filter:
+        return race_terrain
+    allowed = set(included_filter)
+    return [
+        {**row, 'discipline_id': (
+            row['discipline_id'] if row.get('discipline_id') in allowed else None
+        )}
+        for row in race_terrain
+    ]
+
+
+def _framework_sport_choices(db) -> list[str]:
+    """Canonical race/event types for the structured "Race event type" select.
+
+    Issue #885 — the field was a free-text `<input>`; an athlete could save a
+    value that didn't exactly match any `layer0.sport_discipline_bridge`
+    `framework_sport`, so `_disciplines_for_framework_sport` returned [] and the
+    discipline grid (plus every per-row terrain `<select>`) collapsed to empty /
+    "Race-wide" — the data-loss bug #892. Sourcing the options from the DISTINCT
+    `framework_sport` values in the same bridge table the discipline grid reads
+    keeps the event type and its disciplines in lockstep: every selectable
+    option resolves to a non-empty discipline set by construction.
+
+    `superseded_at IS NULL` uses the current canonical mapping (runtime pinning
+    is Layer 2A's `etl_version_set` concern, same as `_disciplines_for_…`).
+    """
+    cur = db.execute(
+        """
+        SELECT DISTINCT framework_sport
+          FROM layer0.sport_discipline_bridge
+         WHERE superseded_at IS NULL
+           AND framework_sport IS NOT NULL
+         ORDER BY framework_sport
+        """
+    )
+    return [r['framework_sport'] for r in cur.fetchall() if r['framework_sport']]
+
+
 # ─── #256/#592 race-detail auto-fill (parse a race URL + terrain fallback) ───
 # Build spec: aidstation-sources/designs/Race_URL_Parser_Spec_v1.md. The two
 # JSON endpoints further down (parse_url + infer_terrain_suggestion) back the
@@ -776,7 +917,10 @@ def new_race():
     # side JS rebinds when athlete edits the framework_sport input via the
     # `/profile/race-events/disciplines/search` endpoint.
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, None)
-    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    # #892 — union the bridge set with the race's saved disciplines (none here
+    # on the new-race path, so a plain bridge set) so the picker never collapses.
+    discipline_choices = _discipline_choices_for_race(db, initial_framework_sport, None)
+    framework_sport_choices = _framework_sport_choices(db)
     # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location picker.
     # The search box + result list are rendered + driven by the inline
     # `<script nonce="..."` block in `templates/_race_locale_picker.html`
@@ -793,6 +937,7 @@ def new_race():
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=True,
@@ -826,7 +971,11 @@ def edit_race(race_event_id: int):
     }
     terrain_choices = _terrain_choices(db)
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
-    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    # #892 — union the bridge set with the race's own saved disciplines so the
+    # picker renders them even when the sport is blank / doesn't resolve in the
+    # bridge, instead of collapsing to "Race-wide."
+    discipline_choices = _discipline_choices_for_race(db, initial_framework_sport, race)
+    framework_sport_choices = _framework_sport_choices(db)
     return render_template(
         'profile/race_event_edit.html',
         race=race,
@@ -835,6 +984,7 @@ def edit_race(race_event_id: int):
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=False,
@@ -895,32 +1045,45 @@ def update_race(race_event_id: int):
     new_time_goal = _parse_str(request.form, 'time_goal')
     new_race_pack_weight_kg = _parse_pack_weight_kg(request.form)
 
-    # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear on framework_sport
-    # change. Previously-selected discipline IDs reference the old sport's
-    # bridge set and are invalid for the new sport; silently dropping them
-    # at Layer 2A would create a UI/runtime mismatch (form shows old
-    # selection; classifier ignores). Clear to None + flash a hint so the
-    # athlete knows to re-pick. Only fires when framework_sport actually
-    # changed AND there was a prior non-NULL selection (no flash on
-    # already-empty rows).
+    # #892 — re-map (don't wipe) the discipline narrowing when the race event
+    # type (framework_sport) changes. Previously this cleared
+    # `included_discipline_ids` to None, which read to the athlete as "the sport
+    # edit dropped all my disciplines" (picker collapses to "Race-wide" / "not
+    # included in disciplines"). Canonical discipline IDs are global, so most
+    # prior picks stay valid for the new sport — keep the still-valid subset and
+    # re-scope any terrain couplings the same way. Only fires when
+    # framework_sport actually changed.
     prior_framework_sport = race.get('framework_sport')
     prior_discipline_filter = race.get('included_discipline_ids')
     framework_sport_will_change = prior_framework_sport != new_framework_sport
-    if framework_sport_will_change and prior_discipline_filter:
-        new_discipline_filter = None
-        flash(
-            'Sport override changed — your discipline picks were cleared. '
-            'Re-select them for the new sport.',
-            'info',
+    if framework_sport_will_change:
+        new_discipline_filter, dropped_disciplines = (
+            _remap_discipline_filter_on_sport_change(
+                db, new_framework_sport, parsed_discipline_filter,
+                prior_discipline_filter,
+            )
         )
+        # Re-scope terrain couplings to the surviving set so a row pinned to a
+        # now-dropped discipline falls back to race-wide rather than tripping
+        # the #342 mismatch block on a simple sport edit.
+        new_race_terrain = _rescope_terrain_to_included(
+            new_race_terrain, new_discipline_filter
+        )
+        if dropped_disciplines:
+            flash(
+                'Race event type changed — disciplines that don’t apply to the '
+                'new event type were dropped (' + ', '.join(dropped_disciplines) +
+                '); your other picks were kept. Review the discipline list '
+                'below.',
+                'info',
+            )
     else:
         new_discipline_filter = parsed_discipline_filter
 
     # Issue #342 — block terrain rows scoped to a discipline that isn't in
     # the race's included disciplines. Validate against the *effective*
-    # filter (post auto-clear): when framework_sport changed and the picks
-    # were cleared to None, every bridge discipline is back in scope, so
-    # there's nothing to block.
+    # filter (post re-map): a sport change re-scopes orphaned couplings to
+    # race-wide above, so there's nothing left to block on that path.
     mismatches = _terrain_discipline_mismatches(
         new_race_terrain, new_discipline_filter
     )
@@ -1127,8 +1290,15 @@ def disciplines_search():
     db = get_db()
     # Force auth — the bridge data is non-sensitive but keeping the route
     # behind the session preserves the "authed surfaces only" invariant.
-    _ = current_user_id()
+    uid = current_user_id()
     framework_sport = (request.args.get('framework_sport') or '').strip()
+    # #885 — a blank value is the structured select's "Same as my profile
+    # sport" (inherit) option. Resolve it to the athlete's primary_sport the
+    # same way the initial server render does (`_resolve_effective_framework_
+    # sport`), so toggling the select back to inherit repopulates the grid
+    # instead of emptying it.
+    if not framework_sport:
+        framework_sport = _resolve_effective_framework_sport(db, uid, None) or ''
     choices = _disciplines_for_framework_sport(db, framework_sport)
     return jsonify({
         'framework_sport': framework_sport,

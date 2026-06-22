@@ -755,7 +755,7 @@ def schedule_save():
         # the rows that didn't make it through validation.
         return redirect(url_for('onboarding.schedule'))
 
-    flash('Schedule saved. You can edit per-day windows any time from your profile.', 'success')
+    flash('Schedule saved. You can edit per-day windows any time from Schedule in the sidebar.', 'success')
     return redirect(_POST_STEP3B_TARGET)
 
 
@@ -992,10 +992,17 @@ def target_race():
     # helpers from `routes/race_events.py`.
     from routes.race_events import (
         _resolve_effective_framework_sport,
-        _disciplines_for_framework_sport,
+        _discipline_choices_for_race,
+        _framework_sport_choices,
     )
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, target)
-    discipline_choices = _disciplines_for_framework_sport(db, initial_framework_sport)
+    # #892 — union the bridge set with the target race's own saved disciplines
+    # so the picker renders them rather than collapsing to "Race-wide" when the
+    # sport is blank / unresolved.
+    discipline_choices = _discipline_choices_for_race(
+        db, initial_framework_sport, target
+    )
+    framework_sport_choices = _framework_sport_choices(db)
 
     # D-73 Phase 5.2 walkthrough #1 (2026-05-21) — race-location picker
     # imports the Mapbox disclosure ack helpers from `routes/locales`;
@@ -1008,6 +1015,7 @@ def target_race():
         terrain_choices=terrain_choices,
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=framework_sport_choices,
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
         mapbox_acked=_disclosure_acked(db, uid),
@@ -1062,6 +1070,8 @@ def target_race_save():
         _parse_previous_attempts,
         _parse_primary_metric,
         _parse_race_url,
+        _remap_discipline_filter_on_sport_change,
+        _rescope_terrain_to_included,
         _terrain_discipline_mismatch_flash,
         _terrain_discipline_mismatches,
     )
@@ -1086,20 +1096,33 @@ def target_race_save():
         return redirect(url_for('onboarding.target_race'))
 
     target = _get_target_race_row(db, uid)
-    # D-73 Phase 5.2 Bucket E.(b)-B2 — auto-clear discipline picks when
-    # framework_sport changes (orphan cleanup; same semantic as
-    # `routes/race_events.py:update_race`). Only fires on the UPDATE branch
-    # (the new-target branch has no prior selection to invalidate).
+    # #892 — re-map (don't wipe) the discipline narrowing when the race event
+    # type (framework_sport) changes; mirrors `routes/race_events.py:update_race`.
+    # Canonical IDs are global, so prior picks usually stay valid for the new
+    # event type — keep the surviving subset and re-scope terrain couplings to
+    # match, instead of clearing to None (which collapsed the picker to
+    # "Race-wide"). Only the UPDATE branch has a prior selection to re-map.
     if target:
         prior_framework_sport = target.get('framework_sport')
         prior_discipline_filter = target.get('included_discipline_ids')
-        if prior_framework_sport != new_framework_sport and prior_discipline_filter:
-            new_discipline_filter = None
-            flash(
-                'Sport override changed — your discipline picks were cleared. '
-                'Re-select them for the new sport.',
-                'info',
+        if prior_framework_sport != new_framework_sport:
+            new_discipline_filter, dropped_disciplines = (
+                _remap_discipline_filter_on_sport_change(
+                    db, new_framework_sport, parsed_discipline_filter,
+                    prior_discipline_filter,
+                )
             )
+            new_race_terrain = _rescope_terrain_to_included(
+                new_race_terrain, new_discipline_filter
+            )
+            if dropped_disciplines:
+                flash(
+                    'Race event type changed — disciplines that don’t apply to '
+                    'the new event type were dropped (' +
+                    ', '.join(dropped_disciplines) + '); your other picks were '
+                    'kept. Review the discipline list below.',
+                    'info',
+                )
         else:
             new_discipline_filter = parsed_discipline_filter
     else:

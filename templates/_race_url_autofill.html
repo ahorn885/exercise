@@ -97,11 +97,14 @@
         fmt.value = f.race_format;
       }
 
-      // framework_sport — set then fire `input` so the discipline grid rebinds.
+      // framework_sport — now a <select> (#885). Only set it when the parsed
+      // value matches a canonical option (mirrors race_format above), then
+      // fire `change` so the discipline grid rebinds.
       var fs = $('framework_sport');
-      if (f.framework_sport && fs && !(fs.value || '').trim()) {
+      if (f.framework_sport && fs && !(fs.value || '').trim()
+          && optionExists(fs, f.framework_sport)) {
         fs.value = f.framework_sport;
-        fs.dispatchEvent(new Event('input', { bubbles: true }));
+        fs.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
 
