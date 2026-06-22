@@ -9,6 +9,14 @@
 2. **Full one-table merge** — one athlete-side gear store (kind ∈ {craft, kit}) replacing the craft CSV columns + the (today-missing) gear-ownership store + `athlete_craft_locale`. Migrate everything.
 3. **Design-first** — this doc, then build in slices.
 
+**Session-2 ratifications (2026-06-22, follow-up review) — to be folded into the body in one clean pass once §14-A + the catalog close:**
+- **"kit" → renamed "gear toggle."** *Gear toggle = gear kit = the same `layer0.sport_specific_gear_toggles` subsystem* — there is no separate "kit" concept; the merge is exactly making them one. "kit" is dropped because it already means **race mandatory-kit / pack-load** ("Mandatory-kit / pack load you'll carry"; "Kit manifest"), a *separate* axis that shares the same profile group per #894. Wherever the body below still says `kit`, read `gear_toggle`; the `gear_kind` enum is **{craft, gear_toggle}**. The user never sees either word — one "Your gear" list.
+- **§14-B / C / D / G ratified** (own/access enum; re-run 2C for the away env; drop the old craft columns on migrate; suppress the no-gear flag when a cluster gym already supplies the equipment).
+- **§14-E moot — #894 shipped** (closed completed 2026-06-22). The "gear toggles & crafts / skills / pack-load" profile group already exists; #884's unified Gear surface slots into it rather than creating it.
+- **Via ferrata folds into climbing (§10 / §14-F):** no separate via-ferrata *gear* toggle — `Climbing — roped` gear covers it (one toggle can gate both disciplines). Via ferrata as a *skill* toggle is untouched (out of scope).
+- **Live catalog reality:** exactly **one active gear toggle today** (`Climbing — roped`, `also_satisfies=['Rappelling / abseiling']`; `Bouldering` superseded). The §10 grid is net-new vocab.
+- **Still open:** §14-A (plain-language explanation supplied below in chat — awaiting pick) and the final gear-toggle catalog (clear candidates: keep climbing, add ski) + confirm the `gear_toggle` kind name.
+
 ---
 
 ## 1. The problem
