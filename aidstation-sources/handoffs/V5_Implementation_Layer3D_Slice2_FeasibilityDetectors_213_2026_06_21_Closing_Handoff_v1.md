@@ -48,8 +48,10 @@ New section `# ─── Feasibility detectors (§5.2 / §5.3) ───`, wired
 
 ## 6. Next session
 
-### 6.1 The one open decision — Layer 4 §10.2 defensive raise
-`specs/Layer4_Spec.md` §10.2 (Andy's ratified amendment) says Layer 4 "retains a defensive `Layer4ShapeInfeasibleError` raise" for the injury-pool-empty shape. The kickoff §3.4 softened this to "decide with Andy." **My recommendation: skip it / gate is the sole guard** — the orchestrator already evaluates the gate and raises `Layer3DGateBlocked` *before* Layer 4 is invoked (Slice 1 wiring), so a Layer-4-internal raise is redundant for a case the architecture already prevents; simplicity-first. **If Andy wants it (belt-and-suspenders):** it's a small, well-specified follow-up — mechanically (Rule #11):
+### 6.1 Layer 4 §10.2 defensive raise — RESOLVED (Andy 2026-06-22: skip)
+**RESOLVED (Andy 2026-06-22, AskUserQuestion): skip the raise — the 3D gate is the sole guard.** `Layer4_Spec.md` §10.2 updated to match in a follow-up commit on this branch (a fresh PR after #868 merged). Original analysis kept below for the record.
+
+`specs/Layer4_Spec.md` §10.2 (Andy's ratified amendment) said Layer 4 "retains a defensive `Layer4ShapeInfeasibleError` raise" for the injury-pool-empty shape. The kickoff §3.4 softened this to "decide with Andy." **Recommendation (now ratified): skip it / gate is the sole guard** — the orchestrator already evaluates the gate and raises `Layer3DGateBlocked` *before* Layer 4 is invoked (Slice 1 wiring), so a Layer-4-internal raise is redundant for a case the architecture already prevents; simplicity-first. **If Andy wants it (belt-and-suspenders):** it's a small, well-specified follow-up — mechanically (Rule #11):
 - `layer4/errors.py`: add `class Layer4ShapeInfeasibleError(Layer4Error)` carrying `class_: str` + `evidence: dict`.
 - At the synthesis entry (`layer4/orchestrator.orchestrate_plan_create`, right before the per-phase synthesis loop, after the cone is built): call `detect_injury_pool_empty(phase_structure, ...)`; if it returns any blocker, `raise Layer4ShapeInfeasibleError('cumulative_load_injury_infeasible', evidence=...)`; orchestrator rolls back the `plan_versions` row per D-64 §6.2.
 - Test: synthesis on an injury-pool-empty shape raises (defensive; normally unreachable behind the gate).
