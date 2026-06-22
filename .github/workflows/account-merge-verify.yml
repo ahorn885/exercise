@@ -1,0 +1,44 @@
+name: Account-merge live verify
+
+# One-tap gate for #857 / Account_Merge_Design_v1 §7. Stands up a throwaway
+# Postgres, builds the public app schema with init_db.py, then runs the
+# DESTRUCTIVE account-merge engine against two seeded accounts and asserts it
+# re-points data, resolves a singleton collision survivor-wins, and deletes the
+# duplicate. Disposable DB only — never touches prod Neon. Run from the Actions
+# tab (workflow_dispatch); a green run is the prerequisite for setting
+# ACCOUNT_MERGE_ENABLED=1 in prod.
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Merge engine vs throwaway Postgres
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mergeverify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mergeverify
+      ACCOUNT_MERGE_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Build public schema (init_db)
+        run: python init_db.py
+      - name: Run account-merge verification
+        run: python scripts/verify_account_merge.py
