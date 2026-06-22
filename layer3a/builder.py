@@ -883,6 +883,11 @@ def _build_prep_dict(
     return d
 
 
+# NOTE: editing this prompt body can shift the Layer 3D gate verdict for a plan
+# parked at the review screen. Bump `LAYER3_GATE_PROMPT_REVISION` in
+# layer4/hashing.py when you change it, so the staleness fingerprint
+# (`compute_gate_input_fingerprint`) re-fires a parked plan against the new
+# prompt — the raw-input fingerprint can't see a prompt redeploy on its own (#213).
 _SYSTEM_PROMPT = """You are evaluating an endurance athlete's current state. Your role is the
 internal coaching analyst — direct, evidence-grounded, no platitudes. You
 read the athlete's profile and recent training/recovery data, then emit a

@@ -288,7 +288,7 @@ A parked plan can go stale: while it sits at `needs_review`, a profile edit, a t
 
 **Fail-safe.** The staleness probe must never 500 the review screen: any error recomputing the fingerprint (e.g. the athlete deleted their home locale while parked) is swallowed and treated as fresh — the next `[Generate]` re-evaluates against current inputs and surfaces any such gap there. A gate with no stored `input_fingerprint` (green, or parked before this shipped) is likewise treated as fresh.
 
-*(`[Fix this]` revise links — turning each item's `revise_target` into a link to its edit surface — remain a follow-up; the staleness re-fire above ships independently.)*
+**`[Fix this]` revise links (shipped 2026-06-22).** Each item's `revise_target` renders as a link to the edit surface that owns the input: `profile.injuries` → the injuries editor (`injuries.list_entries`); `profile.disciplines` / `profile.nutrition` / `profile.availability` → the athlete profile editor (`profile.edit`, where all three are edited); 3B `h2.*` (target-race inputs) → the target race editor (`race_events.edit_race`). The map is built in `plan_create._build_revise_urls` and is **fail-safe** — a target with no edit surface (e.g. 3B `h3.plan_duration_weeks` on an open-ended plan) or one that can't be resolved (no target race, an endpoint rename) falls back to naming the target, never a 500. After the athlete edits and returns to the review screen, the §11.2 staleness re-fire re-evaluates the gate against the edit. *(Note: the earlier design draft routed the locale-scoped profile inputs to the per-locale editor; on build they were found to live on the single athlete profile page — `_build_revise_urls` is the source of truth for the mapping.)*
 
 ---
 

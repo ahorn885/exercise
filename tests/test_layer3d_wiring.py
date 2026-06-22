@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
-from flask import Flask
+from flask import Blueprint, Flask
 
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-layer3d-wiring")
 
@@ -459,6 +460,154 @@ class TestGateStaleness:
         # No acknowledgment was recorded against the stale finding.
         reloaded = plan_sessions_repo.load_hitl_gate(conn, 3, 7)
         assert reloaded.items[0].resolution is None
+
+
+# ─── [Fix this] revise links (#213) ──────────────────────────────────────────
+
+
+def _revise_item(item_key, revise_target, *, severity="warning", source="2A"):
+    """A gate item carrying an arbitrary `revise_target`, for the link mapping."""
+    return GateItem(
+        item_key=item_key,
+        source=source,
+        source_item_id=item_key,
+        severity=severity,
+        title=item_key,
+        message="msg",
+        resolution_options=[],
+        revise_target=revise_target,
+        can_acknowledge=severity != "blocker",
+        evidence={},
+    )
+
+
+def _revise_surfaces_app():
+    """A bare app that registers the real revise-target endpoint NAMES (with
+    throwaway view funcs) so `url_for` in `_build_revise_urls` resolves them
+    without importing the heavy `routes.injuries`/`profile`/`race_events`
+    modules."""
+    app = Flask(__name__)
+    specs = [
+        ("injuries", "/injuries", "list_entries", lambda: ""),
+        ("profile", "/profile/", "edit", lambda: ""),
+        (
+            "race_events",
+            "/profile/race-events/<int:race_event_id>/edit",
+            "edit_race",
+            lambda race_event_id: "",
+        ),
+    ]
+    for name, rule, endpoint, view in specs:
+        sub = Blueprint(name, __name__)
+        sub.add_url_rule(rule, endpoint, view)
+        app.register_blueprint(sub)
+    return app
+
+
+class TestReviseUrls:
+    """`_build_revise_urls` maps each item's `revise_target` to its edit surface
+    (the [Fix this] links), and degrades to "no link" — never an error — when a
+    surface can't be resolved."""
+
+    def _items(self):
+        return [
+            _blocker_item("b1"),                            # profile.injuries
+            _revise_item("d1", "profile.disciplines"),
+            _revise_item("n1", "profile.nutrition"),
+            _revise_item("a1", "profile.availability"),
+            _warning_item("h1"),                            # h2.goal_outcome
+            _revise_item("p1", "h3.plan_duration_weeks"),   # no edit surface
+        ]
+
+    def test_maps_every_known_target(self, monkeypatch):
+        monkeypatch.setattr(
+            plan_create,
+            "load_target_race_event_payload",
+            lambda db, uid: SimpleNamespace(race_event_id=42),
+        )
+        gate = _gate(items=self._items())
+        with _revise_surfaces_app().test_request_context():
+            urls = plan_create._build_revise_urls(object(), 3, gate)
+        assert urls["profile.injuries"] == "/injuries"
+        # disciplines / nutrition / availability all edit on the profile page.
+        assert urls["profile.disciplines"] == "/profile/"
+        assert urls["profile.nutrition"] == "/profile/"
+        assert urls["profile.availability"] == "/profile/"
+        assert urls["h2.goal_outcome"] == "/profile/race-events/42/edit"
+        # 3B h3.* (open-ended plan duration) has no athlete edit surface → no link.
+        assert "h3.plan_duration_weeks" not in urls
+
+    def test_no_target_race_drops_only_h2_links(self, monkeypatch):
+        monkeypatch.setattr(
+            plan_create, "load_target_race_event_payload", lambda db, uid: None
+        )
+        gate = _gate(items=self._items())
+        with _revise_surfaces_app().test_request_context():
+            urls = plan_create._build_revise_urls(object(), 3, gate)
+        assert "h2.goal_outcome" not in urls
+        # The race-independent surfaces still resolve.
+        assert urls["profile.injuries"] == "/injuries"
+        assert urls["profile.disciplines"] == "/profile/"
+
+    def test_unregistered_surfaces_yield_empty_map(self, monkeypatch):
+        # No revise endpoints registered → BuildError on every url_for → empty
+        # map, never a 500.
+        monkeypatch.setattr(
+            plan_create,
+            "load_target_race_event_payload",
+            lambda db, uid: SimpleNamespace(race_event_id=42),
+        )
+        gate = _gate(items=self._items())
+        with Flask(__name__).test_request_context():
+            urls = plan_create._build_revise_urls(object(), 3, gate)
+        assert urls == {}
+
+    def test_race_lookup_error_is_swallowed(self, monkeypatch):
+        # A DB error resolving the target race must not bubble out of the review
+        # render — the h2.* link just drops, everything else still resolves.
+        def _boom(db, uid):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(plan_create, "load_target_race_event_payload", _boom)
+        gate = _gate(items=self._items())
+        with _revise_surfaces_app().test_request_context():
+            urls = plan_create._build_revise_urls(object(), 3, gate)
+        assert "h2.goal_outcome" not in urls
+        assert urls["profile.injuries"] == "/injuries"
+        assert urls["profile.disciplines"] == "/profile/"
+
+    def test_no_targets_returns_empty(self):
+        gate = _gate(items=[])
+        with _revise_surfaces_app().test_request_context():
+            assert plan_create._build_revise_urls(object(), 3, gate) == {}
+
+
+class TestReviseLinkRender:
+    """The review screen renders a real [Fix this] link for a mapped target."""
+
+    def _app(self):
+        app = _review_app()
+        for name, rule, endpoint, view in [
+            ("injuries", "/injuries", "list_entries", lambda: ""),
+        ]:
+            sub = Blueprint(name, __name__)
+            sub.add_url_rule(rule, endpoint, view)
+            app.register_blueprint(sub)
+        return app
+
+    def test_blocker_renders_fix_this_link(self, monkeypatch):
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        # A single blocker → profile.injuries (needs no locale/race lookup).
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate("blocked", items=[_blocker_item()]))
+        monkeypatch.setattr(plan_create, "get_db", lambda: conn)
+        monkeypatch.setattr(plan_create, "current_user_id", lambda: 3)
+        resp = self._app().test_client().get("/plans/v2/7/review")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert 'href="/injuries"' in body
+        assert "Fix this" in body
+        # The plain-text stub is gone once the target resolves to a link.
+        assert "Fix via: profile.injuries" not in body
 
 
 # ─── One-in-flight enforcement ───────────────────────────────────────────────
