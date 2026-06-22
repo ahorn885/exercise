@@ -22,16 +22,21 @@ class _Cur:
 
 class _FakeUserDB:
     """Stand-in for the users queries change_email issues."""
-    def __init__(self, current_email=None, taken=False):
+    def __init__(self, current_email=None, taken=False,
+                 display_name='Andy', username='andy'):
         self.current_email = current_email
+        self.display_name = display_name
+        self.username = username
         self.taken = taken
         self.updates = []     # (email, uid) from the UPDATE
         self.committed = 0
 
     def execute(self, sql, params=()):
         s = ' '.join(sql.split())
-        if s.startswith('SELECT email FROM users WHERE id'):
-            return _Cur([{'email': self.current_email}])
+        if s.startswith('SELECT email, display_name, username FROM users WHERE id'):
+            return _Cur([{'email': self.current_email,
+                          'display_name': self.display_name,
+                          'username': self.username}])
         if s.startswith('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?) AND id <> ?'):
             return _Cur([{'x': 1}] if self.taken else [])
         if s.startswith('UPDATE users SET email=?, email_verified=FALSE'):

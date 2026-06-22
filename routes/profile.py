@@ -25,8 +25,10 @@ from database import get_db
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
     current_user_id, _hash_password, _check_password, _password_strength_errors,
-    generate_api_token, send_verification_email,
+    generate_api_token, send_verification_email, send_password_changed_email,
 )
+from email_helper import send_email
+from email_templates import render_email, account_security_url, format_timestamp
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
     DOUBLES_FEASIBLE_CHOICES, TWO_A_DAY_CHOICES,
@@ -1277,8 +1279,32 @@ def change_password():
         (_hash_password(new), uid)
     )
     db.commit()
+    # Security receipt. Best-effort — the change is committed; a notification
+    # fault must never surface as an error on a successful password change.
+    try:
+        send_password_changed_email(
+            user_row['email'], user_row['display_name'] or user_row['username'])
+    except Exception as exc:  # noqa: BLE001 — receipt must not break the change
+        print(f'[email] password-changed receipt failed (change): {exc}')
     flash('Password changed.', 'success')
     return redirect(url_for('profile.account_settings'))
+
+
+def _send_email_changed_email(to_old_address: str, display_name: str,
+                              old_email: str, new_email: str | None) -> None:
+    """Anti-takeover security receipt sent to the PREVIOUS address when the
+    account email is changed or cleared, so the original owner always gets the
+    last word. Best-effort; the caller swallows faults."""
+    subject = 'AIDSTATION — your email address was changed'
+    html, text = render_email(
+        'email-changed',
+        display_name=display_name or 'there',
+        old_email=old_email,
+        new_email=new_email or '(removed)',
+        timestamp=format_timestamp(),
+        security_url=account_security_url(),
+    )
+    send_email(to_old_address, subject, text, html)
 
 
 @bp.route('/email', methods=['POST'])
@@ -1291,8 +1317,11 @@ def change_email():
     db = get_db()
     uid = current_user_id()
     new_email = (request.form.get('email') or '').strip() or None
-    current = db.execute('SELECT email FROM users WHERE id=?', (uid,)).fetchone()
+    current = db.execute(
+        'SELECT email, display_name, username FROM users WHERE id=?', (uid,)
+    ).fetchone()
     current_email = current['email'] if current else None
+    current_name = (current['display_name'] or current['username']) if current else ''
 
     if (new_email or '').lower() == (current_email or '').lower():
         flash('That\'s already your email.', 'info')
@@ -1324,6 +1353,14 @@ def change_email():
         flash(f'Email updated to {new_email}. Check your inbox to confirm it.', 'success')
     else:
         flash('Email removed.', 'info')
+    # Notify the PREVIOUS address (anti-takeover) whenever there was one to warn.
+    # Best-effort — a receipt fault must never fail the (committed) change.
+    if current_email:
+        try:
+            _send_email_changed_email(current_email, current_name,
+                                      current_email, new_email)
+        except Exception as exc:  # noqa: BLE001 — receipt must not break change
+            print(f'[email] email-changed receipt failed: {exc}')
     return redirect(url_for('profile.account_settings'))
 
 

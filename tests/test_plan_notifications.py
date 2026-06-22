@@ -90,7 +90,8 @@ def test_build_ready_email_has_subject_link_and_greeting():
         "https://app/plans/v2/7", None,
     )
     assert "is ready" in subject and "Pocket Gopher" in subject
-    assert "Hi Andy," in text and "Hi Andy," in html
+    assert "Andy" in text and "Andy" in html          # personalized greeting
+    assert "Pocket Gopher" in html                     # plan name in the body
     assert "https://app/plans/v2/7" in text
     assert 'href="https://app/plans/v2/7"' in html
     assert "View your plan" in html
@@ -107,13 +108,16 @@ def test_build_failed_email_includes_error_and_retry():
     assert "Try again" in html
 
 
-def test_build_email_omits_button_without_url():
+def test_build_email_falls_back_to_base_url_without_plan_url(monkeypatch):
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.aidstation.pro")
     subject, text, html = pn.build_notification_email(
         "ready", "Training plan", "", None, None,
     )
-    assert "Hi," in text  # empty display name → bare greeting
-    assert "href=" not in html  # no CTA button when no URL
-    assert "http" not in text
+    # The shared shell always renders a CTA; with no plan URL the button targets
+    # the app origin so it still goes somewhere sensible.
+    assert "View your plan" in html
+    assert 'href="https://app.aidstation.pro"' in html
+    assert "https://app.aidstation.pro" in text
 
 
 # ─── notify_plan_terminal (orchestration + best-effort posture) ──────────────
