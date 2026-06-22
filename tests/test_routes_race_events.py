@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from routes.race_events import (
+    _discipline_choices_for_race,
     _disciplines_for_framework_sport,
     _extract_mapbox_locale_from_form,
     _parse_discipline_id_filter,
@@ -30,6 +31,9 @@ from routes.race_events import (
     _parse_previous_attempts,
     _parse_race_terrain,
     _parse_race_url,
+    _race_saved_discipline_ids,
+    _remap_discipline_filter_on_sport_change,
+    _rescope_terrain_to_included,
     _resolve_effective_framework_sport,
     _run_mapbox_search,
     _terrain_discipline_mismatch_flash,
@@ -565,6 +569,183 @@ class TestDisciplinesForFrameworkSport:
         assert _disciplines_for_framework_sport(conn, None) == []
 
 
+# ─── #892 discipline persistence across a sport change ──────────────────────
+
+
+class TestRaceSavedDisciplineIds:
+    """The race's own disciplines = its included filter + terrain couplings."""
+
+    def test_none_race_is_empty(self):
+        assert _race_saved_discipline_ids(None) == []
+        assert _race_saved_discipline_ids({}) == []
+
+    def test_unions_included_and_terrain_couplings_dedup_order(self):
+        race = {
+            'included_discipline_ids': ['D-001', 'D-010'],
+            'race_terrain': [
+                {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-010'},
+                {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-008'},
+                {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': None},
+            ],
+        }
+        # included first (in order), then new terrain couplings; D-010 dedup'd,
+        # race-wide (None) coupling skipped.
+        assert _race_saved_discipline_ids(race) == ['D-001', 'D-010', 'D-008']
+
+    def test_tolerates_missing_keys_and_nonlist(self):
+        assert _race_saved_discipline_ids(
+            {'included_discipline_ids': None, 'race_terrain': None}
+        ) == []
+        # A terrain entry that isn't a dict is ignored rather than raising.
+        assert _race_saved_discipline_ids(
+            {'race_terrain': ['junk', {'discipline_id': 'D-001'}]}
+        ) == ['D-001']
+
+
+class TestDisciplineChoicesForRace:
+    """#892 — picker choices = bridge set UNION the race's saved disciplines."""
+
+    def test_healthy_race_is_bridge_only(self):
+        # Every saved id is in the bridge → union == bridge (no extras).
+        conn = _FakeConn(rows=[
+            {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
+            {'discipline_id': 'D-010', 'discipline_name': 'Whitewater paddle'},
+        ])
+        race = {'included_discipline_ids': ['D-001'], 'race_terrain': []}
+        out = _discipline_choices_for_race(conn, 'Adventure Racing', race)
+        assert [c['id'] for c in out] == ['D-001', 'D-010']
+
+    def test_saved_id_outside_bridge_is_appended(self):
+        # The sport's bridge no longer contains D-099 (a prior pick) — it must
+        # still render so the picker doesn't collapse to "Race-wide."
+        conn = _FakeConn(rows=[
+            {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
+        ])
+        race = {
+            'included_discipline_ids': ['D-099'],
+            'race_terrain': [
+                {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-050'},
+            ],
+        }
+        out = _discipline_choices_for_race(conn, 'Trail Running', race)
+        ids = [c['id'] for c in out]
+        # Bridge first, then saved-but-unlisted ids in sorted order.
+        assert ids == ['D-001', 'D-050', 'D-099']
+
+    def test_unresolved_sport_still_renders_saved(self):
+        # Sport doesn't resolve in the bridge (empty rows) but the race has
+        # saved disciplines — render those instead of an empty picker.
+        conn = _FakeConn(rows=[])
+        race = {'included_discipline_ids': ['D-001'], 'race_terrain': []}
+        out = _discipline_choices_for_race(conn, 'Something Custom', race)
+        assert [c['id'] for c in out] == ['D-001']
+
+    def test_new_race_none_is_bridge_only(self):
+        conn = _FakeConn(rows=[
+            {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
+        ])
+        out = _discipline_choices_for_race(conn, 'Trail Running', None)
+        assert [c['id'] for c in out] == ['D-001']
+
+
+class TestRemapDisciplineFilterOnSportChange:
+    """#892 — sport change re-maps the narrowing instead of wiping it."""
+
+    def _bridge(self, *ids):
+        return _FakeConn(rows=[
+            {'discipline_id': i, 'discipline_name': i} for i in ids
+        ])
+
+    def test_keeps_valid_drops_invalid(self):
+        # New sport's bridge has D-001 + D-002; prior picks D-001 + D-099.
+        conn = self._bridge('D-001', 'D-002')
+        new_filter, dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Trail Running', ['D-001', 'D-099'], ['D-001', 'D-099']
+        )
+        assert new_filter == ['D-001']
+        assert dropped == ['D-099']
+
+    def test_falls_back_to_prior_when_submission_empty(self):
+        # Grid collapsed client-side → no checkboxes submitted; the prior
+        # selection is re-mapped rather than wiped.
+        conn = self._bridge('D-001', 'D-002')
+        new_filter, dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Trail Running', None, ['D-001', 'D-099']
+        )
+        assert new_filter == ['D-001']
+        assert dropped == ['D-099']
+
+    def test_prefers_fresh_submission_over_prior(self):
+        # Athlete actively re-picked D-002 for the new sport; honor it. D-001
+        # is still valid but unchecked → not reported as "dropped."
+        conn = self._bridge('D-001', 'D-002')
+        new_filter, dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Trail Running', ['D-002'], ['D-001']
+        )
+        assert new_filter == ['D-002']
+        assert dropped == []
+
+    def test_empty_intersection_falls_back_to_defaults(self):
+        # No prior pick survives the new sport → None ("use bridge defaults"),
+        # never an empty list (which would zero out Layer 2A).
+        conn = self._bridge('D-005')
+        new_filter, dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Triathlon', None, ['D-001']
+        )
+        assert new_filter is None
+        assert dropped == ['D-001']
+
+    def test_unresolved_sport_keeps_selection_verbatim(self):
+        # New sport doesn't resolve in the bridge at all — there's nothing to
+        # validate against, so keep the selection rather than wiping it.
+        conn = _FakeConn(rows=[])
+        new_filter, dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Custom Sport', ['D-001', 'D-099'], ['D-001']
+        )
+        assert new_filter == ['D-001', 'D-099']
+        assert dropped == []
+
+    def test_dedupes_kept(self):
+        conn = self._bridge('D-001')
+        new_filter, _dropped = _remap_discipline_filter_on_sport_change(
+            conn, 'Trail Running', ['D-001', 'D-001'], None
+        )
+        assert new_filter == ['D-001']
+
+
+class TestRescopeTerrainToIncluded:
+    """#892 — terrain couplings outside the included set fall back to race-wide
+    (preserving terrain_id + pct) rather than tripping the #342 block."""
+
+    def test_none_filter_leaves_terrain_untouched(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
+        ]
+        assert _rescope_terrain_to_included(terrain, None) == terrain
+
+    def test_resets_coupling_outside_included_set(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': None},
+        ]
+        out = _rescope_terrain_to_included(terrain, ['D-001'])
+        assert out == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
+            # D-099 not in the included set → reset to race-wide, pct preserved.
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': None},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': None},
+        ]
+
+    def test_does_not_mutate_input_rows(self):
+        terrain = [
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
+        ]
+        _rescope_terrain_to_included(terrain, ['D-001'])
+        # Original row object is left intact (new dicts are returned).
+        assert terrain[0]['discipline_id'] == 'D-099'
+
+
 # ─── _resolve_effective_framework_sport ─────────────────────────────────────
 
 
@@ -833,6 +1014,78 @@ class TestUpdateRaceMapboxRequired:
 
         assert response.status_code == 302
         # Update flow proceeds past the gate (no flash 'pick a race location').
+
+
+class TestUpdateRaceRemapsDisciplinesOnSportChange:
+    """#892 — changing the sport override must re-map (not wipe) the race's
+    disciplines. Reproduces the Pocket Gopher report end-to-end through the
+    `update_race` POST handler.
+    """
+
+    def test_sport_change_keeps_valid_picks_and_rescopes_terrain(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        # The only live DB call on this path is the bridge SELECT inside the
+        # re-map helper; the new sport ("Trail Running") maps to D-001 + D-002.
+        conn.queue_response(rows=[
+            {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
+            {'discipline_id': 'D-002', 'discipline_name': 'Road run'},
+        ])
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(
+            re_mod, 'get_race_event',
+            lambda db, uid, race_event_id: {
+                'id': 10,
+                'name': 'Pocket Gopher',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+                'event_locale_id': None,
+                'event_locale_name': None,
+                'event_locale_mapbox_id': 'poi.anchor',
+                'event_locale_place_name': None,
+                'event_locale_lat': None,
+                'event_locale_lng': None,
+                'framework_sport': 'Adventure Racing',
+                'included_discipline_ids': ['D-001', 'D-099'],
+                'is_target_event': False,
+            },
+        )
+        captured = {}
+        monkeypatch.setattr(
+            re_mod, 'update_race_event',
+            lambda db, uid, rid, **kw: captured.update(kw),
+        )
+
+        with app.test_request_context(
+            '/profile/race-events/10/update',
+            method='POST',
+            data={
+                'name': 'Pocket Gopher',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+                # The athlete changed the sport override...
+                'framework_sport': 'Trail Running',
+                # ...and the picker round-tripped empty (collapsed client-side),
+                # so no discipline checkboxes are submitted.
+                # A terrain row still pinned to the now-invalid D-099:
+                'race_terrain[0][terrain_id]': 'TRN-002',
+                'race_terrain[0][pct_of_race]': '50',
+                'race_terrain[0][discipline_id]': 'D-099',
+            },
+        ):
+            response = re_mod.update_race(10)
+
+        assert response.status_code == 302
+        # D-001 survives the new sport's bridge; D-099 is dropped — but the
+        # filter is NOT wiped to None (the old data-loss bug).
+        assert captured['included_discipline_ids'] == ['D-001']
+        # The terrain row is preserved (terrain_id + pct) with its orphaned
+        # D-099 coupling re-scoped to race-wide rather than blocking the save.
+        assert captured['race_terrain'] == [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 50.0, 'discipline_id': None},
+        ]
 
 
 class TestSetLocaleMapboxRequired:
