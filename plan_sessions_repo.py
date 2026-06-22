@@ -555,6 +555,44 @@ def load_active_plan_version_id(db: Any, user_id: int) -> int | None:
     return int(row["id"]) if row else None
 
 
+def load_active_plan_version_for_date(
+    db: Any, user_id: int, on_date: date
+) -> dict[str, Any] | None:
+    """Return the active plan version whose scope *covers* `on_date` (its `id`
+    plus scope dates), or None.
+
+    "Active" mirrors `load_scheduled_sessions_for_window` /
+    `load_active_plan_version_id`: `generation_status = 'ready'`, not archived,
+    not completed. The added scope-cover predicate (`scope_start_date <=
+    on_date <= scope_end_date`) lets the caller distinguish "this date sits
+    inside an active plan" from "no plan at all". The most-recently-created
+    qualifying version wins on overlap (a T1/T2/T3 refresh and its parent are
+    both `ready`), matching the per-day pointer's `plan_version_id DESC`.
+
+    The dashboard uses this to render a scheduled REST day on the Today /
+    Tomorrow cards: the v2 generator encodes ordinary rest days as the ABSENCE
+    of a session (per_phase `=== Schedule ===` — "Disabled days are rest
+    days"), so a date that carries no session but still falls inside an active
+    plan's scope is a rest day, not the "no plan" empty state (#888). Returns
+    None when no active plan covers the date (the genuine no-session case).
+    """
+    row = db.execute(
+        "SELECT id, scope_start_date, scope_end_date FROM plan_versions "
+        "WHERE user_id = ? AND generation_status = 'ready' "
+        "AND archived_at IS NULL AND completed_at IS NULL "
+        "AND scope_start_date <= ? AND scope_end_date >= ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (user_id, on_date, on_date),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "scope_start_date": row["scope_start_date"],
+        "scope_end_date": row["scope_end_date"],
+    }
+
+
 def _decode_json(raw: Any) -> Any:
     """Type-agnostic JSONB normalizer (dict, list, or JSON string). Unlike
     `_decode_payload`, tolerates a JSON *array* column (e.g. the

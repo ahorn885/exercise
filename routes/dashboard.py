@@ -6,7 +6,10 @@ from flask import Blueprint, render_template
 from database import get_db
 from datetime import date, timedelta
 from routes.auth import current_user_id
-from plan_sessions_repo import load_scheduled_sessions_for_window
+from plan_sessions_repo import (
+    load_active_plan_version_for_date,
+    load_scheduled_sessions_for_window,
+)
 from plan_naming import target_race_name, generated_plan_name
 from athlete_event_windows_repo import resolve_weather_city
 
@@ -50,7 +53,13 @@ def _v2_session_card(session, plan_name=None) -> dict:
     """
     kind = session.kind
     if kind == 'rest':
+        # Mirror the daily view's "Rest — <reason>" (plan_create/view.html) so
+        # an explicit rest session surfaces its reason on the home card too,
+        # not just a bare "Rest" (#888).
         name = 'Rest'
+        reason = getattr(session, 'rest_reason', None)
+        if reason:
+            name += f" — {reason.replace('_', ' ').capitalize()}"
     elif kind == 'strength':
         name = 'Strength'
         if session.discipline_name:
@@ -72,6 +81,71 @@ def _v2_session_card(session, plan_name=None) -> dict:
         'item_date': item_date.isoformat() if hasattr(item_date, 'isoformat')
         else item_date,
     }
+
+
+def _rest_day_card(plan_version_id: int, plan_name: str | None, d: date) -> dict:
+    """Synthesize the Today/Tomorrow card for a scheduled REST day — a date that
+    sits inside an active plan's scope but carries no session row.
+
+    The v2 generator encodes ordinary rest days as the ABSENCE of a session
+    (per_phase `=== Schedule ===` — "Disabled days are rest days"), so without
+    this the home card falls through to the "No session scheduled" empty state
+    on a rest day even though the plan's daily view renders that same day as an
+    explicit rest day (#888). Same card shape as `_v2_session_card` (rest branch)
+    so both flow through one template; `sport_type == 'rest'` lets the template
+    render it as a recovery day rather than a sport line.
+    """
+    return {
+        'is_v2': True,
+        'plan_version_id': plan_version_id,
+        'workout_name': 'Rest',
+        'sport_type': 'rest',
+        'target_duration_min': None,
+        'intensity': None,
+        'locale_name': None,
+        'plan_name': plan_name or 'Training plan',
+        'item_date': d.isoformat(),
+    }
+
+
+def _fill_rest_days(
+    db, user_id: int, *, today_d, tomorrow_d, today_workouts, tomorrow_workouts
+):
+    """Fill an empty Today/Tomorrow with an explicit REST card when the date
+    still falls inside an active plan's scope (#888).
+
+    The v2 generator encodes ordinary rest days as the ABSENCE of a session, so
+    an otherwise-empty day that an active plan still covers is a rest day — the
+    plan's daily view already renders it as one (gap-fill in
+    `plan_create._plan_days_with_rest_gaps`); this brings the home card in line
+    rather than leaving it on the "No session scheduled / no plan" empty state.
+
+    Only fires per day when that day has NO legacy or v2 session, and only
+    against an active plan covering the date, so a genuine no-plan day still
+    reads as "no session". Returns the (today, tomorrow) lists, filled in place.
+    """
+    if today_workouts and tomorrow_workouts:
+        return today_workouts, tomorrow_workouts
+    race_name = target_race_name(db, user_id)
+    if not today_workouts:
+        pv = load_active_plan_version_for_date(db, user_id, today_d)
+        if pv is not None:
+            today_workouts = [_rest_day_card(
+                pv['id'],
+                generated_plan_name(
+                    race_name, pv['scope_start_date'], pv['scope_end_date']),
+                today_d,
+            )]
+    if not tomorrow_workouts:
+        pv = load_active_plan_version_for_date(db, user_id, tomorrow_d)
+        if pv is not None:
+            tomorrow_workouts = [_rest_day_card(
+                pv['id'],
+                generated_plan_name(
+                    race_name, pv['scope_start_date'], pv['scope_end_date']),
+                tomorrow_d,
+            )]
+    return today_workouts, tomorrow_workouts
 
 
 def _supplement_summary(db, user_id: int, today_sessions, today_d) -> dict | None:
@@ -228,6 +302,11 @@ def index():
     tomorrow_workouts = list(tomorrow_workouts) + [
         _v2_session_card(s, v2_names.get(s.plan_version_id)) for s in tomorrow_v2
     ]
+    today_workouts, tomorrow_workouts = _fill_rest_days(
+        db, uid,
+        today_d=today_d, tomorrow_d=tomorrow_d,
+        today_workouts=today_workouts, tomorrow_workouts=tomorrow_workouts,
+    )
 
     missed_workouts = db.execute(
         "SELECT pi.*, tp.name as plan_name FROM plan_items pi "

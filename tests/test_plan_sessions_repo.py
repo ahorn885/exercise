@@ -35,6 +35,7 @@ from layer4.payload import (
 from plan_sessions_repo import (
     _PRIOR_WINDOW_DAYS_BY_TIER,
     allocate_plan_version_row,
+    load_active_plan_version_for_date,
     load_active_plan_version_id,
     load_plan_sessions_by_version,
     load_prior_plan_session_window,
@@ -628,6 +629,62 @@ class TestLoadActivePlanVersionId:
         assert "archived_at IS NULL" in sql
         assert "completed_at IS NULL" in sql
         assert "ORDER BY created_at DESC" in sql
+
+
+# ─── load_active_plan_version_for_date ──────────────────────────────────────
+
+
+class TestLoadActivePlanVersionForDate:
+    def test_returns_id_and_scope_when_active_version_covers_date(self):
+        conn = _FakeConn()
+        conn.queue(row={
+            "id": 314,
+            "scope_start_date": date(2026, 6, 1),
+            "scope_end_date": date(2026, 8, 31),
+        })
+
+        result = load_active_plan_version_for_date(
+            conn, _USER_ID, date(2026, 6, 22))
+
+        assert result == {
+            "id": 314,
+            "scope_start_date": date(2026, 6, 1),
+            "scope_end_date": date(2026, 8, 31),
+        }
+        assert isinstance(result["id"], int)
+
+    def test_returns_none_when_no_active_version_covers_date(self):
+        """No active plan covers the date (no plan, or the date is outside
+        every active plan's scope) — the caller treats this as the genuine
+        'no session / no plan' case, NOT a rest day (#888)."""
+        conn = _FakeConn()
+        conn.queue(row=None)
+
+        assert load_active_plan_version_for_date(
+            conn, _USER_ID, date(2026, 6, 22)) is None
+
+    def test_sql_filters_active_scope_cover_and_orders_latest_first(self):
+        conn = _FakeConn()
+        conn.queue(row={
+            "id": 1,
+            "scope_start_date": date(2026, 6, 1),
+            "scope_end_date": date(2026, 6, 30),
+        })
+
+        load_active_plan_version_for_date(conn, _USER_ID, date(2026, 6, 22))
+
+        sql, params = conn.calls[0]
+        # Active-only restriction (mirrors load_scheduled_sessions_for_window).
+        assert "generation_status = 'ready'" in sql
+        assert "archived_at IS NULL" in sql
+        assert "completed_at IS NULL" in sql
+        # Scope-cover predicate: scope_start <= date <= scope_end.
+        assert "scope_start_date <= ?" in sql
+        assert "scope_end_date >= ?" in sql
+        # Latest-created qualifying version wins on overlap.
+        assert "ORDER BY created_at DESC" in sql
+        # User + the date bound to both scope comparisons.
+        assert params == (_USER_ID, date(2026, 6, 22), date(2026, 6, 22))
 
 
 class TestTierDefaultMapping:
