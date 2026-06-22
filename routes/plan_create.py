@@ -63,6 +63,7 @@ from layer4 import (
     Layer4Cache,
     OrchestrationError,
     PostgresCacheBackend,
+    compute_gate_input_fingerprint,
     orchestrate_plan_create,
 )
 from layer4.plan_create import _SEAM_CACHE_PHASE_IDX_BASE
@@ -1505,6 +1506,59 @@ def _grouped_gate_items(gate) -> dict:
     return buckets
 
 
+def _gate_inputs_changed(db, uid: int, plan_version: dict, gate) -> bool:
+    """True when the athlete's gate-relevant inputs changed since the parked gate
+    was evaluated (Reading-B staleness check, #213). Recomputes the
+    `input_fingerprint` from current inputs (cheap — no LLM) and compares it to
+    the one stamped at park time.
+
+    A gate with no stored fingerprint (a green gate, or one parked before this
+    shipped) can't be checked → treated as fresh. Fail-safe: any error recomputing
+    the fingerprint (e.g. the athlete deleted their home locale while parked) is
+    swallowed and treated as fresh, so the staleness probe can never 500 the
+    review screen — the next [Generate] re-evaluates against current inputs and
+    surfaces any such gap there."""
+    if gate is None or getattr(gate, "input_fingerprint", None) is None:
+        return False
+    try:
+        current = compute_gate_input_fingerprint(
+            db,
+            uid,
+            target_race_event=load_target_race_event_payload(db, uid),
+            plan_start_date=plan_version["scope_start_date"],
+            today=date.today(),
+        )
+    except Exception as exc:  # noqa: BLE001 — staleness probe must not break review
+        print(
+            f"plan_review: gate staleness probe failed for "
+            f"plan_version_id={plan_version.get('id')} (treating as fresh): {exc}"
+        )
+        return False
+    return current != gate.input_fingerprint
+
+
+def _rekick_stale_gate(db, uid: int, plan_version_id: int):
+    """Flip a parked plan back to `generating` so the resumable poller re-runs the
+    pipeline and re-evaluates the Layer 3D gate against current inputs — re-parking
+    with fresh findings, or proceeding if the athlete's edit cleared the gate. The
+    UPDATE is guarded on `needs_review` so concurrent re-kicks are idempotent.
+    Returns a redirect to the progress screen."""
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'generating', "
+        "generation_error = NULL WHERE id = ? AND user_id = ? "
+        "AND generation_status = 'needs_review'",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    flash(
+        "Your details changed since this review — refreshing your plan against "
+        "the latest.", 'secondary',
+    )
+    return redirect(
+        url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
+    )
+
+
 @bp.route('/<int:plan_version_id>/review', methods=['GET'])
 def plan_review(plan_version_id: int):
     """The HITL review screen for a plan parked at `needs_review`. Lists the
@@ -1535,6 +1589,12 @@ def plan_review(plan_version_id: int):
         # blank screen.
         flash("No review items found for this plan.", 'secondary')
         return redirect(url_for('plans.list_plans'))
+
+    if _gate_inputs_changed(db, uid, plan_version, gate):
+        # The athlete edited something (or new training data synced) since this
+        # gate was evaluated — the items below are stale. Re-run the pipeline so
+        # the review reflects current reality (#213 Reading-B staleness).
+        return _rekick_stale_gate(db, uid, plan_version_id)
 
     return render_template(
         'plan_create/review.html',
@@ -1570,6 +1630,15 @@ def resolve_review_item(plan_version_id: int):
     gate = load_hitl_gate(db, uid, plan_version_id)
     if gate is None:
         abort(404)
+
+    if _gate_inputs_changed(db, uid, plan_version, gate):
+        # Inputs changed under the athlete — the item they're acknowledging may no
+        # longer exist (or now reads differently). Don't record a resolution
+        # against a stale finding; bounce to the review screen, which re-kicks a
+        # fresh gate evaluation (#213 Reading-B staleness).
+        return redirect(
+            url_for('plan_create.plan_review', plan_version_id=plan_version_id)
+        )
 
     item_key = (request.form.get('item_key') or '').strip()
     reasoning = (request.form.get('reasoning') or '').strip() or None
@@ -1624,7 +1693,16 @@ def generate_from_review(plan_version_id: int):
         for it in gate.items:
             it.status = resolved_status(it)
         gate.gate_status = compute_gate_status(gate.items)
-    if gate is None or gate.gate_status != 'green':
+    # When the athlete's inputs changed since parking, the stored verdict is stale
+    # — don't trust its green/non-green. Flip to generating regardless and let the
+    # resumed orchestrator re-evaluate against current reality: it re-parks if a
+    # new blocker appeared, or proceeds if the edit cleared the gate. Only when the
+    # inputs are unchanged do we hold the "every item resolved" guard, which closes
+    # the bug where a stale stored-non-green blocked an athlete who'd already fixed
+    # the issue (#213 Reading-B staleness).
+    if not _gate_inputs_changed(db, uid, plan_version, gate) and (
+        gate is None or gate.gate_status != 'green'
+    ):
         flash(
             "Resolve every item before generating the plan.", 'warning',
         )

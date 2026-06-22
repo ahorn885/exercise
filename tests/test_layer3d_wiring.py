@@ -88,13 +88,14 @@ class _GateConn:
         self.rollbacks += 1
 
 
-def _gate(status="needs_review", items=None):
+def _gate(status="needs_review", items=None, input_fingerprint=None):
     return Layer3DGate(
         user_id=3,
         plan_version_id=7,
         gate_status=status,
         items=items if items is not None else [],
         evaluated_against={"0A": "v7"},
+        input_fingerprint=input_fingerprint,
     )
 
 
@@ -350,6 +351,114 @@ class TestReviewRoutes:
         assert resp.status_code == 302
         assert "/progress" in resp.headers["Location"]
         assert any("generation_status = 'generating'" in c[0] for c in conn.calls)
+
+
+# ─── Reading-B staleness re-check (#213) ─────────────────────────────────────
+
+
+class TestGateStaleness:
+    """A parked gate carries an `input_fingerprint`; the review routes recompute
+    it on re-entry / [Generate] and re-evaluate against current reality when the
+    athlete's inputs changed. `compute_gate_input_fingerprint` +
+    `load_target_race_event_payload` are stubbed so no DB / LLM runs — the digest
+    value alone drives the stale/fresh decision."""
+
+    def _client(self, monkeypatch, conn, *, current_fingerprint):
+        monkeypatch.setattr(plan_create, "get_db", lambda: conn)
+        monkeypatch.setattr(plan_create, "current_user_id", lambda: 3)
+        monkeypatch.setattr(
+            plan_create, "load_target_race_event_payload", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            plan_create,
+            "compute_gate_input_fingerprint",
+            lambda *a, **k: current_fingerprint,
+        )
+        return _review_app().test_client()
+
+    def test_review_rekicks_when_inputs_changed(self, monkeypatch):
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(
+            conn, 3, 7, _gate(items=[_warning_item()], input_fingerprint="OLD")
+        )
+        client = self._client(monkeypatch, conn, current_fingerprint="NEW")
+        resp = client.get("/plans/v2/7/review")
+        # Stale → flip to generating + redirect to the progress poller (which
+        # re-runs the pipeline + re-evaluates the gate against current inputs).
+        assert resp.status_code == 302
+        assert "/progress" in resp.headers["Location"]
+        assert any("generation_status = 'generating'" in c[0] for c in conn.calls)
+
+    def test_review_renders_when_inputs_unchanged(self, monkeypatch):
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(
+            conn, 3, 7, _gate(items=[_warning_item()], input_fingerprint="SAME")
+        )
+        client = self._client(monkeypatch, conn, current_fingerprint="SAME")
+        resp = client.get("/plans/v2/7/review")
+        assert resp.status_code == 200
+        assert not any(
+            "generation_status = 'generating'" in c[0] for c in conn.calls
+        )
+
+    def test_review_renders_when_no_baseline_fingerprint(self, monkeypatch):
+        # A gate parked before this shipped (no input_fingerprint) is treated as
+        # fresh — the staleness probe is never even invoked.
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate(items=[_warning_item()]))
+
+        def _must_not_probe(*a, **k):
+            raise AssertionError("staleness probe ran without a baseline fingerprint")
+
+        monkeypatch.setattr(plan_create, "compute_gate_input_fingerprint", _must_not_probe)
+        monkeypatch.setattr(plan_create, "get_db", lambda: conn)
+        monkeypatch.setattr(plan_create, "current_user_id", lambda: 3)
+        resp = _review_app().test_client().get("/plans/v2/7/review")
+        assert resp.status_code == 200
+
+    def test_generate_rekicks_when_inputs_changed_even_if_not_green(self, monkeypatch):
+        # Stale + stored verdict still 'blocked' (e.g. the athlete's edit cleared
+        # the blocker) → don't trust the stale verdict; flip to generating and let
+        # the resumed orchestrator re-gate against current reality.
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(
+            conn, 3, 7, _gate("blocked", items=[_blocker_item()], input_fingerprint="OLD")
+        )
+        client = self._client(monkeypatch, conn, current_fingerprint="NEW")
+        resp = client.post("/plans/v2/7/review/generate")
+        assert resp.status_code == 302
+        assert "/progress" in resp.headers["Location"]
+        assert any("generation_status = 'generating'" in c[0] for c in conn.calls)
+
+    def test_generate_still_guards_when_inputs_unchanged(self, monkeypatch):
+        # Fresh + stored verdict 'blocked' → hold the "resolve every item" guard.
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(
+            conn, 3, 7, _gate("blocked", items=[_blocker_item()], input_fingerprint="SAME")
+        )
+        client = self._client(monkeypatch, conn, current_fingerprint="SAME")
+        resp = client.post("/plans/v2/7/review/generate")
+        assert resp.status_code == 302
+        assert "/review" in resp.headers["Location"]
+        assert not any(
+            "generation_status = 'generating'" in c[0] for c in conn.calls
+        )
+
+    def test_resolve_bounces_to_review_when_inputs_changed(self, monkeypatch):
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(
+            conn, 3, 7, _gate(items=[_warning_item("k1")], input_fingerprint="OLD")
+        )
+        client = self._client(monkeypatch, conn, current_fingerprint="NEW")
+        resp = client.post(
+            "/plans/v2/7/review/resolve",
+            data={"item_key": "k1", "reasoning": "stale ack"},
+        )
+        assert resp.status_code == 302
+        assert "/review" in resp.headers["Location"]
+        # No acknowledgment was recorded against the stale finding.
+        reloaded = plan_sessions_repo.load_hitl_gate(conn, 3, 7)
+        assert reloaded.items[0].resolution is None
 
 
 # ─── One-in-flight enforcement ───────────────────────────────────────────────

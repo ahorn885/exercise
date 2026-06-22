@@ -120,6 +120,19 @@ class Layer3DGate(_Base):
     gate_status: GateStatus
     items: list[GateItem] = Field(default_factory=list)
     evaluated_against: dict[str, str] = Field(default_factory=dict)
+    # Reading-B staleness fingerprint (#213): a SHA-256 over the deterministic
+    # LEAF inputs that decide the gate — athlete profile, target race,
+    # equipment/terrain, the incoming training-data bundle, the platform-data
+    # version, and the 3A/3B prompt revision (see
+    # `layer4.orchestrator.compute_gate_input_fingerprint`). The orchestrator
+    # stamps it when it parks a non-green gate; the review routes recompute it
+    # cheaply (no LLM) on re-entry / [Generate] to detect an athlete edit (or new
+    # training data) since parking and re-evaluate the verdict against current
+    # reality. None on a green gate or a gate parked before this shipped (then the
+    # routes treat the verdict as fresh). `evaluated_against` (the ETL-version
+    # stamp) stays for provenance — it does NOT move on athlete edits, which is
+    # exactly why it can't carry the staleness signal on its own.
+    input_fingerprint: str | None = None
     # Stamped by the caller on persist (§6.1), not inside the pure function.
     evaluated_at: datetime | None = None
 
