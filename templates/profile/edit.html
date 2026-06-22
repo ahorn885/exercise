@@ -2,17 +2,17 @@
    profile.edit reskinned onto the new shell. The 7-tab legacy monolith is
    decomposed: Race events → §10, Connections → §17, Account → §19
    (profile.account_settings), Coach memory → §20 (profile.coach_memory).
-   #894 IA reorg groups the athlete proper into server-rendered sub-tabs
+   #894 IA reorg groups the athlete proper into three server-rendered sub-tabs
    (?tab=, CSP-clean): Athlete (baselines + notes + discipline weighting),
    Fuel & health (nutrition/fueling + supplements + conditions + meds), and
-   Gear & skills (owned crafts + race-day skills + pack-load experience), plus
-   Locations. Schedule moved out of the profile onto "Train" in the sidebar
-   (profile.schedule). Every field name + POST action is preserved; the Gear /
-   Fuel / Schedule surfaces reuse the shared onboarding partials so those flows
-   stay in lockstep. #}
+   Gear & skills (owned crafts + race-day skills + pack-load experience).
+   Schedule moved out onto "Train" in the sidebar (profile.schedule); Locations
+   moved under "Log" (#887 — a ?tab=locations hit redirects to locales). Every
+   field name + POST action is preserved; the Gear / Fuel / Schedule surfaces
+   reuse the shared onboarding partials so those flows stay in lockstep. #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
-{% set sub = active_tab if active_tab in ['athlete', 'health', 'gear', 'locations'] else 'athlete' %}
+{% set sub = active_tab if active_tab in ['athlete', 'health', 'gear'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
    or profile.weekly_hours_target or profile.body_weight_kg or profile.coach_notes) %}
 {% set unit_pref = profile.unit_preference or 'imperial' %}
@@ -44,8 +44,7 @@
   {% for key, label, hint in [
        ('athlete', 'Athlete', 'baselines + notes'),
        ('health', 'Fuel & health', 'nutrition · supps · meds'),
-       ('gear', 'Gear & skills', 'gear · skills · loads'),
-       ('locations', 'Locations', 'where you train')] %}
+       ('gear', 'Gear & skills', 'gear · skills · loads')] %}
   <a class="conn-tab{{ ' is-on' if sub == key else '' }}" role="tab"
      aria-selected="{{ 'true' if sub == key else 'false' }}"
      href="{{ url_for('profile.edit', tab=key) }}">
@@ -397,8 +396,5 @@
   </form>
 </div>
 
-{# ════════════════════ LOCATIONS ════════════════════ #}
-{% elif sub == 'locations' %}
-{% include 'locales/_list_body.html' %}
 {% endif %}
 {% endblock %}
