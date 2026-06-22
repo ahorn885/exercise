@@ -8,9 +8,11 @@ and all-or-nothing abort on a non-unique error.
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
+from flask import Flask
 
 
 class _Cur:
@@ -142,3 +144,118 @@ class TestMerge:
         assert db.committed == 0          # nothing committed
         assert db.rolledback == 1         # whole transaction rolled back
         assert 2 in db.users              # drop user NOT deleted
+
+
+# ── Entry-point: staging helpers + confirm/execute routes (design §6) ─────────
+
+class TestStaging:
+    def test_stage_get_clear(self):
+        from routes import account_merge as am
+        sess = {}
+        am.stage_merge(sess, 7)
+        assert am.staged_drop_id(sess) == 7
+        am.clear_staged_merge(sess)
+        assert am.staged_drop_id(sess) is None
+
+
+def _profile_app():
+    import routes.profile as profile
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    app = Flask(__name__, template_folder=os.path.join(root, 'templates'))
+    app.config['SECRET_KEY'] = 'test'
+    app.config['TESTING'] = True
+    app.register_blueprint(profile.bp)
+    return app, profile
+
+
+class TestMergeExecuteRoute:
+    def _setup(self, monkeypatch, profile, *, has_password=False):
+        monkeypatch.setenv('ACCOUNT_MERGE_ENABLED', '1')
+        monkeypatch.setattr(profile, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(profile, 'get_db', lambda: object())
+        monkeypatch.setattr(profile.account_merge, 'account_label',
+                            lambda db, uid: {'username': f'u{uid}', 'email': None,
+                                             'has_password': has_password})
+
+    def test_execute_runs_merge_when_confirmed(self, monkeypatch):
+        app, profile = _profile_app()
+        self._setup(monkeypatch, profile)
+        calls = {}
+        monkeypatch.setattr(profile.account_merge, 'merge_accounts',
+                            lambda db, keep, drop: calls.update(keep=keep, drop=drop)
+                            or {'repointed': {'cardio_log.user_id': 3}})
+        c = app.test_client()
+        with c.session_transaction() as s:
+            s['pending_merge_drop_id'] = 2
+        resp = c.post('/profile/merge/execute', data={'confirm': 'MERGE'})
+        assert resp.status_code == 302
+        assert calls == {'keep': 1, 'drop': 2}
+        with c.session_transaction() as s:
+            assert 'pending_merge_drop_id' not in s   # cleared after merge
+
+    def test_execute_blocks_without_typed_confirm(self, monkeypatch):
+        app, profile = _profile_app()
+        self._setup(monkeypatch, profile)
+        monkeypatch.setattr(profile.account_merge, 'merge_accounts',
+                            lambda *a, **k: pytest.fail('must not merge without confirm'))
+        c = app.test_client()
+        with c.session_transaction() as s:
+            s['pending_merge_drop_id'] = 2
+        resp = c.post('/profile/merge/execute', data={'confirm': 'nope'})
+        assert resp.status_code == 302
+        with c.session_transaction() as s:
+            assert s['pending_merge_drop_id'] == 2     # still staged, not run
+
+    def test_execute_404_when_flag_off(self, monkeypatch):
+        app, profile = _profile_app()
+        monkeypatch.delenv('ACCOUNT_MERGE_ENABLED', raising=False)
+        monkeypatch.setattr(profile, 'current_user_id', lambda: 1)
+        resp = app.test_client().post('/profile/merge/execute', data={'confirm': 'MERGE'})
+        assert resp.status_code == 404
+
+    def test_confirm_redirects_when_nothing_staged(self, monkeypatch):
+        app, profile = _profile_app()
+        monkeypatch.setenv('ACCOUNT_MERGE_ENABLED', '1')
+        monkeypatch.setattr(profile, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(profile, 'get_db', lambda: object())
+        resp = app.test_client().get('/profile/merge/confirm')
+        assert resp.status_code == 302                 # nothing staged → back to settings
+
+
+class TestStravaMergeCallback:
+    """The merge entry: logged-in + intent=merge + the Strava identity belongs to
+    a DIFFERENT account → stage it and bounce to the confirm screen."""
+    def test_merge_intent_stages_other_account(self, monkeypatch):
+        import routes.strava as strava
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        app = Flask(__name__, template_folder=os.path.join(root, 'templates'))
+        app.config['SECRET_KEY'] = 'test'
+        app.register_blueprint(strava.bp)
+        app.add_url_rule('/login', endpoint='auth.login', view_func=lambda: '')
+        app.add_url_rule('/mc', endpoint='profile.merge_confirm', view_func=lambda: '')
+
+        staged = {}
+        monkeypatch.setattr(strava, 'current_user_id', lambda: 1)   # logged in as keep
+        monkeypatch.setattr(strava, 'get_db', lambda: object())
+        monkeypatch.setenv('STRAVA_CLIENT_ID', 'cid')
+        monkeypatch.setenv('STRAVA_CLIENT_SECRET', 'secret')
+
+        class _R:
+            def raise_for_status(self): pass
+            def json(self): return {'access_token': 'AT', 'refresh_token': 'RT',
+                                    'expires_at': 1_900_000_000, 'athlete': {'id': 42}}
+        monkeypatch.setattr(strava.requests, 'post', lambda *a, **k: _R())
+        monkeypatch.setattr(strava.pi, 'get_identity',
+                            lambda db, prov, puid: {'id': 9, 'user_id': 2})  # drop = acct 2
+        monkeypatch.setattr(strava.account_merge, 'stage_merge',
+                            lambda sess, drop: staged.update(drop=drop))
+        monkeypatch.setattr(strava, '_persist_strava_auth',
+                            lambda *a, **k: pytest.fail('merge must not persist/link'))
+        c = app.test_client()
+        start = c.get('/strava/oauth/start?intent=merge&return_to=/profile/account')
+        from urllib.parse import urlparse, parse_qs
+        state = parse_qs(urlparse(start.headers['Location']).query)['state'][0]
+        resp = c.get(f'/strava/oauth/callback?code=C&state={state}')
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/mc'        # bounced to confirm
+        assert staged == {'drop': 2}

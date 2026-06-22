@@ -1,0 +1,49 @@
+{# Account-merge confirmation (design §6). Reached only after a provider OAuth
+   proved control of the "drop" account, which the route staged in session.
+   DESTRUCTIVE + irreversible — the form requires a typed MERGE and (when the
+   survivor has a password) re-auth. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Merge accounts — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.account_settings') }}">Account</a> · <b>Merge</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Account · merge</p>
+    <h1 class="page-title">Confirm merge.</h1>
+    <p class="page-sub">You proved control of the account below. Merging moves all of its training
+      data into the account you're signed into now, then permanently deletes it.</p>
+  </div>
+</div>
+
+<div class="stack acct-wrap">
+  <div class="card card-pad stack">
+    <dl class="acct-id">
+      <dt>Keep (this account)</dt><dd>{{ keep.username }}{% if keep.email %} · {{ keep.email }}{% endif %}</dd>
+      <dt>Merge in &amp; delete</dt><dd>{{ drop.username }}{% if drop.email %} · {{ drop.email }}{% endif %}</dd>
+    </dl>
+    <div class="alert alert-danger" role="alert">
+      <strong>This can't be undone.</strong> <b>{{ drop.username }}</b>'s activities, plans, and
+      history move into <b>{{ keep.username }}</b>, and <b>{{ drop.username }}</b> is deleted. Where
+      both accounts hold the same per-account setting, this account's value is kept.
+    </div>
+
+    <form method="post" action="{{ url_for('profile.merge_execute') }}" class="acct-pw">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if keep.has_password %}
+      <label class="field"><span class="lbl">Your current password</span>
+        <input type="password" name="current_password" autocomplete="current-password"
+               class="form-control form-control-sm" required></label>
+      {% endif %}
+      <label class="field"><span class="lbl">Type <code>MERGE</code> to confirm</span>
+        <input type="text" name="confirm" autocomplete="off" pattern="MERGE"
+               class="form-control form-control-sm" required></label>
+      <div class="pf-save">
+        <a class="btn btn-ghost" href="{{ url_for('profile.account_settings') }}">Cancel</a>
+        <button type="submit" class="btn btn-primary">Merge and delete duplicate</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
