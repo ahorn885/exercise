@@ -18,7 +18,9 @@ blocker) and `detect_schedule_volume_under_target` (§5.3 — available hours be
 the phase band → warning). Layer 4 keeps a defensive
 `Layer4ShapeInfeasibleError` raise (`layer4.per_phase.assert_strength_pool_feasible`)
 for the same injury condition. The §5.2 "only cardio modality banned" sub-case
-and the 3C source remain deferred (no contract change when they land — §13).
+needs no 3D detector — 2D's `no_substitute_for_high_risk` block HITL already
+surfaces it as a blocker via `map_2d_items`. Only the 3C source remains deferred
+(no contract change when it lands — §13).
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -300,11 +302,14 @@ def detect_injury_pool_empty(
     sub-floor pre-injury is a sport/equipment limit (the synthesizer reverts to a
     free-string schema), not an injury — out of #214 scope.
 
-    The §5.2 "only cardio modality banned" sub-case is NOT implemented: the 2D
-    payload carries no per-discipline modality-ban signal (`DisciplineRisk` has a
-    risk *grade* + suggested substitutes, never an "untrainable" verdict), so
-    detecting it would need a new 2D field — tracked as a follow-up, not invented
-    from a fragile heuristic here.
+    The §5.2 "only cardio modality banned" sub-case needs no 3D detector: it is
+    already surfaced upstream by 2D. `layer2d.builder` Rule 4 emits a
+    `no_substitute_for_high_risk` HITL item (severity `block`) when a discipline is
+    risk-elevated to HIGH with no substitute disciplines available — i.e. its sole
+    modality is effectively banned with no fallback — and `map_2d_items` turns that
+    `block` item into a blocker GateItem during normal aggregation. So §5.2's two
+    bullets land via two paths: strength-pool emptying here, cardio-modality ban via
+    the 2D injury-risk profile. No new 2D field is required.
 
     `compute_feasible_pool_ids` is imported lazily so this pure query node doesn't
     pull the synthesis package at import time (mirrors the orchestrator's lazy

@@ -111,7 +111,7 @@ evaluate_layer3d_gate(...):
 After applying 2D exclusions to each phase's exercise pool (the 2C `effective_pool` minus 2D `excluded_exercises`):
 
 - **Strength pool empty.** If a phase needs strength sessions (2A includes a strength-weighted discipline with a non-zero phase band) and the post-exclusion strength pool has `< 3` distinct usable exercises, raise a blocker item for that phase. (A workable strength session needs ≥3 distinct exercises; a pool below that can't fill a single session. v1 floor — Andy 2026-06-21.)
-- **Cardio modality banned.** If 2D excludes the only available cardio modality for an included discipline (e.g. an all-running-banned wrist-fall injury removes the discipline's sole modality), raise a blocker item for that discipline.
+- **Cardio modality banned.** If 2D excludes the only available cardio modality for an included discipline (e.g. an all-running-banned wrist-fall injury removes the discipline's sole modality), raise a blocker item for that discipline. *(Satisfied upstream, no dedicated 3D detector: 2D emits this as a `no_substitute_for_high_risk` block HITL — discipline risk-elevated to HIGH with no substitute — which the gate aggregates into a blocker via `map_2d_items`. See the §13 build note.)*
 
 `evidence` carries the phase/discipline, the count of usable exercises after exclusion, and the 2D exclusion ids that emptied the pool. Resolution = **revise** (`revise_target` points at the Layer 1 §B injury record, or the 2A discipline-inclusion toggle, so the athlete can relax the injury input or drop the discipline). This is the one #214 detector that survives as a hard stop.
 
@@ -279,11 +279,14 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 > gate's verdict matches what synthesis can build; it fires plan-globally (the
 > pool isn't phase-scoped and Layer 4 prescribes strength every phase) when
 > injuries drop a viable pool (≥3) below the floor. (2) The §5.2 **"only cardio
-> modality banned"** sub-case is **deferred** — the 2D payload has no
-> per-discipline modality-ban signal (`DisciplineRisk` is a risk grade + suggested
-> substitutes, never an "untrainable" verdict), so it needs a 2D schema field
-> rather than a heuristic; tracked as a follow-up. The Layer 4 defensive raise
-> (`per_phase.assert_strength_pool_feasible` → `Layer4ShapeInfeasibleError`) is built.
+> modality banned"** sub-case needs **no 3D detector** — it is already surfaced
+> upstream by 2D: `layer2d.builder` Rule 4 emits a `no_substitute_for_high_risk`
+> HITL item (severity `block`) when a discipline is risk-elevated to HIGH with no
+> substitute disciplines (its sole modality effectively banned, no fallback), and
+> `map_2d_items` turns that `block` item into a blocker GateItem during normal
+> aggregation. No new 2D field is required (Andy confirmed 2026-06-22). The Layer 4
+> defensive raise (`per_phase.assert_strength_pool_feasible` →
+> `Layer4ShapeInfeasibleError`) is built.
 
 - **3C cross-node conflict detection (next slice).** The query/rules node that compares the five 2A–2E payloads against each other (e.g. discipline included in 2A × no equipment in 2C × no injury in 2D → "included without supporting equipment"). Not built. When it lands it becomes one more `map_3c_items()` source feeding §5 step 3 — no aggregator contract change. Tracked as its own issue under epic #211.
 - **Normalized `plan_hitl_items` table** — v2, if per-item querying/analytics is needed. v1 uses the JSONB column (§10).
@@ -304,7 +307,7 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 | TS-3D-3 | 2D `post_surgical_clearance` (severity `block`) | 1 blocker; `blocked`; `revise_target` → §B injury record |
 | TS-3D-4 | 2E supplement×cardiac contraindication | 1 blocker; `blocked` |
 | TS-3D-5 | Injury empties a phase's strength pool (the #214 survivor) | 1 `3D_feasibility` blocker; `evidence` carries phase + post-exclusion count + 2D ids |
-| TS-3D-6 | All-running-banned removes a discipline's only cardio modality | 1 `3D_feasibility` blocker for that discipline |
+| TS-3D-6 | All-running-banned removes a discipline's only cardio modality (2D emits `no_substitute_for_high_risk`) | 1 blocker for that discipline, source `2D` via `map_2d_items` (no `3D_feasibility` detector) |
 | TS-3D-7 | Available 4 h/wk, Build targets 10–12 h | 1 `schedule_volume_under_target` **warning**; `needs_review`; acknowledge → `green`; plan still generates (clamped) |
 | TS-3D-8 | 3B `first_time_competitive_goal` (warning) acknowledged with reasoning | item `acknowledged`; reasoning stored; `green` |
 | TS-3D-9 | Blocker present + warning present | `blocked`; warning acknowledgeable but gate stays blocked until blocker revised |

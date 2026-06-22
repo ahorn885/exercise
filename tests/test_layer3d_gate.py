@@ -319,6 +319,39 @@ def test_2d_block_is_blocker_pointing_at_injuries():
     assert item.resolution_options == ["Confirm clearance with your surgeon"]
 
 
+# ─── TS-3D-6: §5.2 cardio-modality ban surfaces via 2D no_substitute_for_high_risk ─
+
+
+def test_cardio_modality_ban_surfaces_as_blocker_via_2d():
+    """§5.2's 'only cardio modality banned' bullet needs no dedicated 3D detector:
+    2D's Rule-4 `no_substitute_for_high_risk` block HITL (a discipline risk-elevated
+    to HIGH with no substitute discipline → its sole modality is effectively banned
+    with no fallback) is aggregated into a blocker by `map_2d_items`. This asserts
+    the path end-to-end through the gate (the case the spec calls TS-3D-6)."""
+    cardio_ban = Layer2DHitlItem(
+        hitl_type="no_substitute_for_high_risk",  # type: ignore[arg-type]
+        discipline_id="trail_running",
+        severity="block",
+        message=(
+            "Trail running risk-elevated to HIGH given current injuries but no "
+            "substitute disciplines are available."
+        ),
+        suggested_resolutions=[
+            "Drop trail running from the training set",
+            "Accept the elevated risk and proceed",
+        ],
+    )
+    gate = _evaluate(layer2d_payload=_layer2d(hitl_items=[cardio_ban]))
+    assert gate.gate_status == "blocked"
+    twod = [i for i in gate.items if i.source == "2D"]
+    assert len(twod) == 1
+    blocker = twod[0]
+    assert blocker.severity == "blocker"
+    assert blocker.can_acknowledge is False  # revise-only, per §5.2
+    assert blocker.revise_target == "profile.injuries"
+    assert blocker.resolution_options == cardio_ban.suggested_resolutions
+
+
 # ─── TS-3D-4: 2E supplement×cardiac contraindication ─────────────────────────
 
 
