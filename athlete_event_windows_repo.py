@@ -35,8 +35,16 @@ from datetime import date
 from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
 
 # Override types. Kept here (not a DB CHECK) so the capture form + this repo are
-# the single closed set the validator asserts. Slice 2 adds 'away'.
-OVERRIDE_TYPES: tuple[str, ...] = ("indoor_only", "locale_unavailable", "away")
+# the single closed set the validator asserts. Slice 2 adds 'away'; Slice 6
+# (#593) adds the two VOLUME types — 'reduced_volume' (the day carries a reduced
+# share of capacity, the athlete-set `volume_pct`) and 'no_training' (the day is
+# zeroed + dropped from the placement pool). Unlike the first three (feasibility
+# overrides — they change WHAT is trainable), the volume types change HOW MUCH;
+# they carry no locale and compose by union with a feasibility override on the
+# same dates.
+OVERRIDE_TYPES: tuple[str, ...] = (
+    "indoor_only", "locale_unavailable", "away", "reduced_volume", "no_training",
+)
 
 # Slice 4 (#581 WS-H) — the closed craft enum brought-craft is validated against
 # (the same set athlete_crafts_repo offers). Emitted in this order for a stable
@@ -64,6 +72,10 @@ class EventWindow:
     # empty tuple on non-away windows / when nothing is brought. Fed (unioned with
     # the standing craft<->locale set) as the away cluster's owned_crafts.
     brought_craft: tuple[str, ...] = ()
+    # Slice 6 (#593) — the retained capacity fraction for a 'reduced_volume'
+    # window (0 < pct < 1), athlete-set per window. None on every other type
+    # ('no_training' is the discrete 0% type, not pct=0).
+    volume_pct: float | None = None
 
 
 def load_event_windows(db, user_id: int) -> list[EventWindow]:
@@ -71,7 +83,7 @@ def load_event_windows(db, user_id: int) -> list[EventWindow]:
     deterministic plan-span hash + render order."""
     rows = db.execute(
         "SELECT id, user_id, start_date, end_date, override_type, "
-        "unavailable_locale, away_locale, brought_craft, notes "
+        "unavailable_locale, away_locale, brought_craft, volume_pct, notes "
         "FROM athlete_event_windows "
         "WHERE user_id = ? ORDER BY start_date, id",
         (user_id,),
@@ -87,6 +99,9 @@ def load_event_windows(db, user_id: int) -> list[EventWindow]:
             away_locale=row["away_locale"] or None,
             notes=row["notes"] or "",
             brought_craft=tuple(_split_craft(row["brought_craft"])),
+            volume_pct=(
+                float(row["volume_pct"]) if row["volume_pct"] is not None else None
+            ),
         )
         for row in rows
     ]
@@ -143,6 +158,7 @@ def add_event_window(
     unavailable_locale: str | None = None,
     away_locale: str | None = None,
     brought_craft: list[str] | None = None,
+    volume_pct: float | None = None,
     notes: str = "",
 ) -> None:
     """Validate + insert one event window. Raises `EventWindowError` (writing
@@ -160,6 +176,9 @@ def add_event_window(
     unavail = (unavailable_locale or "").strip() or None
     away = (away_locale or "").strip() or None
     crafts: list[str] = []
+    # Slice 6 (#593) — volume_pct is meaningful only on reduced_volume (required,
+    # strictly between 0 and 1); cleared on every other type.
+    vol_pct: float | None = None
     if override_type == "locale_unavailable":
         if unavail is None:
             raise EventWindowError(
@@ -182,19 +201,33 @@ def add_event_window(
         # env replaces home); validate against the closed enum, emit in enum
         # order for a stable stored CSV.
         crafts = _validate_crafts(brought_craft or [])
+    elif override_type == "reduced_volume":
+        # Volume window — carries no locale; requires a retained fraction in (0,1).
+        unavail = None
+        away = None
+        if volume_pct is None:
+            raise EventWindowError("reduced_volume requires a volume_pct in (0, 1)")
+        try:
+            vol_pct = float(volume_pct)
+        except (TypeError, ValueError):
+            raise EventWindowError(f"volume_pct {volume_pct!r} is not a number")
+        if not 0.0 < vol_pct < 1.0:
+            raise EventWindowError(
+                f"volume_pct must be strictly between 0 and 1 (got {vol_pct})"
+            )
     else:
-        # indoor_only carries no locale — clear any stray value so the stored row
-        # can't imply a subtraction it doesn't make.
+        # indoor_only / no_training carry no locale and no volume_pct — clear any
+        # stray value so the stored row can't imply something it doesn't mean.
         unavail = None
         away = None
     db.execute(
         "INSERT INTO athlete_event_windows "
         "  (user_id, start_date, end_date, override_type, unavailable_locale, "
-        "   away_locale, brought_craft, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "   away_locale, brought_craft, volume_pct, notes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, start_date, end_date, override_type, unavail, away,
-            (",".join(crafts) or None), notes,
+            (",".join(crafts) or None), vol_pct, notes,
         ),
     )
 

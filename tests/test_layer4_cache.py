@@ -1081,6 +1081,71 @@ class TestPerPhaseHelpers:
             prev_accepted_output_hash="bbb", **kw
         )
 
+    def test_seam_iter2_key_distinct_from_iter1(self):
+        """#209: the iter-2 (re-synthesis-driven) seam review must key distinctly
+        from the iter-1 review of the SAME seam + sessions — else the iter-2
+        lookup would false-HIT the iter-1 verdict (or vice-versa)."""
+        from layer4.hashing import (
+            compute_seam_review_cache_key,
+            compute_seam_review_iter2_cache_key,
+        )
+
+        prior = [_minimal_session(session_id="P-1")]
+        nxt = [_minimal_session(session_id="N-1")]
+        common = dict(
+            call_cache_key="c", seam_index=0,
+            prior_phase_sessions=prior, next_phase_sessions=nxt,
+            model="claude-sonnet-4-6", max_tokens=4000,
+            extended_thinking_budget=2000,
+        )
+        iter1 = compute_seam_review_cache_key(**common)
+        iter2 = compute_seam_review_iter2_cache_key(
+            prior_seam_issues=["Peak entry too aggressive"],
+            seam_direction="re_prompt_next", **common,
+        )
+        assert iter1 != iter2
+
+    def test_seam_iter2_key_differs_by_issues_and_direction(self):
+        """The iter-1 issues threaded into the prompt + the re-prompt direction
+        that drove the re-synthesis are prompt inputs, so a change in either must
+        invalidate the cached iter-2 verdict."""
+        from layer4.hashing import compute_seam_review_iter2_cache_key
+
+        base = dict(
+            call_cache_key="c", seam_index=0,
+            prior_phase_sessions=[_minimal_session(session_id="P-1")],
+            next_phase_sessions=[_minimal_session(session_id="N-1")],
+            seam_direction="re_prompt_next",
+            model="claude-sonnet-4-6", max_tokens=4000,
+            extended_thinking_budget=2000,
+        )
+        k_a = compute_seam_review_iter2_cache_key(prior_seam_issues=["a"], **base)
+        k_b = compute_seam_review_iter2_cache_key(prior_seam_issues=["b"], **base)
+        assert k_a != k_b
+
+        k_dir = compute_seam_review_iter2_cache_key(
+            prior_seam_issues=["a"],
+            **{**base, "seam_direction": "re_prompt_prior"},
+        )
+        assert k_a != k_dir
+
+    def test_seam_iter2_key_deterministic(self):
+        from layer4.hashing import compute_seam_review_iter2_cache_key
+
+        kw = dict(
+            call_cache_key="c", seam_index=1,
+            prior_phase_sessions=[_minimal_session(session_id="P-1")],
+            next_phase_sessions=[_minimal_session(session_id="N-1")],
+            prior_seam_issues=["tighten the taper"],
+            seam_direction="re_prompt_prior",
+            model="claude-sonnet-4-6", max_tokens=4000,
+            extended_thinking_budget=2000,
+        )
+        assert (
+            compute_seam_review_iter2_cache_key(**kw)
+            == compute_seam_review_iter2_cache_key(**kw)
+        )
+
     def test_compute_accepted_output_hash_deterministic(self):
         session = _minimal_session()
         from layer4 import SynthesisMetadata

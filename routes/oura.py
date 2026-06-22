@@ -44,7 +44,8 @@ from flask import (
 
 from database import get_db
 from routes import provider_auth as pa
-from routes.auth import current_user_id
+from routes import provider_identity as pi
+from routes.auth import current_user_id, send_verification_email
 
 bp = Blueprint('oura', __name__, url_prefix='/oura')
 
@@ -59,13 +60,17 @@ _OURA_SCOPE_VERSION = '2026-06-20'
 
 _OAUTH_STATE = 'oura_oauth_state'
 _OAUTH_RETURN_TO = 'oura_oauth_return_to'
+_OAUTH_INTENT = 'oura_oauth_intent'  # 'signin' (no session) vs 'connect' (logged in)
 
 
 # ── OAuth initiation ──────────────────────────────────────────────────
 
 @bp.route('/oauth/start', methods=['GET'])
 def oauth_start():
-    if current_user_id() is None:
+    # No session = "sign in / sign up with Oura" (design §6.1), gated by the
+    # feature flag; flag off keeps the legacy connect-only bounce to login.
+    signin = current_user_id() is None
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login', next=request.url))
     client_id = os.environ.get('OURA_CLIENT_ID')
     if not client_id:
@@ -73,6 +78,7 @@ def oauth_start():
         abort(503)
     state = secrets.token_urlsafe(32)
     session[_OAUTH_STATE] = state
+    session[_OAUTH_INTENT] = 'signin' if signin else 'connect'
     return_to = request.args.get('return_to') or '/'
     if not return_to.startswith('/') or return_to.startswith('//'):
         return_to = '/'
@@ -92,7 +98,9 @@ def oauth_start():
 @bp.route('/oauth/callback', methods=['GET'])
 def oauth_callback():
     user_id = current_user_id()
-    if user_id is None:
+    signin = user_id is None
+    session.pop(_OAUTH_INTENT, None)
+    if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login'))
     expected_state = session.pop(_OAUTH_STATE, None)
     return_to = session.pop(_OAUTH_RETURN_TO, '/')
@@ -134,25 +142,90 @@ def oauth_callback():
         current_app.logger.error('Oura token response missing access_token: %s', token_data)
         abort(502)
 
-    oura_user_id = None
-    try:
-        prof = requests.get(_OURA_PERSONAL_INFO,
-                            headers={'Authorization': f'Bearer {access_token}'},
-                            timeout=10)
-        prof.raise_for_status()
-        oura_user_id = prof.json().get('id')
-    except requests.RequestException as exc:
-        current_app.logger.exception('Oura personal_info fetch failed: %s', exc)
-        abort(502)
+    prof = _fetch_oura_personal_info(access_token)
+    oura_user_id = prof.get('id')
     if oura_user_id is None:
         current_app.logger.error('Oura personal_info missing id')
         abort(502)
+    oura_user_id = str(oura_user_id)
 
+    db = get_db()
+
+    # ── No-session sign-in / sign-up (design §6.1) ────────────────────────
+    if signin:
+        identity = pi.get_identity(db, 'oura', oura_user_id)
+        if identity:  # existing account → log in
+            user_id = identity['user_id']
+            pi.bump_last_login(db, identity['id'])
+            username = pi.get_username(db, user_id)
+            dest = url_for('dashboard.index')
+            print(f'[oura-signin] match user={user_id} oura_user_id={oura_user_id}')  # noqa: T201
+        else:  # new athlete → passwordless account. Oura exposes email (via the
+               # `email` scope) but no name, so seed the username from the email
+               # local-part.
+            email = prof.get('email')
+            hint = email.split('@')[0] if email else None
+            user_id, username = pi.create_signin_user(
+                db, provider='oura', provider_user_id=oura_user_id,
+                email=email, display_name=None, username_hint=hint,
+            )
+            dest = url_for('onboarding.connect')
+            print(f'[oura-signin] new-account user={user_id} '  # noqa: T201
+                  f'oura_user_id={oura_user_id} username={username}')
+            # Confirm the provider-seeded email if one was actually stored
+            # (dropped to NULL on collision). Best-effort — never block sign-in.
+            acct_email = pi.get_email(db, user_id)
+            if acct_email:
+                try:
+                    send_verification_email(db, user_id, acct_email)
+                except Exception:
+                    pass
+        _persist_oura_auth(db, user_id, access_token, refresh_token,
+                           expires_in, oura_user_id)
+        session.clear()
+        session['user_id'] = user_id
+        session['username'] = username
+        return redirect(dest)
+
+    # ── Logged-in connect / link path ─────────────────────────────────────
+    _persist_oura_auth(db, user_id, access_token, refresh_token,
+                       expires_in, oura_user_id)
+    sep = '&' if '?' in return_to else '?'
+    ok, reason = pi.link_identity(db, user_id, 'oura', oura_user_id,
+                                  email_at_link=prof.get('email'))
+    if not ok and reason == 'claimed_by_other':
+        current_app.logger.warning(
+            'Oura identity %s already linked to another account', oura_user_id)
+        return redirect(f'{return_to}{sep}oura_oauth_error=already_linked')
+    print(f'[oura-oauth] connected user={user_id} oura_user_id={oura_user_id} '  # noqa: T201
+          f'expires_in={expires_in}')
+    return redirect(f'{return_to}{sep}oura_connected=1')
+
+
+def _fetch_oura_personal_info(access_token: str) -> dict:
+    """GET /usercollection/personal_info → {id, email}. Returns {} on failure
+    (caller treats a missing id as fatal). The `email` scope (in _OURA_SCOPES)
+    makes `email` available; Oura exposes no name fields."""
+    try:
+        resp = requests.get(_OURA_PERSONAL_INFO,
+                            headers={'Authorization': f'Bearer {access_token}'},
+                            timeout=10)
+        resp.raise_for_status()
+        data = resp.json() or {}
+    except requests.RequestException as exc:
+        current_app.logger.exception('Oura personal_info fetch failed: %s', exc)
+        return {}
+    return {'id': data.get('id'), 'email': data.get('email')}
+
+
+def _persist_oura_auth(db, user_id, access_token, refresh_token,
+                       expires_in, oura_user_id) -> None:
+    """Upsert the provider_auth sync credential + record the scope ack. Shared
+    by the sign-in and connect paths so the persisted shape is identical."""
     token_expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
         if expires_in else None
     )
-    db = get_db()
     pa.upsert_auth(
         db, user_id=user_id, provider='oura',
         access_token=access_token, refresh_token=refresh_token,
@@ -164,10 +237,6 @@ def oauth_callback():
         db, user_id=user_id, provider='oura',
         scopes_granted=_OURA_SCOPES, version_id=_OURA_SCOPE_VERSION,
     )
-    print(f'[oura-oauth] connected user={user_id} oura_user_id={oura_user_id} '  # noqa: T201
-          f'expires_in={expires_in}')
-    sep = '&' if '?' in return_to else '?'
-    return redirect(f'{return_to}{sep}oura_connected=1')
 
 
 # ── Webhook ───────────────────────────────────────────────────────────

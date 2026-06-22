@@ -25,7 +25,29 @@
     <dl class="acct-id">
       <dt>Username</dt><dd>{{ user_row.username or '—' }}</dd>
       <dt>Display name</dt><dd>{{ user_row.display_name or '—' }}</dd>
-      <dt>Email</dt><dd>{{ user_row.email or '—' }}</dd>
+      <dt>Email</dt>
+      <dd>
+        <form method="post" action="{{ url_for('profile.change_email') }}" class="acct-email-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="email" name="email" value="{{ user_row.email or '' }}"
+                 placeholder="you@example.com" autocomplete="email"
+                 class="form-control form-control-sm">
+          <button type="submit" class="btn btn-ghost btn-sm">Save email</button>
+          {% if user_row.email %}
+            {% if user_row.email_verified %}
+              <span class="chip good">✓ Confirmed</span>
+            {% else %}
+              <span class="chip">Unconfirmed</span>
+            {% endif %}
+          {% endif %}
+        </form>
+        {% if user_row.email and not user_row.email_verified %}
+          <form method="post" action="{{ url_for('auth.resend_verification') }}" class="acct-verify-resend">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Send confirmation link</button>
+          </form>
+        {% endif %}
+      </dd>
       <dt>Last login</dt><dd class="mono dim">{{ user_row.last_login or '—' }}</dd>
     </dl>
   </div>
@@ -50,6 +72,42 @@
         <button type="submit" class="btn btn-primary">Change password</button>
       </div>
     </form>
+  </div>
+
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Two-factor authentication</p>
+    {% if totp_status == 'on' %}
+      <p class="acct-hint">On — you enter a code from your authenticator app each time you sign in.</p>
+      <form method="post" action="{{ url_for('profile.totp_disable') }}" class="acct-pw">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="pf-grid">
+          <label class="field"><span class="lbl">Current password</span>
+            <input type="password" name="current_password" autocomplete="current-password"
+                   class="form-control form-control-sm" required></label>
+        </div>
+        <div class="pf-save">
+          <span class="pf-saved mono">Lost your app? Reset your password to recover.</span>
+          <button type="submit" class="btn btn-ghost">Turn off two-factor</button>
+        </div>
+      </form>
+    {% elif totp_status == 'pending' %}
+      <p class="acct-hint">Setup started but not confirmed yet. Finish scanning the code and enter a
+        digit to turn it on.</p>
+      <div class="pf-save">
+        <form method="post" action="{{ url_for('profile.totp_disable') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost">Cancel</button>
+        </form>
+        <a href="{{ url_for('profile.totp_setup') }}" class="btn btn-primary">Finish setup</a>
+      </div>
+    {% else %}
+      <p class="acct-hint">Add a second step at sign-in using an authenticator app. Recommended —
+        it protects your account even if your password leaks.</p>
+      <form method="post" action="{{ url_for('profile.totp_setup') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary">Enable two-factor</button>
+      </form>
+    {% endif %}
   </div>
 
   <div class="card card-pad acct-signout">

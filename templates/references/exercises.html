@@ -37,19 +37,14 @@
 <div class="table-responsive">
   <table class="table table-sm table-hover table-striped" id="ex-table">
     <thead class="table-dark">
-      <tr><th>Exercise</th><th>Type</th><th>Discipline</th><th>Pattern</th><th>Recovery</th><th>Available</th><th>Suggested Vol</th></tr>
+      <tr><th>Exercise</th><th>Type</th><th>Pattern</th><th>Available</th></tr>
     </thead>
     <tbody>
     {% for r in rows %}
     <tr>
-      <td>
-        {% if r.video_reference %}<a href="{{ r.video_reference }}" target="_blank">{{ r.exercise }}</a>
-        {% else %}{{ r.exercise }}{% endif %}
-      </td>
-      <td><span class="badge {% if r.type == 'Staple' %}bg-primary{% else %}bg-secondary{% endif %}">{{ r.type }}</span></td>
-      <td>{{ r.discipline }}</td>
+      <td>{{ r.exercise }}</td>
+      <td><span class="badge bg-secondary">{{ r.exercise_type }}</span></td>
       <td>{{ r.movement_pattern }}</td>
-      <td><span class="badge {% if r.recovery_cost == 'Low' %}bg-success{% elif r.recovery_cost == 'Med' %}bg-warning text-dark{% else %}bg-danger{% endif %}">{{ r.recovery_cost or '—' }}</span></td>
       <td class="text-nowrap">
         {% if r.where_available %}
           {% for loc in r.where_available.split(',') %}
@@ -59,7 +54,6 @@
           <span class="text-muted small">gym only</span>
         {% endif %}
       </td>
-      <td class="text-muted small">{{ r.suggested_volume }}</td>
     </tr>
     {% endfor %}
     </tbody>

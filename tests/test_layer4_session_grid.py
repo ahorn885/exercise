@@ -756,3 +756,47 @@ def test_derive_enabled_and_long_session_dow_dict_and_object():
     ]
     assert derive_enabled_days(obj_windows) == {"Tue", "Fri"}
     assert derive_long_session_dow(obj_windows) == "Tue"
+
+
+# ─── Slice 6 (#593) — volume_capacity_factor scales the week's targets ────────
+
+
+class TestVolumeCapacityFactor:
+    """A volume-window factor scales every discipline's target hours for the
+    week → fewer/shorter sessions out of the existing hours→count math."""
+
+    def _grid(self, factor: float) -> SessionGrid:
+        l2a = _layer2a([
+            _discipline(
+                "trail_running", "Trail Running",
+                build_pct=(80.0, 90.0), load_weight=3.0,
+            ),
+        ])
+        ps = _phase_structure({"Build": 4})
+        return build_session_grid(
+            l2a, ps, "Build", 1, capacity_hours=12.0,
+            available_days=6, volume_capacity_factor=factor,
+        )
+
+    def _count(self, grid: SessionGrid) -> int:
+        return sum(a.sessions_this_week for a in grid.discipline_allocations)
+
+    def test_factor_zero_zeroes_all_sessions(self):
+        assert self._count(self._grid(0.0)) == 0
+
+    def test_half_factor_reduces_count_vs_full(self):
+        full = self._count(self._grid(1.0))
+        half = self._count(self._grid(0.5))
+        assert full > 0
+        assert half < full
+
+    def test_default_factor_is_identity(self):
+        l2a = _layer2a([_discipline("trail_running", "Trail Running",
+                                    build_pct=(80.0, 90.0), load_weight=3.0)])
+        ps = _phase_structure({"Build": 4})
+        default = build_session_grid(l2a, ps, "Build", 1, capacity_hours=12.0,
+                                     available_days=6)
+        explicit = build_session_grid(l2a, ps, "Build", 1, capacity_hours=12.0,
+                                      available_days=6, volume_capacity_factor=1.0)
+        assert [a.sessions_this_week for a in default.discipline_allocations] == \
+               [a.sessions_this_week for a in explicit.discipline_allocations]

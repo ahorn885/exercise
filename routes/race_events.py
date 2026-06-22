@@ -276,15 +276,17 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
 def _resolve_effective_framework_sport(db, user_id: int, race: dict | None) -> str | None:
     """Resolve the framework_sport to use for initial discipline-grid render.
 
-    Mirrors the orchestrator's resolution order (`layer4/orchestrator.py`
-    `_upstream_full_cone`): race-row override wins; otherwise fall back to
-    athlete-profile `primary_sport`. Returns None when neither is set —
-    the template then renders an empty discipline grid with helper copy
-    pointing the athlete at the framework_sport field.
+    Mirrors the orchestrator's planning-sport resolution
+    (`layer4/orchestrator.py` `_resolve_planning_sport`, #447): the race's
+    `framework_sport` is the planning sport when a target race carries one;
+    otherwise fall back to the athlete-profile `primary_sport` (home
+    discipline / no-race case). Returns None when neither is set — the
+    template then renders an empty discipline grid with helper copy pointing
+    the athlete at the framework_sport field.
     """
-    race_override = (race or {}).get('framework_sport') if race else None
-    if race_override:
-        return race_override
+    race_sport = (race or {}).get('framework_sport') if race else None
+    if race_sport:
+        return race_sport
     profile = get_athlete_profile(db, user_id) or {}
     return profile.get('primary_sport') or None
 

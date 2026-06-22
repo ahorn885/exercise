@@ -726,8 +726,8 @@ def apply_session_ceiling(
 # strength/week is capped at `dose + this`; excess failover is reallocated to
 # feasible disciplines rather than crowding the week with strength (Andy §7:
 # "Cap = dose + 2 total strength/week"). The deterministic crash-guard
-# (`per_phase._repair_strength_collisions`, #579) still backstops a same-day
-# strength collision; this cap is the upstream periodization-quality guard.
+# (`per_phase._normalize_day_composition`, #579/#778/plan-78) still backstops a
+# same-day strength collision; this cap is the upstream periodization-quality guard.
 _FAILOVER_STRENGTH_HEADROOM = 2
 
 # A single feasible discipline may absorb at most this multiple of its own
@@ -914,6 +914,7 @@ def build_session_grid(
     strength_feasibility_tiers: dict[str, str] | None = None,
     skill_gated_ids: frozenset[str] | set[str] = frozenset(),
     layer3a_payload: Layer3APayload | None = None,
+    volume_capacity_factor: float = 1.0,
 ) -> SessionGrid:
     """The §5.1 deterministic grid for one `(phase, week_in_phase)`. Returns an
     empty-but-typed `SessionGrid` when inputs are insufficient (graceful
@@ -923,7 +924,16 @@ def build_session_grid(
     supplied, the §7 WS-E2 saturation cap runs after the §5.1.1 ceiling: weekly
     failover strength is capped at `dose + 2` and the excess reallocated to
     feasible disciplines proportional to load_weight. Bare callers omit it → no
-    cap (mirrors the `available_days`-gated ceiling)."""
+    cap (mirrors the `available_days`-gated ceiling).
+
+    `volume_capacity_factor` (Slice 6 / #593) scales every discipline's target
+    hours for this week — a deterministic capacity reduction for an in-transit
+    volume window (`no_training` → 0.0 for fully-zeroed weeks, `reduced_volume` →
+    the athlete-set fraction). Default 1.0 → byte-identical to a non-windowed
+    week. Fewer hours in → fewer/shorter sessions out of the existing hours→count
+    math (`_allocate_discipline`); no separate trim step. The caller additionally
+    drops `no_training` days from `available_days` so the session ceiling stays a
+    real ≤2/day placement guarantee."""
     bands = phase_week_volume_bands_hours(
         layer2a, phase_name, week_in_phase, phase_structure, capacity_hours,
         layer3a_payload,
@@ -942,7 +952,12 @@ def build_session_grid(
         discipline_weights = {d.discipline_id: d.load_weight.value for d in included}
         for d in included:
             lo, hi = bands[d.discipline_id]
-            target = (lo + hi) / 2.0
+            # Slice 6 (#593) — scale the band mid by the volume-window factor
+            # (1.0 when no volume window covers this week). This is the spec's
+            # capacity reduction: it acts on the target AFTER the band's
+            # capacity-cap min(), so it bites even when the athlete's nominal
+            # capacity exceeds the phase band.
+            target = (lo + hi) / 2.0 * volume_capacity_factor
             allocations.append(
                 _allocate_discipline(
                     discipline_id=d.discipline_id,

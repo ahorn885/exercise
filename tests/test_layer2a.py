@@ -234,6 +234,124 @@ def _ar_rows() -> list[dict]:
     ]
 
 
+class TestCrossTrainingFold:
+    """#447 §5 — `cross_training_sport` folds the athlete's home sport in as
+    low-weight cross-training: de-duped against the race set, capped strictly
+    below the smallest race discipline."""
+
+    def _race_rows(self) -> list[dict]:
+        # min included race midpoint = D-008 = 15.0 → fold cap = 7.5
+        return [
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=20, race_time_pct_high=40),
+            _row("D-008", "Packrafting", "Secondary",
+                 race_time_pct_low=10, race_time_pct_high=20),
+        ]
+
+    def _cross_rows(self) -> list[dict]:
+        # D-001 overlaps the race set (must de-dupe); D-020 is new (injected).
+        return [
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=30, race_time_pct_high=50),
+            _row("D-020", "Road Running", "Primary",
+                 race_time_pct_low=40, race_time_pct_high=60),
+        ]
+
+    def _run_with_fold(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._race_rows())   # disciplines query
+        conn.queue_response(rows=[])                  # modality membership (empty)
+        conn.queue_response(rows=self._cross_rows())  # cross-training disciplines
+        return q_layer2a_discipline_classifier_payload(
+            conn,
+            "Adventure Racing",
+            cross_training_sport="Trail Running",
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+    def test_no_cross_training_sport_is_inert(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=self._race_rows())
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL
+        )
+        assert {d.discipline_id for d in payload.disciplines} == {"D-001", "D-008"}
+
+    def test_fold_injects_non_overlapping_discipline(self):
+        payload = self._run_with_fold()
+        ids = [d.discipline_id for d in payload.disciplines]
+        assert "D-020" in ids
+        folded = next(d for d in payload.disciplines if d.discipline_id == "D-020")
+        assert folded.role == "Cross-training"
+        assert folded.inclusion == "included"
+
+    def test_fold_dedupes_overlapping_discipline(self):
+        payload = self._run_with_fold()
+        # D-001 is in both the race set and the home sport — appears exactly once.
+        assert [d.discipline_id for d in payload.disciplines].count("D-001") == 1
+        assert len(payload.disciplines) == 3  # D-001, D-008, D-020
+
+    def test_folded_weight_strictly_below_every_race_discipline(self):
+        payload = self._run_with_fold()
+        by_id = {d.discipline_id: d.load_weight.value for d in payload.disciplines}
+        folded = by_id["D-020"]
+        race_weights = [by_id["D-001"], by_id["D-008"]]
+        assert all(folded < w for w in race_weights)
+
+    def _run_with_fold_phase_load(self):
+        # Race set carries phase_load; min base midpoint = D-008 = 7.5 → cap 3.75.
+        race = [
+            _row("D-001", "Trail Running", "Primary",
+                 race_time_pct_low=20, race_time_pct_high=40,
+                 base_pct_low=30, base_pct_high=40),
+            _row("D-008", "Packrafting", "Secondary",
+                 race_time_pct_low=10, race_time_pct_high=20,
+                 base_pct_low=5, base_pct_high=10),
+        ]
+        # Home discipline has a LARGE home-sport phase_load (base mid 50) that
+        # must be discarded and replaced by the flat cap, not carried through.
+        cross = [
+            _row("D-020", "Road Running", "Primary",
+                 race_time_pct_low=40, race_time_pct_high=60,
+                 base_pct_low=40, base_pct_high=60),
+        ]
+        conn = _FakeConn()
+        conn.queue_response(rows=race)
+        conn.queue_response(rows=[])
+        conn.queue_response(rows=cross)
+        return q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing",
+            cross_training_sport="Trail Running",
+            etl_version_set=_DEFAULT_ETL,
+        )
+
+    def test_folded_phase_load_capped_below_smallest_race(self):
+        payload = self._run_with_fold_phase_load()
+        folded = next(d for d in payload.disciplines if d.discipline_id == "D-020")
+        # Home-sport base midpoint (50) is discarded; folded base = flat 3.75
+        # cap = 0.5 × smallest race base midpoint (D-008 = 7.5).
+        assert folded.phase_load is not None
+        assert folded.phase_load.base_low == 3.75
+        assert folded.phase_load.base_high == 3.75
+        # Strictly below every race discipline's base midpoint.
+        race_base_mids = [
+            (d.phase_load.base_low + d.phase_load.base_high) / 2.0
+            for d in payload.disciplines
+            if d.discipline_id in ("D-001", "D-008")
+        ]
+        folded_mid = (folded.phase_load.base_low + folded.phase_load.base_high) / 2.0
+        assert all(folded_mid < m for m in race_base_mids)
+
+    def test_folded_set_still_normalizes_to_one(self):
+        payload = self._run_with_fold()
+        total = sum(
+            d.load_weight.value
+            for d in payload.disciplines
+            if d.inclusion == "included" and d.load_weight.value is not None
+        )
+        assert abs(total - 1.0) < 1e-9
+
+
 class _FixedClock(datetime):
     """datetime subclass with a controllable utcnow() (only utcnow overridden)."""
     _now = datetime(2026, 5, 27, 6, 11, 31, 123456)

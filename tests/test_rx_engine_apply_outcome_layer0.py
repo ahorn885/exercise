@@ -89,13 +89,14 @@ class TestLayer0ProgressionSource:
         assert "layer0_exercise_id" in insert
         assert "EX001" in params  # the resolved EX-id is written
 
-    def test_unmapped_name_falls_back_to_exercise_inventory_pattern(self):
-        # No EX-id resolvable → layer0 is never queried; legacy ei pattern used.
-        db = _FakeDb(ei_row={"id": 42, "discipline": "Bike", "type": "Staple",
-                             "movement_pattern": "Hinge", "suggested_volume": "3x8"})
+    def test_unmapped_name_has_no_movement_pattern(self):
+        # Catalog unification: the v1 exercise_inventory movement_pattern fallback
+        # is retired. An unmapped name (no EX-id) has no layer0 pattern source, so
+        # movement_pattern is None — it no longer borrows a v1 catalog value.
+        db = _FakeDb()
         res = apply_session_outcome(db, "Some Obscure Lift", "2026-06-16", _sets(),
                                     rx_source="From Training Log", user_id=1)
-        assert res["movement_pattern"] == "Hinge"
+        assert res["movement_pattern"] is None
         params = next(p for s, p in db.writes if s.startswith("INSERT"))
         assert None in params  # layer0_exercise_id written as None
 
@@ -148,15 +149,14 @@ class TestStrength679Resolution:
     def test_unmapped_name_is_explicit_bucket3_not_silent(self):
         # A legitimate but unmapped name resolves to None AND is tagged bucket-3
         # (record-don't-drop) rather than an ambiguous first-exposure row.
-        db = _FakeDb(ei_row={"discipline": "Bike", "type": "Staple",
-                             "movement_pattern": "Hinge", "suggested_volume": "3x8"})
+        db = _FakeDb()
         res = apply_session_outcome(db, "Some Obscure Lift", "2026-06-17", _sets(),
                                     rx_source="From Training Log", user_id=1)
         assert res["layer0_exercise_id"] is None
         assert res["bucket3"] is True
         assert res["match_kind"] == "bucket3"
-        # Legacy exercise_inventory fallback preserved (no regression).
-        assert res["movement_pattern"] == "Hinge"
+        # No v1 fallback after the catalog unification — no layer0 home, no pattern.
+        assert res["movement_pattern"] is None
 
     def test_existing_row_ex_id_marks_match_kind_existing(self):
         db = _FakeDb(current_rx_row=_rx_row(layer0_exercise_id="EX001"),

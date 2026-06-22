@@ -1,0 +1,24 @@
+{% extends "auth/_shell.html" %}
+{% block title %}Two-factor — AIDSTATION{% endblock %}
+
+{% block content %}
+<p class="eyebrow accent">● One more step</p>
+<h1 class="auth-title">Verify it's you.</h1>
+<p class="auth-sub">Enter the 6-digit code from your authenticator app.</p>
+
+<form method="post" action="{{ url_for('auth.totp_challenge') }}" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label class="field">
+    <span class="lbl">Authentication code</span>
+    <input type="text" class="form-control" name="code"
+           inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*"
+           maxlength="9" required autofocus>
+  </label>
+  <button type="submit" class="btn btn-primary auth-submit">
+    Verify <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-arrow"></use></svg>
+  </button>
+</form>
+
+<p class="auth-alt">Lost your authenticator?
+  <a href="{{ url_for('auth.forgot') }}">Reset your password</a> to recover.</p>
+{% endblock %}

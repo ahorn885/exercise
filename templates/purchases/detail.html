@@ -60,7 +60,7 @@
       <thead>
         <tr>
           <th>Exercise</th>
-          <th>Discipline</th>
+          <th>Type</th>
           <th>Pattern</th>
         </tr>
       </thead>
@@ -68,7 +68,7 @@
         {% for ex in impacted %}
           <tr>
             <td>{{ ex.exercise }}</td>
-            <td class="text-muted">{{ ex.discipline or '—' }}</td>
+            <td class="text-muted">{{ ex.exercise_type or '—' }}</td>
             <td class="text-muted">{{ ex.movement_pattern or '—' }}</td>
           </tr>
         {% endfor %}

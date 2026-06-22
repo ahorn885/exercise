@@ -616,6 +616,13 @@ class Layer4Payload(_Base):
 
     notable_observations: list[Observation]
 
+    # #826 — evidence-source slugs the upstream Layer 3 judgments cited, surfaced
+    # onto the plan so the completing pass can persist provenance links. Keyed by
+    # layer ("layer3a" / "layer3b"); values are slug lists from each payload's
+    # `source_citations`. Optional with a None default so cached/older payloads
+    # hydrate cleanly; the completing pass skips when absent.
+    evidence_source_citations: dict[str, list[str]] | None = None
+
     suggestion_id: int | None = None
 
     race_week_brief: RaceWeekBrief | None = None

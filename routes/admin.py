@@ -16,6 +16,13 @@ from werkzeug.utils import secure_filename
 from database import get_db
 from plan_sessions_repo import load_plan_sessions_as_blocks, load_progress_blocks
 from routes.auth import current_user_id
+from evidence_repo import (
+    create_evidence_source,
+    dismiss_curation_flag,
+    list_curation_flags,
+    list_evidence_sources,
+    resolve_curation_flag,
+)
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -67,6 +74,10 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM athlete_profile               WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM user_purchase_recommendations WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM api_tokens                    WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM user_totp                     WHERE user_id = ?', (user_id,))
+    # #274 — invites created by or accepted by this user (FK to users(id)).
+    db.execute('DELETE FROM user_invites                  WHERE created_by = ? '
+               'OR accepted_user_id = ?', (user_id, user_id))
     db.execute('DELETE FROM users                         WHERE id = ?',      (user_id,))
 
 
@@ -83,8 +94,45 @@ def dashboard():
              FROM users u
             ORDER BY u.id'''
     ).fetchall()
+    invites = db.execute(
+        'SELECT token, email, created_at, expires_at FROM user_invites '
+        'WHERE accepted_at IS NULL ORDER BY created_at DESC'
+    ).fetchall()
     return render_template('admin/dashboard.html', users=users,
-                           admin_user_id=ADMIN_USER_ID)
+                           admin_user_id=ADMIN_USER_ID, invites=invites)
+
+
+@bp.route('/invite', methods=['POST'])
+def invite():
+    """Email a registration link to `email` (#274). The link lets that address
+    register even when ALLOW_REGISTRATION is off, and registering through it
+    marks the email verified."""
+    _require_admin()
+    db = get_db()
+    email = (request.form.get('email') or '').strip()
+    if not email or '@' not in email or '.' not in email.split('@')[-1]:
+        flash('Enter a valid email to invite.', 'danger')
+        return redirect(url_for('admin.dashboard'))
+    if db.execute('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)',
+                  (email,)).fetchone():
+        flash(f'{email} already has an account.', 'warning')
+        return redirect(url_for('admin.dashboard'))
+    from routes.auth import send_invite_email
+    send_invite_email(db, email, ADMIN_USER_ID)
+    flash(f'Invite sent to {email}.', 'success')
+    return redirect(url_for('admin.dashboard'))
+
+
+@bp.route('/invite/<token>/revoke', methods=['POST'])
+def revoke_invite(token):
+    """Revoke a pending (unaccepted) invite."""
+    _require_admin()
+    db = get_db()
+    db.execute('DELETE FROM user_invites WHERE token = ? AND accepted_at IS NULL',
+               (token,))
+    db.commit()
+    flash('Invite revoked.', 'info')
+    return redirect(url_for('admin.dashboard'))
 
 
 @bp.route('/fit-inspect', methods=['GET', 'POST'])
@@ -624,3 +672,94 @@ def plan_diag(plan_version_id):
         'total_sessions': sum(len(b['sessions'] or []) for b in blocks),
         **_summarize_progress_blocks(blocks),
     })
+
+
+# ─── #826 science-provenance: curation-gap intake + source catalog ──────────
+
+
+@bp.route('/evidence-sources')
+def evidence_sources():
+    """Read view over the `evidence_sources` catalog — the canonical, curated
+    research/training-science behind plan decisions. Admin-only operator
+    surface."""
+    _require_admin()
+    db = get_db()
+    return render_template(
+        'admin/evidence_sources.html',
+        sources=list_evidence_sources(db),
+    )
+
+
+@bp.route('/curation-flags')
+def curation_flags():
+    """Curation-gap triage queue (#826). Lists open gaps an operator can either
+    resolve (by creating/picking the source the decision should have cited) or
+    dismiss. The active source catalog is passed so the resolve form can link an
+    existing source instead of always creating a new one. Admin-only."""
+    _require_admin()
+    db = get_db()
+    return render_template(
+        'admin/curation_flags.html',
+        open_flags=list_curation_flags(db, status='open'),
+        resolved_flags=list_curation_flags(db, status='resolved', limit=50),
+        sources=list_evidence_sources(db, status='active'),
+    )
+
+
+@bp.route('/curation-flags/<int:flag_id>/resolve', methods=['POST'])
+def resolve_flag(flag_id):
+    """Resolve or dismiss one curation gap (#826).
+
+    `action`:
+    - `link`    — link an existing `evidence_source_id` (from the dropdown).
+    - `create`  — create a new source (slug/kind/title/...) then resolve to it.
+    - `dismiss` — close the gap without a source.
+
+    Audited in the same transaction as the mutation so they commit/rollback
+    together (mirrors `delete_user`)."""
+    _require_admin()
+    db = get_db()
+    action = (request.form.get('action') or '').strip()
+    try:
+        if action == 'dismiss':
+            dismiss_curation_flag(db, flag_id)
+            detail = 'dismissed'
+        elif action == 'link':
+            source_id = int(request.form.get('evidence_source_id') or 0)
+            if source_id <= 0:
+                flash('Pick an evidence source to link.', 'warning')
+                return redirect(url_for('admin.curation_flags'))
+            resolve_curation_flag(db, flag_id, source_id)
+            detail = f'linked source {source_id}'
+        elif action == 'create':
+            slug = (request.form.get('slug') or '').strip()
+            kind = (request.form.get('kind') or '').strip()
+            title = (request.form.get('title') or '').strip()
+            if not (slug and kind and title):
+                flash('slug, kind, and title are required.', 'warning')
+                return redirect(url_for('admin.curation_flags'))
+            source_id = create_evidence_source(
+                db,
+                slug=slug, kind=kind, title=title,
+                summary=(request.form.get('summary') or '').strip() or None,
+                citation=(request.form.get('citation') or '').strip() or None,
+                url=(request.form.get('url') or '').strip() or None,
+            )
+            resolve_curation_flag(db, flag_id, source_id)
+            detail = f'created source {slug} ({source_id})'
+        else:
+            flash('Unknown action.', 'danger')
+            return redirect(url_for('admin.curation_flags'))
+        db.execute(
+            'INSERT INTO admin_audit '
+            '(actor_user_id, action, details) VALUES (?,?,?)',
+            (current_user_id(), 'resolve_curation_flag',
+             f'flag {flag_id}: {detail}'),
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — surface the fault to the operator
+        db.rollback()
+        flash(f'Could not update flag: {e}', 'danger')
+        return redirect(url_for('admin.curation_flags'))
+    flash(f'Curation gap #{flag_id} {detail}.', 'success')
+    return redirect(url_for('admin.curation_flags'))

@@ -185,17 +185,11 @@ def apply_session_outcome(db, exercise, date, sets,
         (exercise, user_id)
     ).fetchone()
 
-    # exercise_inventory read by NAME only — for the denormalized display fields
-    # (discipline/type/suggested_volume) + the movement_pattern fallback. The
-    # public `id` FK is no longer read (#430 Slice C); per-user tables key off
-    # the layer0 EX-id. discipline has no clean layer0 source and the v1 rx page
-    # (routes/rx.py) groups by it, so the catalog name read stays until the
-    # broader #430 sources it from the sport map.
-    ei = db.execute(
-        '''SELECT discipline, type, movement_pattern, suggested_volume
-           FROM exercise_inventory WHERE exercise=?''',
-        (exercise,)
-    ).fetchone()
+    # Display/progression now source from layer0 (the single canonical catalog),
+    # keyed off the EX-id resolved below — the v1 exercise_inventory by-name read
+    # is retired (catalog unification). The vestigial current_rx discipline/type/
+    # inventory_sugg_volume columns are no longer stamped (dropped in the table-
+    # drop slice); movement_pattern comes from the layer0 crosswalk.
 
     # #430 Slice C + #679 — key the progression off the layer0 EX-id (single
     # source of truth), not the v1 exercise_inventory name. Prefer the row's
@@ -214,12 +208,11 @@ def apply_session_outcome(db, exercise, date, sets,
         layer0_exercise_id, match_kind = resolve_strength_ex_id(exercise)
     layer0_pattern = _layer0_progression_pattern(db, layer0_exercise_id)
 
-    # weight_increment: layer0 carries no per-exercise increment (#335 D4), and
-    # the exercise_inventory column is unseeded (always NULL). Keep only the
-    # per-user current_rx override; None falls through to calculations'
+    # weight_increment: layer0 carries no per-exercise increment (#335 D4). Keep
+    # only the per-user current_rx override; None falls through to calculations'
     # actual-weight runtime rule then the pattern default.
     if rx:
-        movement_pattern = layer0_pattern or rx['movement_pattern'] or (ei['movement_pattern'] if ei else None)
+        movement_pattern = layer0_pattern or rx['movement_pattern']
         weight_increment = rx['weight_increment']
         consecutive_failures = rx['consecutive_failures'] or 0
         sessions_since_progress = rx['sessions_since_progress'] or 0
@@ -228,7 +221,7 @@ def apply_session_outcome(db, exercise, date, sets,
         baseline_weight = rx['current_weight']
         baseline_duration = rx['current_duration']
     else:
-        movement_pattern = layer0_pattern or (ei['movement_pattern'] if ei else None)
+        movement_pattern = layer0_pattern
         weight_increment = None
         consecutive_failures = 0
         sessions_since_progress = 0
@@ -338,19 +331,18 @@ def apply_session_outcome(db, exercise, date, sets,
              rx_source, exercise, user_id)
         )
     else:
-        discipline = ei['discipline'] if ei else None
-        ex_type = ei['type'] if ei else None
-        sugg_vol = ei['suggested_volume'] if ei else None
+        # The denormalized discipline/type/inventory_sugg_volume columns are gone
+        # (catalog unification, Slice C) — display reads off the layer0 EX-id now.
         db.execute(
             '''INSERT INTO current_rx
-                 (exercise, layer0_exercise_id, discipline, type, movement_pattern,
-                  inventory_sugg_volume, current_sets, current_reps, current_weight, current_duration,
+                 (exercise, layer0_exercise_id, movement_pattern,
+                  current_sets, current_reps, current_weight, current_duration,
                   last_performed, last_outcome, consecutive_failures, sessions_since_progress,
                   weight_increment,
                   next_sets, next_reps, next_weight, next_duration, rx_source, user_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (exercise, layer0_exercise_id, discipline, ex_type, movement_pattern,
-             sugg_vol, new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (exercise, layer0_exercise_id, movement_pattern,
+             new_baseline_sets, new_baseline_reps, new_baseline_weight, new_baseline_duration,
              date, outcome, new_failures, new_sessions_since_progress, weight_increment,
              nxt['next_sets'], nxt['next_reps'], nxt['next_weight'], nxt['next_duration'],
              rx_source, user_id)

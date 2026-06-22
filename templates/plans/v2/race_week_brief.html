@@ -1,0 +1,170 @@
+{# #732 slice 3 — race-week brief display surface. Renders the stored
+   structured RaceWeekBrief (kit / fueling / pacing / contingencies / mental
+   prep) and, for multi-day events only, the structured RacePlan (segments /
+   transitions / pacing + fueling strategy / contingencies). Read-only; the
+   brief is (re)generated from the plan view's [Generate race-week brief]
+   button. #}
+{% extends 'base.html' %}
+{% set nav_active = 'plan' %}
+{% block title %}Race-week brief · AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('plan_create.view_plan', plan_version_id=plan_version_id) }}">Plan</a> <span class="sep">/</span> <b>Race-week brief</b>{% endblock %}
+
+{% block topbar_actions %}
+  {# Re-synthesize from the plan view's button; this is a re-fire of the same
+     on-demand POST (idempotent upsert), surfaced here for convenience. #}
+  <form method="post" action="{{ url_for('race_week_brief.generate_brief') }}" class="inline-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="plan_version_id" value="{{ plan_version_id }}">
+    <button type="submit" class="btn btn-ghost">
+      <svg class="icon" width="12" height="12" aria-hidden="true"><use href="#i-arrow"></use></svg> Regenerate
+    </button>
+  </form>
+{% endblock %}
+
+{% block content %}
+<div class="plan-gen">
+  <p class="eyebrow accent">● Race-week brief</p>
+  <div class="plan-view-head">
+    <h1 class="plan-gen-title">{{ brief.event_name }}</h1>
+    <span class="chip accent">{{ brief.days_to_event }} day{{ '' if brief.days_to_event == 1 else 's' }} to go</span>
+    <span class="chip">{{ brief.race_format|replace('_', ' ') }}</span>
+  </div>
+  <p class="page-sub">
+    {{ brief.event_date }} · {{ brief.event_locale }} · Goal: {{ brief.goal_outcome }}
+  </p>
+
+  {# ─── Logistics ─────────────────────────────────────────────────────── #}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Pre-race logistics</p>
+    <p class="sess-notes">{{ brief.pre_race_logistics }}</p>
+    {% if brief.drop_bag_strategy %}
+    <p class="eyebrow">Drop bags</p>
+    <p class="sess-notes">{{ brief.drop_bag_strategy }}</p>
+    {% endif %}
+    {% if brief.course_familiarization_notes %}
+    <p class="eyebrow">Course familiarization</p>
+    <p class="sess-notes">{{ brief.course_familiarization_notes }}</p>
+    {% endif %}
+  </div>
+
+  {# ─── Kit manifest ──────────────────────────────────────────────────── #}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Kit manifest</p>
+    {% if brief.kit_check_dates %}
+    <p class="rail-note">Kit checks:
+      {% for d in brief.kit_check_dates %}<span class="chip">{{ d }}</span>{% endfor %}
+    </p>
+    {% endif %}
+    {% if brief.kit_manifest %}
+    <ul class="plain-list">
+      {% for ki in brief.kit_manifest %}
+      <li>
+        <b>{{ ki.item }}</b>{% if ki.optional %} <span class="chip">optional</span>{% endif %}
+        — <span class="rail-note">{{ ki.purpose }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="rail-note">No kit items listed.</p>
+    {% endif %}
+  </div>
+
+  {# ─── Fueling ───────────────────────────────────────────────────────── #}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Fueling</p>
+    <p class="eyebrow">Race-day fueling plan</p>
+    <p class="sess-notes">{{ brief.race_day_fueling_plan }}</p>
+    <p class="eyebrow">Pre-race meal strategy</p>
+    <p class="sess-notes">{{ brief.pre_race_meal_strategy }}</p>
+  </div>
+
+  {# ─── Pacing ────────────────────────────────────────────────────────── #}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Pacing</p>
+    <p class="sess-notes">{{ brief.pacing_strategy_summary }}</p>
+  </div>
+
+  {# ─── Contingencies + mental prep ───────────────────────────────────── #}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Contingencies</p>
+    {% if brief.contingencies %}
+    <ul class="plain-list">
+      {% for c in brief.contingencies %}<li>{{ c }}</li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="rail-note">None listed.</p>
+    {% endif %}
+    {% if brief.mental_prep_cues %}
+    <p class="eyebrow">Mental-prep cues</p>
+    <div class="gear-chips">
+      {% for cue in brief.mental_prep_cues %}<span class="chip">{{ cue }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  {# ─── Race plan (multi-day events only) ─────────────────────────────── #}
+  {% if race_plan %}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Race plan — {{ race_plan.race_name }}</p>
+    <p class="page-sub">
+      {{ race_plan.race_start_datetime }} → {{ race_plan.race_end_estimate_datetime }}
+      · {{ race_plan.race_format|replace('_', ' ') }}
+    </p>
+
+    {% if race_plan.segments %}
+    <p class="eyebrow">Segments</p>
+    <ul class="plain-list">
+      {% for s in race_plan.segments %}
+      <li>
+        <b>{{ s.segment_index }}. {{ s.sport }}</b>
+        <span class="rail-note">· ~{{ s.estimated_duration_min }} min, start +{{ s.estimated_start_offset_hr }}h</span>
+        <div class="rail-note">{{ s.terrain_notes }}</div>
+        <div class="rail-note">{{ s.coaching_notes }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if race_plan.transitions %}
+    <p class="eyebrow">Transitions</p>
+    <ul class="plain-list">
+      {% for t in race_plan.transitions %}
+      <li>
+        {{ t.from_segment_id }} → {{ t.to_segment_id }}
+        <span class="rail-note">· ~{{ t.estimated_duration_min }} min{% if t.is_fueling_window %} · fueling window{% endif %}</span>
+        <div class="rail-note">{{ t.notes }}</div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <p class="eyebrow">Pacing strategy</p>
+    <p class="sess-notes">{{ race_plan.pacing_strategy.overall_intensity_target }} — {{ race_plan.pacing_strategy.rationale_text }}</p>
+    {% if race_plan.pacing_strategy.night_section_adjustment %}
+    <p class="rail-note">Night: {{ race_plan.pacing_strategy.night_section_adjustment }}</p>
+    {% endif %}
+
+    <p class="eyebrow">Fueling strategy</p>
+    <p class="sess-notes">
+      {{ race_plan.fueling_strategy.cho_g_per_hr_low }}–{{ race_plan.fueling_strategy.cho_g_per_hr_high }} g CHO/hr ·
+      {{ race_plan.fueling_strategy.sodium_mg_per_hr }} mg Na/hr ·
+      {{ race_plan.fueling_strategy.fluid_ml_per_hr }} ml/hr
+    </p>
+    <p class="rail-note">{{ race_plan.fueling_strategy.rationale_text }}</p>
+
+    {% if race_plan.contingencies %}
+    <p class="eyebrow">Race-plan contingencies</p>
+    <ul class="plain-list">
+      {% for c in race_plan.contingencies %}
+      <li><b>{{ c.trigger }}</b> — {{ c.action_plan }} <span class="rail-note">({{ c.threshold_to_invoke }})</span></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# #826 — always-visible "science behind your plan" panel. The brief + race
+     plan reuse this plan version's evidence links. #}
+  {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
+</div>
+{% endblock %}

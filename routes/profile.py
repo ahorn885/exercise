@@ -12,6 +12,7 @@ auto-capture pipeline (Session 0) are surfaced verbatim with their
 `source` and `captured_at` from the originating `feedback_log` row.
 """
 
+import os
 from datetime import datetime
 
 import bcrypt
@@ -19,11 +20,12 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 
 from datetime import date
 
+import mfa
 from database import get_db
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
     current_user_id, _hash_password, _check_password, _password_strength_errors,
-    generate_api_token,
+    generate_api_token, send_verification_email,
 )
 from athlete import (
     PROFILE_FIELDS, PREFILL_ELIGIBLE_FIELDS,
@@ -87,6 +89,7 @@ from pack_load_repo import (
     list_pack_loads, add_pack_load, delete_pack_load,
 )
 from routes import provider_auth as pa
+from routes import provider_identity as pi
 
 
 bp = Blueprint('profile', __name__, url_prefix='/profile')
@@ -117,6 +120,24 @@ CONNECTION_PROVIDERS = (
     ('rwgps', 'Ride With GPS', 'ride_with_gps.oauth_start'),
     ('trainingpeaks', 'TrainingPeaks', 'trainingpeaks.oauth_start'),
 )
+
+# Client-id env var per provider. Its presence in the environment gates
+# whether the connect surfaces offer a live "Connect" button: when unset the
+# provider renders "Not available yet" instead of a Connect that dead-ends in
+# the provider's `oauth_start` abort(503) (the credentials aren't registered
+# yet). Names match each routes/<provider>.py oauth_start lookup
+# (rwgps/trainingpeaks are irregular). Self-healing — setting STRAVA_CLIENT_ID
+# flips Strava back to a live Connect with no code change.
+_PROVIDER_CLIENT_ID_ENV = {
+    'coros': 'COROS_CLIENT_ID',
+    'polar': 'POLAR_CLIENT_ID',
+    'strava': 'STRAVA_CLIENT_ID',
+    'whoop': 'WHOOP_CLIENT_ID',
+    'wahoo': 'WAHOO_CLIENT_ID',
+    'oura': 'OURA_CLIENT_ID',
+    'rwgps': 'RWGPS_CLIENT_ID',
+    'trainingpeaks': 'TP_CLIENT_ID',
+}
 
 
 def _coerce_date(value):
@@ -195,6 +216,18 @@ def load_connections(db, uid, return_to=None):
         (uid,),
     ).fetchall()
     by_provider = {r['provider']: dict(r) for r in rows}
+    # Which providers are an active sign-in method (provider_identity), so the
+    # management screen can offer "Remove sign-in" distinctly from "Disconnect"
+    # (#251 §6.3). Defensive: provider_identity is PG-only; on local SQLite the
+    # table is absent — treat as no sign-in links rather than crash the tab.
+    try:
+        signin_slugs = {
+            r['provider'] for r in db.execute(
+                'SELECT provider FROM provider_identity WHERE user_id = ?', (uid,)
+            ).fetchall()
+        }
+    except Exception:
+        signin_slugs = set()
     if return_to is None:
         return_to = url_for('profile.edit') + '?tab=connections'
     out = []
@@ -204,6 +237,8 @@ def load_connections(db, uid, return_to=None):
         display_label, badge_class = _STATUS_DISPLAY.get(
             status, ('Not connected', 'bg-light text-dark border')
         )
+        env_var = _PROVIDER_CLIENT_ID_ENV.get(slug)
+        is_configured = bool(env_var and os.environ.get(env_var))
         out.append({
             'slug': slug,
             'label': label,
@@ -212,6 +247,8 @@ def load_connections(db, uid, return_to=None):
             'status_label': display_label,
             'badge_class': badge_class,
             'is_connected': status == pa.STATUS_ACTIVE,
+            'is_configured': is_configured,
+            'is_signin': slug in signin_slugs,
             'connect_url': url_for(endpoint, return_to=return_to),
         })
     return out
@@ -720,6 +757,7 @@ def _stash_event_window_draft(form):
         'unavailable_locale': (form.get('unavailable_locale') or '').strip(),
         'away_locale': (form.get('away_locale') or '').strip(),
         'brought_craft': form.getlist('brought_craft'),
+        'volume_pct': (form.get('volume_pct') or '').strip(),
         'notes': (form.get('notes') or '').strip(),
     }
 
@@ -778,6 +816,17 @@ def add_event_window_route():
     except ValueError:
         flash('Enter valid start and end dates.', 'error')
         return _event_windows_redirect(return_to)
+    # Slice 6 (#593) — the reduced-volume control captures a PERCENT of a normal
+    # training day; the repo stores the fraction (0,1). Only meaningful for the
+    # reduced_volume type (the repo ignores it for every other type).
+    vol_raw = (request.form.get('volume_pct') or '').strip()
+    volume_pct = None
+    if vol_raw:
+        try:
+            volume_pct = float(vol_raw) / 100.0
+        except ValueError:
+            flash('Enter a valid reduced-volume percentage.', 'error')
+            return _event_windows_redirect(return_to)
     try:
         add_event_window(
             db,
@@ -788,6 +837,7 @@ def add_event_window_route():
             unavailable_locale=(request.form.get('unavailable_locale') or None),
             away_locale=(request.form.get('away_locale') or None),
             brought_craft=request.form.getlist('brought_craft'),
+            volume_pct=volume_pct,
             notes=(request.form.get('notes') or '').strip(),
         )
     except EventWindowError as exc:
@@ -849,6 +899,33 @@ def disconnect_provider(provider):
     else:
         flash(f'{label} was already disconnected.', 'info')
     return redirect(url_for('profile.edit', tab='connections'))
+
+
+@bp.route('/connections/<provider>/unlink', methods=['POST'])
+def unlink_provider_signin(provider):
+    """Remove a provider as a SIGN-IN method (#251 §6.3) — distinct from
+    `disconnect_provider`, which stops data sync. Removing the athlete's last
+    login method is refused (self-lockout guard, design decision #9): sync can
+    keep running on a provider you can no longer log in with, but you must
+    always retain at least one way in. Scoped on `current_user_id()`; unknown
+    slugs 404.
+    """
+    if provider not in {slug for slug, _label, _endpoint in CONNECTION_PROVIDERS}:
+        abort(404)
+    db = get_db()
+    label = next(
+        (lbl for slug, lbl, _endpoint in CONNECTION_PROVIDERS if slug == provider),
+        provider,
+    )
+    ok, reason = pi.unlink_identity(db, current_user_id(), provider)
+    if not ok and reason == 'last_method':
+        flash(f"Can't remove {label} sign-in — it's your only way to log in. "
+              f'Set a password first, then try again.', 'warning')
+    elif ok:
+        flash(f'{label} sign-in removed. Data sync is unaffected.', 'info')
+    else:
+        flash(f'{label} was not a sign-in method.', 'info')
+    return redirect(url_for('connections.hub', tab='sources'))
 
 
 @bp.route('/preference/add', methods=['POST'])
@@ -1058,11 +1135,22 @@ def account_settings():
     db = get_db()
     uid = current_user_id()
     user_row = db.execute(
-        'SELECT username, display_name, email, last_login FROM users WHERE id=?',
+        'SELECT username, display_name, email, email_verified, last_login '
+        'FROM users WHERE id=?',
         (uid,)
     ).fetchone()
+    # 2FA status (#265): 'on' (active), 'pending' (secret issued, not yet
+    # verified) or 'off'. Drives the card the account template renders.
+    totp_row = mfa.get_totp(db, uid)
+    if totp_row and totp_row['confirmed_at']:
+        totp_status = 'on'
+    elif totp_row:
+        totp_status = 'pending'
+    else:
+        totp_status = 'off'
     return render_template('profile/account.html',
-                           user_row=dict(user_row) if user_row else {})
+                           user_row=dict(user_row) if user_row else {},
+                           totp_status=totp_status)
 
 
 @bp.route('/memory')
@@ -1114,6 +1202,138 @@ def change_password():
     )
     db.commit()
     flash('Password changed.', 'success')
+    return redirect(url_for('profile.account_settings'))
+
+
+@bp.route('/email', methods=['POST'])
+def change_email():
+    """Add / change / clear the account email (#251). A new address lands
+    UNCONFIRMED and triggers a verification link; an athlete can also clear it
+    (sets NULL). Rejected if another account already uses the address — we
+    never attach the same email to two accounts (no-silent-merge, design #5).
+    """
+    db = get_db()
+    uid = current_user_id()
+    new_email = (request.form.get('email') or '').strip() or None
+    current = db.execute('SELECT email FROM users WHERE id=?', (uid,)).fetchone()
+    current_email = current['email'] if current else None
+
+    if (new_email or '').lower() == (current_email or '').lower():
+        flash('That\'s already your email.', 'info')
+        return redirect(url_for('profile.account_settings'))
+
+    if new_email:
+        if '@' not in new_email or '.' not in new_email.split('@')[-1]:
+            flash('Enter a valid email address.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+        taken = db.execute(
+            'SELECT 1 FROM users WHERE LOWER(email) = LOWER(?) AND id <> ?',
+            (new_email, uid),
+        ).fetchone()
+        if taken:
+            flash('That email is already registered to another account.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+
+    # A changed address is unverified until confirmed; clearing it resets the
+    # flag too (no email = nothing to be verified).
+    db.execute('UPDATE users SET email=?, email_verified=FALSE WHERE id=?',
+               (new_email, uid))
+    db.commit()
+
+    if new_email:
+        try:
+            send_verification_email(db, uid, new_email)
+        except Exception:
+            pass
+        flash(f'Email updated to {new_email}. Check your inbox to confirm it.', 'success')
+    else:
+        flash('Email removed.', 'info')
+    return redirect(url_for('profile.account_settings'))
+
+
+# ─── Two-factor auth (TOTP) — #265 ───────────────────────────────────────────
+# Enroll / confirm / disable app-based 2FA from the Account page. The login
+# challenge itself lives in routes/auth.totp_challenge; the secret state machine
+# and crypto live in mfa.py.
+
+
+@bp.route('/totp/setup', methods=['GET', 'POST'])
+def totp_setup():
+    """Begin (or resume) TOTP enrollment: issue a pending secret and render the
+    QR + manual key + verify form.
+
+    POST (the "Enable" button) always rotates to a fresh secret. GET resumes an
+    existing pending enrollment without rotating — so a page refresh doesn't
+    invalidate the secret the athlete just scanned — and 404-equivalents to the
+    account page if there's nothing pending to resume."""
+    db = get_db()
+    uid = current_user_id()
+    if mfa.is_enabled(db, uid):
+        flash('Two-factor authentication is already on.', 'info')
+        return redirect(url_for('profile.account_settings'))
+
+    existing = mfa.get_totp(db, uid)
+    if request.method == 'POST' or existing is None:
+        secret = mfa.start_enrollment(db, uid)
+        db.commit()
+    else:
+        secret = existing['secret']
+
+    user_row = db.execute(
+        'SELECT username, email FROM users WHERE id=?', (uid,)
+    ).fetchone()
+    account_name = (user_row['email'] or user_row['username']) if user_row else 'athlete'
+    uri = mfa.provisioning_uri(secret, account_name)
+    return render_template('profile/totp_setup.html',
+                           secret=secret, otpauth_uri=uri, qr_svg=mfa.qr_svg(uri))
+
+
+@bp.route('/totp/confirm', methods=['POST'])
+def totp_confirm():
+    """Finish enrollment: verify the first code against the pending secret and,
+    on success, flip the row to active so logins start challenging."""
+    db = get_db()
+    uid = current_user_id()
+    row = mfa.get_totp(db, uid)
+    if not row or row['confirmed_at']:
+        # Nothing pending (or already active) — no-op back to account.
+        return redirect(url_for('profile.account_settings'))
+    if not mfa.verify_code(row['secret'], request.form.get('code') or ''):
+        flash('That code didn\'t match. Scan the QR again and enter a fresh code.',
+              'danger')
+        return redirect(url_for('profile.totp_setup'))
+    mfa.confirm_enrollment(db, uid)
+    db.commit()
+    flash('Two-factor authentication is on. You\'ll enter a code from your '
+          'authenticator app each time you sign in.', 'success')
+    return redirect(url_for('profile.account_settings'))
+
+
+@bp.route('/totp/disable', methods=['POST'])
+def totp_disable():
+    """Turn off 2FA, or cancel a not-yet-confirmed enrollment.
+
+    Disabling *active* 2FA requires the current password — re-auth so a walk-up
+    attacker on an unlocked session can't strip the second factor (mirrors the
+    change_password credential check). Cancelling a *pending* enrollment needs
+    no password: nothing's protecting logins yet, so there's no factor to
+    weaken."""
+    db = get_db()
+    uid = current_user_id()
+    if mfa.is_enabled(db, uid):
+        current = request.form.get('current_password') or ''
+        user_row = db.execute(
+            'SELECT password_hash FROM users WHERE id=?', (uid,)
+        ).fetchone()
+        if not user_row or not _check_password(current, user_row['password_hash']):
+            flash('Current password is incorrect.', 'danger')
+            return redirect(url_for('profile.account_settings'))
+        msg = 'Two-factor authentication turned off.'
+    else:
+        msg = 'Two-factor setup cancelled.'
+    mfa.disable(db, uid)
+    db.commit()
+    flash(msg, 'info')
     return redirect(url_for('profile.account_settings'))
 
 

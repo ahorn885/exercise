@@ -19,10 +19,19 @@ import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, g
 from zxcvbn import zxcvbn
 
+import mfa
 from database import get_db
 from email_helper import send_email, email_configured
+from routes import provider_identity as pi
 
 PASSWORD_RESET_TTL_MIN = 30
+# Email-verification links live longer than reset links — there's no security
+# urgency to a verify link (it only flips a flag; it can't change credentials),
+# and athletes click them at leisure.
+EMAIL_VERIFY_TTL_HOURS = 24
+# Admin invite links (#274). A week is plenty for someone to accept; expired
+# invites can be re-issued.
+INVITE_TTL_DAYS = 7
 # zxcvbn score table: 0=too guessable, 1=very guessable,
 # 2=somewhat guessable, 3=safely unguessable, 4=very unguessable.
 # 3 protects against offline slow-hash attack; with bcrypt + the rate
@@ -228,7 +237,8 @@ def login():
         if not username or not password:
             flash('Username and password are required.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         row = db.execute(
             'SELECT id, password_hash FROM users WHERE username=?', (username,)
@@ -236,23 +246,91 @@ def login():
         if not row or not _check_password(password, row['password_hash']):
             flash('Invalid username or password.', 'danger')
             return render_template('auth/login.html', username=username,
-                                   registration_open=_registration_open())
-
-        session.clear()
-        session['user_id'] = row['id']
-        session['username'] = username
-        db.execute('UPDATE users SET last_login=? WHERE id=?',
-                   (datetime.utcnow().isoformat(timespec='seconds'), row['id']))
-        db.commit()
+                                   registration_open=_registration_open(),
+                                   signin_providers=pi.enabled_signin_providers())
 
         next_url = request.args.get('next') or url_for('dashboard.index')
-        # Reject off-site redirects for safety.
-        if not next_url.startswith('/'):
-            next_url = url_for('dashboard.index')
-        return redirect(next_url)
+
+        if mfa.is_enabled(db, row['id']):
+            # Password is correct, but this account has 2FA on — do NOT grant a
+            # session yet. Stash a short-lived pending marker that the
+            # /auth/totp challenge converts into a real login once the
+            # authenticator code checks out. `session.clear()` first so no
+            # stale auth state lingers while the second factor is outstanding.
+            session.clear()
+            session['totp_pending_user_id'] = row['id']
+            session['totp_pending_username'] = username
+            session['totp_pending_next'] = (
+                next_url if next_url.startswith('/') else url_for('dashboard.index')
+            )
+            return redirect(url_for('auth.totp_challenge'))
+
+        return _finalize_login(db, row['id'], username, next_url)
 
     return render_template('auth/login.html', username='',
-                           registration_open=_registration_open())
+                           registration_open=_registration_open(),
+                           signin_providers=pi.enabled_signin_providers())
+
+
+def _finalize_login(db, user_id, username, next_url):
+    """Grant a real session and bounce to `next_url`. Shared by the
+    single-factor login path and the 2FA challenge so last_login bookkeeping
+    and the open-redirect guard live in one place."""
+    session.clear()
+    session['user_id'] = user_id
+    session['username'] = username
+    db.execute('UPDATE users SET last_login=? WHERE id=?',
+               (datetime.utcnow().isoformat(timespec='seconds'), user_id))
+    db.commit()
+    # Reject off-site redirects for safety.
+    if not next_url or not next_url.startswith('/'):
+        next_url = url_for('dashboard.index')
+    return redirect(next_url)
+
+
+@bp.route('/totp', methods=['GET', 'POST'])
+@_limit('10 per 5 minutes')
+def totp_challenge():
+    """Second-factor gate for accounts with 2FA enabled (#265).
+
+    Reachable only mid-login: `login()` sets `totp_pending_user_id` after a
+    correct password but withholds the session until a valid TOTP lands here.
+    No pending marker → nothing to challenge, so bounce to /auth/login. The
+    endpoint is in `_AUTH_EXEMPT_ENDPOINTS` (the user isn't logged in yet) and
+    rate-limited to blunt code brute-forcing."""
+    pending_uid = session.get('totp_pending_user_id')
+    if not pending_uid:
+        return redirect(url_for('auth.login'))
+    db = get_db()
+
+    if request.method == 'POST':
+        row = db.execute(
+            'SELECT secret, confirmed_at FROM user_totp WHERE user_id = ?',
+            (pending_uid,)
+        ).fetchone()
+        if not row or not row['confirmed_at']:
+            # 2FA was turned off out from under this half-finished login (e.g. a
+            # password reset in another tab cleared it). Drop the pending state
+            # and send them back to a clean sign-in.
+            _clear_totp_pending()
+            flash('Two-factor authentication is no longer required. '
+                  'Please sign in again.', 'info')
+            return redirect(url_for('auth.login'))
+        if mfa.verify_code(row['secret'], request.form.get('code') or ''):
+            return _finalize_login(
+                db, pending_uid,
+                session.get('totp_pending_username') or '',
+                session.get('totp_pending_next') or url_for('dashboard.index'),
+            )
+        flash('That code didn\'t match. Check your authenticator and try again.',
+              'danger')
+
+    return render_template('auth/totp.html')
+
+
+def _clear_totp_pending():
+    for key in ('totp_pending_user_id', 'totp_pending_username', 'totp_pending_next'):
+        session.pop(key, None)
 
 
 @bp.route('/logout', methods=['GET', 'POST'])
@@ -267,12 +345,17 @@ def logout():
 def register():
     db = get_db()
     is_bootstrap = _no_users(db)
-    if not is_bootstrap and not _registration_open():
+    # A valid invite (#274) opens registration even when it's otherwise closed,
+    # and pins the email to the invited address.
+    invite = lookup_invite(db, request.values.get('invite'))
+    invite_token = invite['token'] if invite else None
+    invited_email = invite['email'] if invite else None
+    if not is_bootstrap and not _registration_open() and not invite:
         return ('Registration is closed.', 403)
 
     if request.method == 'POST':
         username = (request.form.get('username') or '').strip()
-        email = (request.form.get('email') or '').strip() or None
+        email = invited_email or ((request.form.get('email') or '').strip() or None)
         display_name = (request.form.get('display_name') or '').strip() or None
         password = request.form.get('password') or ''
         confirm = request.form.get('confirm') or ''
@@ -301,7 +384,10 @@ def register():
             return render_template('auth/register.html',
                                    username=username, email=email or '',
                                    display_name=display_name or '',
-                                   is_bootstrap=is_bootstrap)
+                                   is_bootstrap=is_bootstrap,
+                                   invite_token=invite_token,
+                                   invited_email=invited_email,
+                                   signin_providers=pi.enabled_signin_providers())
 
         cur = db.execute(
             'INSERT INTO users (username, email, password_hash, display_name) '
@@ -310,16 +396,38 @@ def register():
         )
         new_user_id = cur.lastrowid
         # Seed the new user's current_rx so /rx isn't blank on their first
-        # session. Idempotent via composite UNIQUE(user_id, exercise) —
-        # safe to re-run from the next cold-start init pass too.
+        # session, from the canonical layer0 strength catalog (Slice C). De-duped
+        # by EX-id + idempotent via UNIQUE(user_id, exercise) — safe to re-run
+        # from the next cold-start init pass too.
         try:
-            from init_db import _seed_current_rx_for_user
-            is_pg = bool(os.environ.get('DATABASE_URL'))
-            _seed_current_rx_for_user(db, new_user_id, is_postgres=is_pg)
+            from init_db import (_seed_current_rx_for_user,
+                                 _layer0_strength_seed_rows)
+            _seed_current_rx_for_user(db, new_user_id,
+                                      _layer0_strength_seed_rows(db))
         except Exception:
             # Don't block registration on a seed failure — init will retry.
             pass
         db.commit()
+
+        if invite:
+            # Invite acceptance proves control of the email (the link was
+            # delivered to it and presented back), so the account starts
+            # verified and the invite is marked used (#274).
+            db.execute('UPDATE users SET email_verified = TRUE WHERE id = ?',
+                       (new_user_id,))
+            db.execute('UPDATE user_invites SET accepted_at = ?, '
+                       'accepted_user_id = ? WHERE token = ?',
+                       (datetime.utcnow().isoformat(timespec='seconds'),
+                        new_user_id, invite_token))
+            db.commit()
+        elif email:
+            # Confirm the email if one was given (#251). Best-effort: a mail
+            # failure must not block registration — the athlete can resend from
+            # account settings.
+            try:
+                send_verification_email(db, new_user_id, email)
+            except Exception:
+                pass
 
         session.clear()
         session['user_id'] = new_user_id
@@ -335,8 +443,12 @@ def register():
         return redirect(url_for('onboarding.connect'))
 
     return render_template('auth/register.html',
-                           username='', email='', display_name='',
-                           is_bootstrap=is_bootstrap)
+                           username='', email=invited_email or '',
+                           display_name='',
+                           is_bootstrap=is_bootstrap,
+                           invite_token=invite_token,
+                           invited_email=invited_email,
+                           signin_providers=pi.enabled_signin_providers())
 
 
 # ── Password reset ───────────────────────────────────────────────────────────
@@ -423,6 +535,13 @@ def reset(token):
                    (_hash_password(password), row['user_id']))
         db.execute('UPDATE password_resets SET used_at = ? WHERE token = ?',
                    (datetime.utcnow().isoformat(timespec='seconds'), token))
+        # Recovery path for a lost authenticator (#265, Andy 2026-06-21): a
+        # completed reset also clears any 2FA enrollment, so an athlete locked
+        # out of their TOTP app gets back in via the email reset flow rather
+        # than one-time backup codes. Proving control of the registered email
+        # is the recovery factor. The athlete can re-enable 2FA from /profile
+        # afterwards.
+        mfa.disable(db, row['user_id'])
         db.commit()
         # Clear any active session — the user can sign back in with the new
         # password. Defends against an attacker who hijacked a session via
@@ -453,6 +572,212 @@ def _send_password_reset_email(to_address: str, display_name: str, reset_url: st
 <p><a href="{reset_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Set a new password</a></p>
 <p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{reset_url}</span></p>
 <p style="font-size:12px;color:#666;">The link expires in {PASSWORD_RESET_TTL_MIN} minutes and can only be used once. If you didn't request a reset, you can ignore this email — your account is unchanged.</p>
+<p style="font-size:12px;color:#666;">— AIDSTATION</p>
+</body></html>"""
+    send_email(to_address, subject, text, html)
+
+
+# ── Email verification ─────────────────────────────────────────────────────
+
+def issue_email_verification(db, user_id: int, email: str) -> str:
+    """Create a single-use, time-limited verification token for `email` and
+    return it. Caller is responsible for actually sending the link (so the
+    DB write is testable without a mail round-trip)."""
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(hours=EMAIL_VERIFY_TTL_HOURS)
+    db.execute(
+        'INSERT INTO email_verifications (token, user_id, email, expires_at) '
+        'VALUES (?,?,?,?)',
+        (token, user_id, email, expires.isoformat(timespec='seconds')),
+    )
+    db.commit()
+    return token
+
+
+def consume_email_verification(db, token: str) -> tuple[str, int | None]:
+    """Validate `token` and, on success, mark the user's email verified and the
+    token used. Returns (status, user_id):
+
+      - ('ok', uid)       — verified; flag flipped, token consumed.
+      - ('invalid', None) — no such token.
+      - ('used', uid)     — already consumed.
+      - ('expired', uid)  — past its TTL.
+      - ('stale', uid)    — the account's email changed since the token was
+                            issued, so it no longer applies (don't verify a
+                            stale address).
+
+    No login required — possession of the token is the proof, exactly like the
+    password-reset link.
+    """
+    row = db.execute(
+        'SELECT ev.user_id, ev.email, ev.expires_at, ev.used_at, '
+        '       u.email AS current_email '
+        '  FROM email_verifications ev '
+        '  JOIN users u ON u.id = ev.user_id '
+        ' WHERE ev.token = ?',
+        (token,),
+    ).fetchone()
+    if not row:
+        return ('invalid', None)
+    uid = row['user_id']
+    if row['used_at']:
+        return ('used', uid)
+    expires_at = row['expires_at']
+    expires_dt = (expires_at if isinstance(expires_at, datetime)
+                  else datetime.fromisoformat(str(expires_at)))
+    if expires_dt < datetime.utcnow():
+        return ('expired', uid)
+    # The token verifies one specific address; if the athlete has since changed
+    # their email, this token is moot (a fresh one would've been issued).
+    if (row['current_email'] or '').lower() != (row['email'] or '').lower():
+        return ('stale', uid)
+    db.execute('UPDATE users SET email_verified = TRUE WHERE id = ?', (uid,))
+    db.execute('UPDATE email_verifications SET used_at = ? WHERE token = ?',
+               (datetime.utcnow().isoformat(timespec='seconds'), token))
+    db.commit()
+    return ('ok', uid)
+
+
+def send_verification_email(db, user_id: int, email: str) -> bool:
+    """Issue a token and email the verification link. Returns True if the mail
+    was put on the wire (False when email isn't configured — the link is still
+    printed to logs by send_email's dev fallback). No-op (False) for a blank
+    email."""
+    if not email:
+        return False
+    token = issue_email_verification(db, user_id, email)
+    verify_url = url_for('auth.verify_email', token=token, _external=True)
+    _send_verification_email(email, verify_url)
+    print(f'[email-verify] issued user={user_id}')  # Rule #15 — no token logged
+    return True
+
+
+def _send_verification_email(to_address: str, verify_url: str) -> None:
+    subject = 'AIDSTATION — confirm your email'
+    text = (
+        f'Confirm this email address for your AIDSTATION account:\n\n'
+        f'  {verify_url}\n\n'
+        f'The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn\'t '
+        f'create an AIDSTATION account, you can ignore this email.\n\n'
+        f'— AIDSTATION\n'
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
+<p>Confirm this email address for your AIDSTATION account:</p>
+<p><a href="{verify_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Confirm email</a></p>
+<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{verify_url}</span></p>
+<p style="font-size:12px;color:#666;">The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn't create an AIDSTATION account, you can ignore this email.</p>
+<p style="font-size:12px;color:#666;">— AIDSTATION</p>
+</body></html>"""
+    send_email(to_address, subject, text, html)
+
+
+@bp.route('/verify/<token>', methods=['GET'])
+def verify_email(token):
+    """Complete email verification from the link. Works logged-out (the token
+    is the proof). Flips `users.email_verified` and lands the athlete on a
+    sensible next screen with a flash."""
+    db = get_db()
+    status, _uid = consume_email_verification(db, token)
+    messages = {
+        'ok': ('Email confirmed. Thanks!', 'success'),
+        'used': ('That link was already used — your email is confirmed.', 'info'),
+        'expired': ('That confirmation link has expired. Request a new one from '
+                    'your account settings.', 'warning'),
+        'stale': ('That link was for a different email address. Request a new '
+                  'one from your account settings.', 'warning'),
+        'invalid': ('That confirmation link is invalid.', 'danger'),
+    }
+    msg, category = messages.get(status, messages['invalid'])
+    flash(msg, category)
+    if current_user_id():
+        return redirect(url_for('profile.account_settings'))
+    return redirect(url_for('auth.login'))
+
+
+@bp.route('/verify/resend', methods=['POST'])
+@_limit('5 per 15 minutes')
+def resend_verification():
+    """Re-send the verification link to the logged-in athlete's current email.
+    Used from account settings and by athletes confirming a provider-seeded
+    address."""
+    db = get_db()
+    uid = current_user_id()
+    if not uid:
+        return redirect(url_for('auth.login'))
+    row = db.execute(
+        'SELECT email, email_verified FROM users WHERE id = ?', (uid,)
+    ).fetchone()
+    if not row or not row['email']:
+        flash('Add an email to your account first, then confirm it.', 'warning')
+    elif row['email_verified']:
+        flash('Your email is already confirmed.', 'info')
+    else:
+        send_verification_email(db, uid, row['email'])
+        flash(f'Confirmation link sent to {row["email"]}. Check your inbox '
+              f'(and spam folder).', 'info')
+    return redirect(url_for('profile.account_settings'))
+
+
+# ── Admin invites ──────────────────────────────────────────────────────────
+
+def issue_invite(db, email: str, created_by: int) -> str:
+    """Create a single-use, time-limited invite token for `email`. Returns the
+    token; caller sends the link."""
+    token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS)
+    db.execute(
+        'INSERT INTO user_invites (token, email, created_by, expires_at) '
+        'VALUES (?,?,?,?)',
+        (token, email, created_by, expires.isoformat(timespec='seconds')),
+    )
+    db.commit()
+    return token
+
+
+def lookup_invite(db, token):
+    """Return the invite row if `token` is valid (exists, unaccepted,
+    unexpired), else None. The gate for invite-only registration."""
+    if not token:
+        return None
+    row = db.execute(
+        'SELECT token, email, accepted_at, expires_at FROM user_invites '
+        'WHERE token = ?', (token,)
+    ).fetchone()
+    if not row or row['accepted_at']:
+        return None
+    expires_at = row['expires_at']
+    expires_dt = (expires_at if isinstance(expires_at, datetime)
+                  else datetime.fromisoformat(str(expires_at)))
+    if expires_dt < datetime.utcnow():
+        return None
+    return row
+
+
+def send_invite_email(db, email: str, created_by: int) -> str:
+    """Issue an invite token and email the registration link. Returns the token
+    (False-y send still logs the link via send_email's dev fallback)."""
+    token = issue_invite(db, email, created_by)
+    invite_url = url_for('auth.register', invite=token, _external=True)
+    _send_invite_email(email, invite_url)
+    print(f'[invite] issued to {email} by user={created_by}')  # Rule #15 — no token
+    return token
+
+
+def _send_invite_email(to_address: str, invite_url: str) -> None:
+    subject = "You're invited to AIDSTATION"
+    text = (
+        f'You\'ve been invited to AIDSTATION. Create your account here:\n\n'
+        f'  {invite_url}\n\n'
+        f'The link expires in {INVITE_TTL_DAYS} days.\n\n'
+        f'— AIDSTATION\n'
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
+<p>You've been invited to AIDSTATION.</p>
+<p><a href="{invite_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Create your account</a></p>
+<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{invite_url}</span></p>
+<p style="font-size:12px;color:#666;">The link expires in {INVITE_TTL_DAYS} days.</p>
 <p style="font-size:12px;color:#666;">— AIDSTATION</p>
 </body></html>"""
     send_email(to_address, subject, text, html)
