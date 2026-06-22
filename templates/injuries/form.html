@@ -10,6 +10,8 @@
 <div class="card card-pad sec">
   <form method="post" class="log-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {# #886 — round-trip back to the profile Health tab when launched from there. #}
+    {% if return_to %}<input type="hidden" name="return" value="{{ return_to }}">{% endif %}
     <div class="row">
       <label class="field col"><span class="lbl">Start date</span>
         <input type="date" name="start_date" class="form-control form-control-sm" required value="{{ entry.start_date if entry else '' }}"></label>
@@ -60,7 +62,11 @@
 
     <div class="form-actions">
       <button type="submit" class="btn btn-primary btn-sm">{{ 'Update entry' if entry else 'Save entry' }}</button>
+      {% if return_to == 'profile' %}
+      <a href="{{ url_for('profile.edit', tab='supplements') }}#injuries" class="btn btn-ghost btn-sm">Cancel</a>
+      {% else %}
       <a href="{{ url_for('injuries.list_entries') }}" class="btn btn-ghost btn-sm">Cancel</a>
+      {% endif %}
     </div>
   </form>
 </div>

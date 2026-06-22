@@ -370,12 +370,16 @@ import athlete_supplements_repo as _supp_repo  # noqa: E402
 
 class _SuppConn(_Conn):
     """Adds canned rows for the supplement vocab + the athlete's records, plus
-    the §B health-condition / medication capture lists."""
-    def __init__(self, vocab=(), supps=(), conditions=(), medications=(), **kw):
+    the §B health-condition / medication capture lists, the resolved-condition
+    history (#893), and the Health-tab injury list (#886)."""
+    def __init__(self, vocab=(), supps=(), conditions=(), medications=(),
+                 resolved_conditions=(), injuries=(), **kw):
         super().__init__(**kw)
         self._vocab = list(vocab)
         self._supps = list(supps)
         self._conditions = list(conditions)
+        self._resolved_conditions = list(resolved_conditions)
+        self._injuries = list(injuries)
         self._medications = list(medications)
 
     def execute(self, sql, *a, **k):
@@ -384,8 +388,16 @@ class _SuppConn(_Conn):
             return _Cursor(self._vocab)
         if 'FROM athlete_supplements' in s:
             return _Cursor(self._supps)
+        if 'FROM injury_log' in s:
+            return _Cursor(self._injuries)
         if 'FROM health_conditions_log' in s:
-            return _Cursor(self._conditions)
+            # profile.edit reads active + resolved separately — same SQL text,
+            # different bound status — so branch on the status param to keep the
+            # two lists distinct.
+            params = a[0] if a else ()
+            status = params[1] if len(params) > 1 else 'Active'
+            return _Cursor(self._resolved_conditions if status == 'Resolved'
+                           else self._conditions)
         if 'FROM medications_log' in s:
             return _Cursor(self._medications)
         return super().execute(sql, *a, **k)
@@ -645,3 +657,183 @@ def test_severity_cleaner():
     assert _hi_repo.clean_severity('3') == 3
     assert _hi_repo.clean_severity('0') is None and _hi_repo.clean_severity('6') is None
     assert _hi_repo.clean_severity('') is None and _hi_repo.clean_severity(None) is None
+
+
+# ── #886 injuries on the Health tab + #893 condition edit / resolve history ───
+
+def test_health_tab_relabeled_and_lists_injuries(monkeypatch):
+    # The profile sub-tab is now "Health" (was "Supplements") and surfaces the
+    # injury log — active + historical — with edit/log/delete that round-trip
+    # back to the profile via ?return=profile.
+    injuries = [
+        _FakeRow(id=8, body_part='Left Knee', status='Active', severity='Acute',
+                 start_date='2026-05-01', resolved_date=None, description='ACL tweak'),
+        _FakeRow(id=9, body_part='Right Ankle', status='Resolved', severity=None,
+                 start_date='2025-09-01', resolved_date='2025-12-01', description=None),
+    ]
+    client = _client(monkeypatch, _SuppConn(
+        injuries=injuries, profile={'primary_sport': 'run', 'updated_at': 'x'}))
+    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
+    # Tab relabeled (the conn-tab-label span, not the "Health conditions" card).
+    assert '>Health</span>' in html
+    assert 'injuries · conditions · meds' in html
+    # Injury card + both records (active + historical) render.
+    assert 'id="injuries"' in html
+    assert 'Left Knee' in html and 'ACL tweak' in html
+    assert 'Right Ankle' in html
+    # Edit / log / delete are wired with the profile round-trip flag, and the
+    # full log (per-exercise modifications) is linked.
+    assert '/injuries/8/edit?return=profile' in html
+    assert '/injuries/new?return=profile' in html
+    assert '/injuries/9/delete' in html
+    assert 'name="return" value="profile"' in html
+    assert 'href="/injuries"' in html
+    assert 'style="' not in html
+
+
+def test_health_tab_conditions_edit_resolve_and_history(monkeypatch):
+    active = [_FakeRow(id=3, system_category='cardiac', condition_name='Afib',
+                       severity=2, notes='controlled', status='Active',
+                       start_date=None, resolved_date=None)]
+    resolved = [_FakeRow(id=4, system_category='respiratory', condition_name='Asthma',
+                         severity=None, notes=None, status='Resolved',
+                         start_date=None, resolved_date='2026-04-01')]
+    client = _client(monkeypatch, _SuppConn(
+        conditions=active, resolved_conditions=resolved,
+        profile={'primary_sport': 'run', 'updated_at': 'x'}))
+    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
+    # Active row: inline edit (collapse) + resolve + delete all wired.
+    assert 'id="hc-edit-3"' in html
+    assert '/profile/condition/3/edit' in html
+    assert '/profile/condition/3/resolve' in html
+    assert '/profile/condition/3/delete' in html
+    # The edit form pre-fills the stored name.
+    assert 'value="Afib"' in html
+    # Resolved-history section: reactivate wired + resolved date shown.
+    assert 'Resolved (history)' in html
+    assert 'Asthma' in html
+    assert '/profile/condition/4/reactivate' in html
+    assert 'resolved 2026-04-01' in html
+    assert 'style="' not in html
+
+
+def test_condition_update_route_is_user_scoped(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'update_health_condition',
+                        lambda db, uid, cid, **kw: calls.append((uid, cid, kw)) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/condition/3/edit', data={
+        'system_category': 'cardiac', 'condition_name': 'SVT',
+        'severity': '4', 'notes': 'mild'})
+    assert resp.status_code in (302, 303)
+    assert 'tab=supplements' in resp.headers['Location']
+    uid, cid, kw = calls[0]
+    assert uid == 1 and cid == 3                       # scoped on session user
+    assert kw['system_category'] == 'cardiac' and kw['condition_name'] == 'SVT'
+    assert kw['severity'] == 4 and kw['notes'] == 'mild'
+
+
+def test_condition_resolve_route_stamps_date(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'set_health_condition_status',
+                        lambda db, uid, cid, **kw: calls.append((uid, cid, kw)) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/condition/3/resolve', data={})
+    assert resp.status_code in (302, 303)
+    uid, cid, kw = calls[0]
+    assert uid == 1 and cid == 3 and kw['status'] == 'Resolved'
+    assert kw['resolved_date']                          # a date was stamped
+
+
+def test_condition_reactivate_route_clears_date(monkeypatch):
+    calls = []
+    monkeypatch.setattr(_profile, 'set_health_condition_status',
+                        lambda db, uid, cid, **kw: calls.append((uid, cid, kw)) or True)
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/profile/condition/3/reactivate', data={})
+    assert resp.status_code in (302, 303)
+    uid, cid, kw = calls[0]
+    assert kw['status'] == 'Active' and kw['resolved_date'] is None
+
+
+class _RecConn:
+    """Records (normalized-SQL, params) for repo-level write-path assertions."""
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((' '.join(sql.split()), params))
+        return _Cursor([])
+
+
+def test_update_health_condition_validates_and_scopes():
+    # Unknown category → no update.
+    db = _RecConn()
+    assert _hi_repo.update_health_condition(
+        db, 1, 9, system_category='bogus', condition_name='x',
+        severity=None, notes=None) is False
+    assert not any('UPDATE' in s for s, _ in db.calls)
+    # Blank name → no update.
+    db = _RecConn()
+    assert _hi_repo.update_health_condition(
+        db, 1, 9, system_category='cardiac', condition_name='   ',
+        severity=None, notes=None) is False
+    assert not any('UPDATE' in s for s, _ in db.calls)
+    # Valid → UPDATE scoped on (condition_id, user_id) at the tail.
+    db = _RecConn()
+    assert _hi_repo.update_health_condition(
+        db, 1, 9, system_category='cardiac', condition_name='Afib',
+        severity=2, notes='n') is True
+    upd = next(c for c in db.calls if 'UPDATE health_conditions_log' in c[0])
+    assert upd[1][-2:] == (9, 1)
+
+
+def test_set_health_condition_status_validates_and_scopes():
+    # Unknown status → no write.
+    db = _RecConn()
+    assert _hi_repo.set_health_condition_status(db, 1, 9, status='Bogus') is False
+    assert not db.calls
+    # Resolve stamps the date and scopes on (condition_id, user_id).
+    db = _RecConn()
+    assert _hi_repo.set_health_condition_status(
+        db, 1, 9, status='Resolved', resolved_date='2026-06-22') is True
+    assert db.calls[0][0].startswith('UPDATE health_conditions_log')
+    assert db.calls[0][1] == ('Resolved', '2026-06-22', 9, 1)
+
+
+def test_list_health_conditions_filters_by_status():
+    db = _RecConn()
+    _hi_repo.list_health_conditions(db, 1)                       # default Active
+    _hi_repo.list_health_conditions(db, 1, status='Resolved')
+    assert db.calls[0][1] == (1, 'Active')
+    assert db.calls[1][1] == (1, 'Resolved')
+
+
+# ── #886 injury routes round-trip back to the profile when launched there ─────
+
+def test_injury_delete_returns_to_profile(monkeypatch):
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/injuries/5/delete', data={'return': 'profile'})
+    assert resp.status_code in (302, 303)
+    loc = resp.headers['Location']
+    assert '/profile/' in loc and 'tab=supplements' in loc
+
+
+def test_injury_delete_defaults_to_injury_log(monkeypatch):
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.post('/injuries/5/delete', data={})
+    assert resp.status_code in (302, 303)
+    assert resp.headers['Location'].endswith('/injuries')
+
+
+def test_injury_new_form_carries_return_flag(monkeypatch):
+    client = _client(monkeypatch, _Conn(profile={}))
+    html = client.get('/injuries/new?return=profile').get_data(as_text=True)
+    # Hidden field threads the round-trip; Cancel points back to the profile.
+    assert 'name="return" value="profile"' in html
+    assert '/profile/?tab=supplements#injuries' in html

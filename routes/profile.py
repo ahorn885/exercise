@@ -82,6 +82,7 @@ from athlete_supplements_repo import (
 )
 from health_inputs_repo import (
     list_health_conditions, add_health_condition, delete_health_condition,
+    update_health_condition, set_health_condition_status,
     list_medications, add_medication, delete_medication, clean_severity,
     SYSTEM_CATEGORY_CHOICES, MEDICATION_CLASS_CHOICES,
     SYSTEM_CATEGORY_LABELS, MEDICATION_CLASS_LABELS,
@@ -518,9 +519,23 @@ def edit():
     # vocab that powers the add-supplement picker.
     supplements = list_athlete_supplements(db, uid)
     supplement_vocab = load_supplement_vocab(db)
-    # §B health inputs — feed the Layer 2E contraindication screening.
-    health_conditions = list_health_conditions(db, uid)
+    # §B health inputs — feed the Layer 2E contraindication screening. Active
+    # conditions screen supplements; resolved ones are kept as history (#893)
+    # so the athlete can review/reactivate without re-typing.
+    health_conditions = list_health_conditions(db, uid, status='Active')
+    resolved_conditions = list_health_conditions(db, uid, status='Resolved')
     medications = list_medications(db, uid)
+    # #886 — the injury log surfaced on the Health tab: all statuses (active +
+    # historical), active/managing first, so historical injuries are editable
+    # here. The full per-injury exercise-modification editor stays on /injuries.
+    injuries = db.execute(
+        "SELECT id, body_part, status, severity, start_date, resolved_date, "
+        "       description "
+        "  FROM injury_log WHERE user_id = ? "
+        " ORDER BY CASE status WHEN 'Active' THEN 0 WHEN 'Managing' THEN 1 "
+        "          ELSE 2 END, start_date DESC",
+        (uid,),
+    ).fetchall()
     # §C pack-load history — load-carriage base, summarized into Layer 3B.
     pack_loads = list_pack_loads(db, uid)
 
@@ -542,6 +557,8 @@ def edit():
         supplements=supplements,
         supplement_vocab=supplement_vocab,
         health_conditions=health_conditions,
+        resolved_conditions=resolved_conditions,
+        injuries=injuries,
         medications=medications,
         pack_loads=pack_loads,
         system_category_choices=SYSTEM_CATEGORY_CHOICES,
@@ -1041,7 +1058,56 @@ def add_condition():
         flash('Health condition added.', 'success')
     else:
         flash('Pick a category and enter a condition name.', 'danger')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+
+
+@bp.route('/condition/<int:condition_id>/edit', methods=['POST'])
+def update_condition(condition_id):
+    """Edit one health condition's fields (#893). The edit form uses a plain
+    text condition_name (not the system-filtered add picker), so we read it
+    directly. A tampered category or blank name is rejected (no update)."""
+    db = get_db()
+    ok = update_health_condition(
+        db, current_user_id(), condition_id,
+        system_category=(request.form.get('system_category') or '').strip(),
+        condition_name=(request.form.get('condition_name') or '').strip(),
+        severity=clean_severity(request.form.get('severity')),
+        notes=(request.form.get('notes') or '').strip() or None,
+    )
+    if ok:
+        db.commit()
+        flash('Health condition updated.', 'success')
+    else:
+        flash('Pick a category and enter a condition name.', 'danger')
+    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+
+
+@bp.route('/condition/<int:condition_id>/resolve', methods=['POST'])
+def resolve_condition(condition_id):
+    """Mark a condition resolved (#893) — stamps today's resolved_date and
+    drops it from the active set that feeds Layer 2E screening."""
+    from datetime import date as _date
+    db = get_db()
+    set_health_condition_status(
+        db, current_user_id(), condition_id,
+        status='Resolved', resolved_date=_date.today().isoformat(),
+    )
+    db.commit()
+    flash('Health condition marked resolved.', 'info')
+    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
+
+
+@bp.route('/condition/<int:condition_id>/reactivate', methods=['POST'])
+def reactivate_condition(condition_id):
+    """Move a resolved condition back to active (#893) — clears resolved_date
+    and re-enters it into Layer 2E screening."""
+    db = get_db()
+    set_health_condition_status(
+        db, current_user_id(), condition_id, status='Active', resolved_date=None,
+    )
+    db.commit()
+    flash('Health condition reactivated.', 'info')
+    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
 
 
 @bp.route('/condition/<int:condition_id>/delete', methods=['POST'])
@@ -1051,7 +1117,7 @@ def delete_condition(condition_id):
     delete_health_condition(db, current_user_id(), condition_id)
     db.commit()
     flash('Health condition removed.', 'info')
-    return redirect(url_for('profile.edit'))
+    return redirect(url_for('profile.edit', tab='supplements') + '#conditions')
 
 
 @bp.route('/medication/add', methods=['POST'])

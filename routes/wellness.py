@@ -118,6 +118,16 @@ def index():
         (uid, cutoff)
     ).fetchall()
 
+    # #893 — readable history of the self-reports in range (charts feed off the
+    # ASC rows above; this is the newest-first list view, with id + notes for
+    # per-entry edit/delete). Edit deep-links back to the form via `?date=`.
+    self_report_history = db.execute(
+        'SELECT id, date, sleep_hours, sleep_quality, energy, soreness, mood, notes '
+        'FROM wellness_self_report WHERE user_id=? AND date >= ? '
+        'ORDER BY date DESC',
+        (uid, cutoff)
+    ).fetchall()
+
     body_rows = db.execute(
         'SELECT date, weight_kg, body_fat_pct, resting_hr, vo2_max '
         'FROM body_metrics WHERE user_id=? AND date >= ? ORDER BY date',
@@ -300,6 +310,7 @@ def index():
         today_iso=today_iso,
         picked_iso=picked_iso,
         picked_row=dict(picked_row) if picked_row else {},
+        self_report_history=[dict(r) for r in self_report_history],
         range_days=range_days,
         range_choices=sorted(_RANGE_CHOICES.values()),
         chart_data=chart_data,
@@ -307,6 +318,20 @@ def index():
         headline=_build_headline_strip(chart_data),
         provider_count=len(provider_slugs()),
     )
+
+
+@bp.route('/wellness/self-report/<int:report_id>/delete', methods=['POST'])
+def delete_self_report(report_id):
+    """Delete one self-report entry (#893). Scoped on user_id so a crafted POST
+    can't reach another athlete's row. Preserves the range filter on redirect."""
+    db = get_db()
+    db.execute(
+        'DELETE FROM wellness_self_report WHERE id=? AND user_id=?',
+        (report_id, current_user_id())
+    )
+    db.commit()
+    flash('Self-report deleted.', 'warning')
+    return redirect(url_for('wellness.index', range=request.form.get('range') or ''))
 
 
 def _save_self_report(db, uid):

@@ -1,9 +1,55 @@
-{# Profile › Supplements tab (#619) — structured supplement / health-condition /
-   medication capture, moved out of the Athlete tab into its own surface. Each
-   add/delete is its own form (can't nest inside the main profile form); mirrors
-   the coach-memory editor. All context vars (supplements, supplement_vocab,
-   health_conditions, medications, *_labels, *_choices) are always loaded by
-   profile.edit regardless of the active tab. #}
+{# Profile › Health tab (#619, #886, #893) — injuries + structured supplement /
+   health-condition / medication capture, on the Athlete profile. Each
+   add/edit/delete is its own form (can't nest inside the main profile form);
+   mirrors the coach-memory editor. All context vars (injuries, supplements,
+   supplement_vocab, health_conditions, resolved_conditions, medications,
+   *_labels, *_choices) are always loaded by profile.edit regardless of the
+   active tab. #}
+
+{# #886 — the injury log, surfaced on the Health tab. Lists every injury (active
+   + historical) so historical ones are editable here; Edit/Log open the full
+   injury editor (which also manages per-exercise modifications) and return here
+   on save. #}
+<div class="card card-pad stack pf-nutrition" id="injuries">
+  <div class="supp-card-head">
+    <div>
+      <p class="eyebrow">● Injuries</p>
+      <p class="pf-hint">Active and historical injuries the coach programs around. Edit any of them —
+        including resolved ones — or open the full log to set per-exercise modifications.</p>
+    </div>
+    <a href="{{ url_for('injuries.new_entry') }}?return=profile" class="btn btn-primary btn-sm">Log injury</a>
+  </div>
+
+  {% if injuries %}
+  <ul class="supp-list">
+    {% for e in injuries %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="chip {% if e.status == 'Active' %}bad{% elif e.status == 'Managing' %}warn{% else %}good{% endif %}">{{ e.status }}</span>
+        <span class="supp-name">{{ e.body_part or 'Injury' }}</span>
+        {% if e.severity %}<span class="chip">{{ e.severity }}</span>{% endif %}
+        <span class="rail-note">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
+        {% if e.description %}<span class="rail-note">· {{ e.description }}</span>{% endif %}
+      </div>
+      <div class="supp-act">
+        <a href="{{ url_for('injuries.edit_entry', entry_id=e.id) }}?return=profile" class="btn btn-text">Edit</a>
+        <form method="post" action="{{ url_for('injuries.delete_entry', entry_id=e.id) }}"
+              data-confirm="Delete injury and all its exercise modifications?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return" value="profile">
+          <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ e.body_part }} injury">Remove</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="pf-hint"><a href="{{ url_for('injuries.list_entries') }}">Open the full injury log →</a></p>
+  {% else %}
+  <p class="pf-hint">No injuries logged. Train freely — or
+    <a href="{{ url_for('injuries.new_entry') }}?return=profile">log one</a> if something's bugging you.</p>
+  {% endif %}
+</div>
+
 <div class="card card-pad stack pf-nutrition">
   <div>
     <p class="eyebrow">● Current supplements</p>
@@ -73,12 +119,14 @@
   {% endif %}
 </div>
 
-{# §B health conditions — feeds the Layer 2E supplement contraindication screen. #}
-<div class="card card-pad stack pf-nutrition">
+{# §B health conditions — feeds the Layer 2E supplement contraindication screen.
+   Active conditions screen supplements; Edit/Resolve let the athlete maintain
+   history (#893) without losing the record. #}
+<div class="card card-pad stack pf-nutrition" id="conditions">
   <div>
     <p class="eyebrow">● Health conditions</p>
     <p class="pf-hint">Active conditions the coach should account for — used to flag supplements
-      that conflict with them. Add only what's current.</p>
+      that conflict with them. Resolve one to keep it as history without screening against it.</p>
   </div>
 
   {% if health_conditions %}
@@ -91,15 +139,45 @@
         {% if c.severity %}<span class="supp-meta">severity {{ c.severity }}/5</span>{% endif %}
         {% if c.notes %}<span class="rail-note">· {{ c.notes }}</span>{% endif %}
       </div>
-      <form method="post" action="{{ url_for('profile.delete_condition', condition_id=c.id) }}">
+      <div class="supp-act">
+        <button type="button" class="btn btn-text" data-bs-toggle="collapse"
+                data-bs-target="#hc-edit-{{ c.id }}" aria-expanded="false">Edit</button>
+        <form method="post" action="{{ url_for('profile.resolve_condition', condition_id=c.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-text">Resolve</button>
+        </form>
+        <form method="post" action="{{ url_for('profile.delete_condition', condition_id=c.id) }}"
+              data-confirm="Delete this condition?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ c.condition_name }}">Remove</button>
+        </form>
+      </div>
+    </li>
+    <li class="supp-edit-li collapse" id="hc-edit-{{ c.id }}">
+      <form method="post" action="{{ url_for('profile.update_condition', condition_id=c.id) }}" class="supp-add pf-grid">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ c.condition_name }}">Remove</button>
+        <label class="field"><span class="lbl">System</span>
+          <select name="system_category" class="form-select form-select-sm" required>
+            {% for value, label in system_category_choices %}
+            <option value="{{ value }}" {% if c.system_category == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select></label>
+        <label class="field"><span class="lbl">Condition</span>
+          <input type="text" name="condition_name" class="form-control form-control-sm"
+                 value="{{ c.condition_name }}" required></label>
+        <label class="field"><span class="lbl">Severity (1–5)</span>
+          <input type="number" name="severity" min="1" max="5" class="form-control form-control-sm"
+                 value="{{ c.severity or '' }}" placeholder="optional"></label>
+        <label class="field field-wide"><span class="lbl">Notes (optional)</span>
+          <input type="text" name="notes" class="form-control form-control-sm"
+                 value="{{ c.notes or '' }}" placeholder="context, management…"></label>
+        <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Save changes</button></div>
       </form>
     </li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="pf-hint">No health conditions added yet.</p>
+  <p class="pf-hint">No active health conditions.</p>
   {% endif %}
 
   <form method="post" action="{{ url_for('profile.add_condition') }}" class="supp-add pf-grid">
@@ -156,6 +234,38 @@
     rebuild();
   })();
   </script>
+
+  {# Resolved / history (#893) — kept for the record, not screened against.
+     Reactivate moves one back into the active set. #}
+  {% if resolved_conditions %}
+  <div class="supp-history-head">
+    <p class="eyebrow">● Resolved (history)</p>
+  </div>
+  <ul class="supp-list">
+    {% for c in resolved_conditions %}
+    <li class="supp-row">
+      <div class="supp-main">
+        <span class="supp-name">{{ c.condition_name }}</span>
+        <span class="chip">{{ system_category_labels.get(c.system_category, c.system_category) }}</span>
+        {% if c.severity %}<span class="supp-meta">severity {{ c.severity }}/5</span>{% endif %}
+        {% if c.resolved_date %}<span class="rail-note">resolved {{ c.resolved_date }}</span>{% endif %}
+        {% if c.notes %}<span class="rail-note">· {{ c.notes }}</span>{% endif %}
+      </div>
+      <div class="supp-act">
+        <form method="post" action="{{ url_for('profile.reactivate_condition', condition_id=c.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-text">Reactivate</button>
+        </form>
+        <form method="post" action="{{ url_for('profile.delete_condition', condition_id=c.id) }}"
+              data-confirm="Delete this condition from history?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-text supp-del" aria-label="Remove {{ c.condition_name }}">Remove</button>
+        </form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 </div>
 
 {# §B medications — feeds the Layer 2E supplement contraindication screen. #}

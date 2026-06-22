@@ -1697,6 +1697,15 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .supp-del { color: var(--fg-3); padding: 4px 8px; flex: none; }
 .app .supp-add { align-items: end; margin-top: 4px; }
 .app .supp-add .supp-add-actions { grid-column: 1 / -1; }
+/* #886/#893 — injury + condition records on the Health tab: a right-aligned
+   action cluster (Edit/Resolve/Remove), a card header with a leading action,
+   the inline edit panel, and the resolved-history subhead. */
+.app .supp-act { display: flex; align-items: center; gap: 4px; flex: none; }
+.app .supp-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.app .supp-edit-li { list-style: none; }
+.app .supp-edit-li .supp-add { border: 1px solid var(--hairline); border-radius: 10px; padding: 12px; }
+.app .supp-history-head { margin-top: 16px; margin-bottom: 4px; }
+.app .supp-history-head .eyebrow { color: var(--fg-3); }
 
 /* §19 Account */
 .app .acct-wrap { max-width: 720px; }
