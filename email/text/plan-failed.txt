@@ -17,4 +17,4 @@ Still off-route after a retry? Reply to this email and we'll plot it by hand —
 ────────────────────────────────────────
 AIDSTATION — the aid station for your training.
 aidstation.pro  ·  {{support_email}}
-AIDSTATION · {{company_address}}
+AIDSTATION{% if company_address %} · {{ company_address }}{% endif %}

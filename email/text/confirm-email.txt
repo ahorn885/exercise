@@ -14,4 +14,4 @@ If you didn't request this, you can safely ignore this email — nothing changes
 ────────────────────────────────────────
 AIDSTATION — the aid station for your training.
 aidstation.pro  ·  {{support_email}}
-AIDSTATION · {{company_address}}
+AIDSTATION{% if company_address %} · {{ company_address }}{% endif %}

@@ -15,4 +15,4 @@ Didn't make this change? Someone may have access to your account. Contact suppor
 ────────────────────────────────────────
 AIDSTATION — the aid station for your training.
 aidstation.pro  ·  {{support_email}}
-AIDSTATION · {{company_address}}
+AIDSTATION{% if company_address %} · {{ company_address }}{% endif %}

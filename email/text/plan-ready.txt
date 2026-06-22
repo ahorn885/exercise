@@ -14,4 +14,4 @@ The route adapts as you go. Log your sessions and AIDSTATION re-draws tomorrow t
 ────────────────────────────────────────
 AIDSTATION — the aid station for your training.
 aidstation.pro  ·  {{support_email}}
-AIDSTATION · {{company_address}}
+AIDSTATION{% if company_address %} · {{ company_address }}{% endif %}

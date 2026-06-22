@@ -28,13 +28,8 @@ this path (plan generation is Postgres-only).
 from __future__ import annotations
 
 from email_helper import send_email
+from email_templates import render_email, public_base_url
 from plan_naming import generated_plan_name, target_race_name
-
-
-# Brand colour reused from the password-reset email (routes/auth.py) so plan
-# mail matches the rest of AIDSTATION's transactional template.
-_BRAND_ORANGE = '#ED7A2D'
-_INK = '#0E0F11'
 
 
 def claim_terminal_notification(db, user_id: int, plan_version_id: int) -> bool:
@@ -95,52 +90,25 @@ def build_notification_email(
     """Return `(subject, text_body, html_body)` for a terminal-status email.
 
     `status` is 'ready' or 'failed'. For 'failed', `error_message` is the
-    user-facing copy already on `generation_error`. `plan_url` may be None
-    (no request context to build it) — the bodies omit the button then.
+    user-facing copy already on `generation_error`. `plan_url` may be None (no
+    request context to build it) — the shared template always renders a CTA, so
+    we fall back to the app origin for the button target.
     """
-    greeting = f'Hi {display_name},' if display_name else 'Hi,'
+    name = display_name or 'athlete'
+    cta_url = plan_url or public_base_url()
     if status == 'ready':
         subject = f'AIDSTATION — your plan "{plan_name}" is ready'
-        lead = (
-            f'Good news — your training plan "{plan_name}" has finished '
-            f'generating and is ready to view.'
+        html_body, text_body = render_email(
+            'plan-ready', display_name=name, plan_name=plan_name,
+            plan_url=cta_url,
         )
-        cta_label = 'View your plan'
     else:
         subject = f'AIDSTATION — couldn\'t generate "{plan_name}"'
         detail = error_message or 'Plan generation failed. Please try again.'
-        lead = (
-            f'We hit a problem generating your training plan "{plan_name}":\n\n'
-            f'  {detail}\n\n'
-            f'You can adjust your inputs and try again.'
+        html_body, text_body = render_email(
+            'plan-failed', display_name=name, plan_name=plan_name,
+            error_message=detail, retry_url=cta_url,
         )
-        cta_label = 'Try again'
-
-    text_lines = [greeting, '', lead]
-    if plan_url:
-        text_lines += ['', f'  {plan_url}']
-    text_lines += ['', '— AIDSTATION', '']
-    text_body = '\n'.join(text_lines)
-
-    # `lead` may carry newlines (the failed branch) — render them as <br> so the
-    # HTML part reads the same as the text part.
-    lead_html = lead.replace('\n', '<br>')
-    button_html = (
-        f'<p><a href="{plan_url}" style="display:inline-block;padding:10px 18px;'
-        f'background:{_BRAND_ORANGE};color:#fff;text-decoration:none;'
-        f'border-radius:4px;">{cta_label}</a></p>'
-        if plan_url else ''
-    )
-    html_body = (
-        f'<!doctype html>\n'
-        f'<html><body style="font-family:system-ui,-apple-system,sans-serif;'
-        f'line-height:1.5;color:{_INK};">\n'
-        f'<p>{greeting}</p>\n'
-        f'<p>{lead_html}</p>\n'
-        f'{button_html}\n'
-        f'<p style="font-size:12px;color:#666;">— AIDSTATION</p>\n'
-        f'</body></html>'
-    )
     return subject, text_body, html_body
 
 

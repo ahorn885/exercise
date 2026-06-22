@@ -31,7 +31,7 @@
       <table role="presentation" class="as-container" width="600" border="0" cellspacing="0" cellpadding="0" style="width:600px;max-width:600px;">
         <tr><td class="as-pad" style="padding:8px 8px 18px;">
           <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0"><tr>
-            <td valign="middle"><img src="aidstation-lockup.png" width="170" height="47" alt="AIDSTATION" style="display:block;width:170px;height:auto;border:0;" /></td>
+            <td valign="middle"><img src="{{ logo_url }}" width="170" height="47" alt="AIDSTATION" style="display:block;width:170px;height:auto;border:0;" /></td>
             <td valign="middle" align="right" style="font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#6E7278;">CHECKPOINT · ID CHANGED</td>
           </tr></table>
         </td></tr>
@@ -76,7 +76,7 @@
               <a class="as-link" href="mailto:{{support_email}}" style="color:#9CA0A6;text-decoration:none;">{{support_email}}</a>
             </td></tr>
             <tr><td style="padding-top:16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:10px;letter-spacing:0.08em;color:#6E7278;">
-              AIDSTATION · {{company_address}}
+              AIDSTATION{% if company_address %} · {{ company_address }}{% endif %}
             </td></tr>
           </table>
         </td></tr>

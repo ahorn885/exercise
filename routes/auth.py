@@ -22,6 +22,7 @@ from zxcvbn import zxcvbn
 import mfa
 from database import get_db
 from email_helper import send_email, email_configured
+from email_templates import render_email, account_security_url, format_timestamp
 from routes import provider_identity as pi
 
 PASSWORD_RESET_TTL_MIN = 30
@@ -499,7 +500,7 @@ def reset(token):
     db = get_db()
     row = db.execute(
         'SELECT pr.token, pr.user_id, pr.expires_at, pr.used_at, '
-        '       u.username, u.display_name '
+        '       u.username, u.display_name, u.email '
         '  FROM password_resets pr '
         '  JOIN users u ON u.id = pr.user_id '
         ' WHERE pr.token = ?',
@@ -543,6 +544,13 @@ def reset(token):
         # afterwards.
         mfa.disable(db, row['user_id'])
         db.commit()
+        # Security receipt to the address on file. Best-effort: the reset is
+        # already committed, so a notification fault must never fail it.
+        try:
+            send_password_changed_email(
+                row['email'], row['display_name'] or row['username'])
+        except Exception as exc:  # noqa: BLE001 — receipt must not break reset
+            print(f'[email] password-changed receipt failed (reset): {exc}')
         # Clear any active session — the user can sign back in with the new
         # password. Defends against an attacker who hijacked a session via
         # a leaked cookie still being authenticated after the reset.
@@ -556,24 +564,29 @@ def reset(token):
 
 def _send_password_reset_email(to_address: str, display_name: str, reset_url: str) -> None:
     subject = 'AIDSTATION — password reset'
-    text = (
-        f'Hi {display_name},\n\n'
-        f'Use this link to set a new AIDSTATION password:\n\n'
-        f'  {reset_url}\n\n'
-        f'The link expires in {PASSWORD_RESET_TTL_MIN} minutes and can only '
-        f'be used once. If you didn\'t request a reset, you can ignore this '
-        f'email — your account is unchanged.\n\n'
-        f'— AIDSTATION\n'
+    html, text = render_email(
+        'password-reset',
+        display_name=display_name or 'there',
+        reset_url=reset_url,
+        expiry=f'{PASSWORD_RESET_TTL_MIN} minutes',
     )
-    html = f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
-<p>Hi {display_name},</p>
-<p>Use this link to set a new AIDSTATION password:</p>
-<p><a href="{reset_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Set a new password</a></p>
-<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{reset_url}</span></p>
-<p style="font-size:12px;color:#666;">The link expires in {PASSWORD_RESET_TTL_MIN} minutes and can only be used once. If you didn't request a reset, you can ignore this email — your account is unchanged.</p>
-<p style="font-size:12px;color:#666;">— AIDSTATION</p>
-</body></html>"""
+    send_email(to_address, subject, text, html)
+
+
+def send_password_changed_email(to_address: str, display_name: str) -> None:
+    """Security receipt for a password change — reset completion (above) or an
+    authenticated change from /profile (`profile.change_password`). Best-effort:
+    callers swallow faults so a receipt problem never blocks the credential
+    update, which is already committed by the time we get here."""
+    if not to_address:
+        return
+    subject = 'AIDSTATION — your password was changed'
+    html, text = render_email(
+        'password-changed',
+        display_name=display_name or 'there',
+        timestamp=format_timestamp(),
+        security_url=account_security_url(),
+    )
     send_email(to_address, subject, text, html)
 
 
@@ -654,21 +667,11 @@ def send_verification_email(db, user_id: int, email: str) -> bool:
 
 def _send_verification_email(to_address: str, verify_url: str) -> None:
     subject = 'AIDSTATION — confirm your email'
-    text = (
-        f'Confirm this email address for your AIDSTATION account:\n\n'
-        f'  {verify_url}\n\n'
-        f'The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn\'t '
-        f'create an AIDSTATION account, you can ignore this email.\n\n'
-        f'— AIDSTATION\n'
+    html, text = render_email(
+        'confirm-email',
+        verify_url=verify_url,
+        expiry=f'{EMAIL_VERIFY_TTL_HOURS} hours',
     )
-    html = f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
-<p>Confirm this email address for your AIDSTATION account:</p>
-<p><a href="{verify_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Confirm email</a></p>
-<p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{verify_url}</span></p>
-<p style="font-size:12px;color:#666;">The link expires in {EMAIL_VERIFY_TTL_HOURS} hours. If you didn't create an AIDSTATION account, you can ignore this email.</p>
-<p style="font-size:12px;color:#666;">— AIDSTATION</p>
-</body></html>"""
     send_email(to_address, subject, text, html)
 
 
