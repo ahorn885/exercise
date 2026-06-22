@@ -387,8 +387,19 @@ def _as_int(value: Any) -> int | None:
 def normalize_wahoo_summary(summary: dict) -> dict:
     """Wahoo `workout_summary` → the shared cardio dict (matrix §10.2 units).
     `workout_type_id` → discipline via the #681 resolver; `work_accum` is joules
-    (÷4184→kcal), falling back to `calories_accum`."""
-    type_id = summary.get('workout_type_id')
+    (÷4184→kcal), falling back to `calories_accum`.
+
+    The live webhook nests the workout's type/name/start under a `workout`
+    sub-object (`workout_summary.workout.*`); only the accumulator metrics sit
+    directly on the summary. Read nested-first with a top-level fallback so a
+    flattened payload still resolves. Verified against a live push (2026-06-22):
+    `workout.workout_type_id=12` (BIKING_INDOOR), `workout.name`, and the summary
+    carries `started_at` (the parser previously read only `starts`/`start_time`/
+    `created_at`, so it fell back to the upload time)."""
+    workout = summary.get('workout') or {}
+    type_id = workout.get('workout_type_id')
+    if type_id is None:
+        type_id = summary.get('workout_type_id')
     res = resolve_cardio_discipline('wahoo', str(type_id) if type_id is not None else None)
     dist_m = summary.get('distance_accum')
     dur_s = summary.get('duration_total_accum')
@@ -397,13 +408,16 @@ def normalize_wahoo_summary(summary: dict) -> dict:
     work_j = summary.get('work_accum')
     calories = summary.get('calories_accum')
     kcal = (float(work_j) * _J_TO_KCAL) if work_j not in (None, '') else None
-    start = summary.get('starts') or summary.get('start_time') or summary.get('created_at')
+    name = workout.get('name') or summary.get('name')
+    start = (summary.get('started_at') or workout.get('starts')
+             or summary.get('starts') or summary.get('start_time')
+             or summary.get('created_at'))
     activity_date = (str(start)[:10] if start else
                      datetime.now(timezone.utc).date().isoformat())
     return {
         'date': activity_date,
         'activity': res.plan_sport_type or 'other',
-        'activity_name': summary.get('name'),
+        'activity_name': name,
         'duration_min': (float(dur_s) / 60) if dur_s not in (None, '') else None,
         'moving_time_min': (float(active_s) / 60) if active_s not in (None, '') else None,
         'distance_mi': (float(dist_m) * _M_TO_MI) if dist_m not in (None, '') else None,
