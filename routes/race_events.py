@@ -59,6 +59,20 @@ from routes.locales import (
     _disclosure_acked,
     _record_disclosure_ack,
 )
+from race_url_parser import (
+    DisciplineOption,
+    RaceURLParseError,
+    RaceURLParseInput,
+    TerrainVocabEntry,
+    fetch_and_reduce,
+    parse_race_url,
+)
+from race_terrain_inference import (
+    TerrainInferenceError,
+    TerrainInferenceInput,
+    infer_terrain,
+)
+from weather_client import get_expected_conditions
 
 
 bp = Blueprint('race_events', __name__, url_prefix='/profile/race-events')
@@ -271,6 +285,134 @@ def _disciplines_for_framework_sport(db, framework_sport: str) -> list[dict]:
          'label': discipline_display_name(r['discipline_id'], r['discipline_name'])}
         for r in cur.fetchall()
     ]
+
+
+# ─── #256/#592 race-detail auto-fill (parse a race URL + terrain fallback) ───
+# Build spec: aidstation-sources/designs/Race_URL_Parser_Spec_v1.md. The two
+# JSON endpoints further down (parse_url + infer_terrain_suggestion) back the
+# "Fetch details from URL" button + the location->terrain fallback; the
+# testable cores are the run_* helpers below (helper-level pytest per this
+# module's convention — full route integration is manual-walkthrough).
+
+
+def _all_disciplines(db) -> list[dict]:
+    """`{id, label}` for every canonical discipline in the bridge (one per id).
+    The race-URL parse passes this as the discipline catalogue the model may
+    pick `included_discipline_ids` from — it infers the sport, so the catalogue
+    can't be pre-filtered to one framework_sport."""
+    cur = db.execute(
+        'SELECT DISTINCT ON (discipline_id) discipline_id, discipline_name '
+        'FROM layer0.sport_discipline_bridge '
+        'WHERE superseded_at IS NULL ORDER BY discipline_id'
+    )
+    return [
+        {'id': r['discipline_id'],
+         'label': discipline_display_name(r['discipline_id'], r['discipline_name'])}
+        for r in cur.fetchall()
+    ]
+
+
+def _terrain_vocab_entries(db) -> tuple[TerrainVocabEntry, ...]:
+    """Race-eligible terrain vocab as the parser/inference value type."""
+    return tuple(TerrainVocabEntry(c['id'], c['label']) for c in _terrain_choices(db))
+
+
+def _discipline_options(rows: list[dict]) -> tuple[DisciplineOption, ...]:
+    return tuple(DisciplineOption(d['id'], d['label']) for d in rows)
+
+
+_PARSE_FAIL_HINT = "Couldn't read race details from that page — fill the form in by hand."
+
+
+def _url_parse_payload(r) -> dict:
+    """Map a RaceURLParseResult to the JSON the form JS pre-fills from."""
+    return {
+        'ok': True,
+        'fields': {
+            'name': r.name,
+            'event_date': r.event_date.isoformat() if r.event_date else None,
+            'race_format': r.race_format,
+            'total_elevation_gain_m': r.total_elevation_gain_m,
+            'location_text': r.location_text,
+            'framework_sport': r.framework_sport,
+            'included_discipline_ids': r.included_discipline_ids,
+            'rules_notes': r.rules_notes,
+        },
+        'distance_options': [
+            {'label': o.label, 'distance_km': o.distance_km,
+             'event_date': o.event_date.isoformat() if o.event_date else None,
+             'elevation_gain_m': o.elevation_gain_m}
+            for o in r.distance_options
+        ],
+        'terrain': (
+            {'entries': [{'terrain_id': e.terrain_id, 'pct_of_race': e.pct_of_race,
+                          'discipline_id': e.discipline_id} for e in r.race_terrain],
+             'pct_basis': r.terrain_pct_basis}
+            if r.race_terrain else None
+        ),
+        'confidence': r.confidence,
+        'summary': r.summary,
+    }
+
+
+def run_url_parse(db, url: str, *, today=None, fetcher=None, parser=None) -> dict:
+    """Testable core of the parse-url endpoint: fetch+reduce -> parse -> JSON
+    payload. Best-effort: a fetch failure or an unrecoverable parse error
+    returns `{ok: False, hint}` so the form is left for manual entry."""
+    reduced = fetch_and_reduce(url, fetcher=fetcher)
+    if reduced is None:
+        return {'ok': False, 'hint': _PARSE_FAIL_HINT}
+    inp = RaceURLParseInput(
+        reduced_page_text=reduced.text, source_url=url,
+        terrain_vocab=_terrain_vocab_entries(db),
+        sport_bridge=_discipline_options(_all_disciplines(db)),
+        today=today or date.today(),
+    )
+    parse = parser or parse_race_url
+    try:
+        result = parse(inp)
+    except RaceURLParseError:
+        return {'ok': False, 'hint': _PARSE_FAIL_HINT}
+    return _url_parse_payload(result)
+
+
+def run_terrain_inference(
+    db, *, lat, lng, place_name=None, event_date=None, race_name=None,
+    distance_km=None, elevation_gain_m=None, race_format=None,
+    framework_sport=None, notes=None, race_url=None, today=None,
+    infer=None, weather=None,
+) -> dict:
+    """Testable core of the infer-terrain endpoint (the #592 subordinate
+    fallback). Runs the terrain inference (only with coords) + the deterministic
+    climate-normals nudge. Best-effort: an inference failure returns terrain
+    None (the athlete sees the empty editor); the conditions half is
+    independent (a page never carries climate normals)."""
+    weather_fn = weather or get_expected_conditions
+    conditions = None
+    if lat is not None and lng is not None and event_date is not None:
+        ec = weather_fn(lat, lng, event_date)
+        conditions = ec.summary_line() if ec else None
+
+    terrain = None
+    if lat is not None and lng is not None:
+        disciplines = _discipline_options(
+            _disciplines_for_framework_sport(db, framework_sport or '')
+        )
+        inp = TerrainInferenceInput(
+            place_name=place_name, lat=lat, lng=lng, race_name=race_name,
+            distance_km=distance_km, elevation_gain_m=elevation_gain_m,
+            race_format=race_format, event_date=event_date, disciplines=disciplines,
+            notes_context=notes, race_url=race_url,
+            terrain_vocab=_terrain_vocab_entries(db), today=today or date.today(),
+        )
+        infer_fn = infer or infer_terrain
+        try:
+            res = infer_fn(inp)
+            terrain = {'entries': res.as_race_terrain(),
+                       'confidence': res.confidence, 'summary': res.summary}
+        except TerrainInferenceError:
+            terrain = None
+    return {'ok': True, 'terrain': terrain, 'conditions': conditions}
 
 
 def _resolve_effective_framework_sport(db, user_id: int, race: dict | None) -> str | None:
@@ -992,6 +1134,63 @@ def disciplines_search():
         'framework_sport': framework_sport,
         'results': choices,
     })
+
+
+@bp.route('/parse-url', methods=['GET'])
+def parse_url():
+    """#256 — parse a pasted race URL into a best-effort form pre-fill.
+
+    GET, mirroring locale_search/disciplines_search (no server-state mutation,
+    so CSRF-free; auth-gated). The form JS pre-fills only the non-null fields,
+    renders the distance/event chooser, and routes location_text into the
+    Mapbox picker. Always returns 200; `{ok: False, hint}` on a failed fetch so
+    manual entry is never blocked. Response:
+
+        {"ok": true, "fields": {...}, "distance_options": [...],
+         "terrain": {"entries": [...], "pct_basis": "..."}|null,
+         "confidence": "...", "summary": "..."}
+        OR {"ok": false, "hint": "..."}
+    """
+    db = get_db()
+    _ = current_user_id()
+    url = (request.args.get('url') or '').strip()
+    if not url:
+        return jsonify({'ok': False, 'hint': 'Paste a race URL first.'})
+    return jsonify(run_url_parse(db, url))
+
+
+@bp.route('/infer-terrain', methods=['GET'])
+def infer_terrain_suggestion():
+    """#592 — the subordinate location->terrain fallback + climate-normals
+    nudge, fired client-side once the athlete confirms a location and the
+    terrain editor is still empty. GET, auth-gated, best-effort. Response:
+
+        {"ok": true, "terrain": {"entries":[...],"confidence":"...",
+         "summary":"..."}|null, "conditions": "..."|null}
+    """
+    db = get_db()
+    _ = current_user_id()
+
+    def _s(name):
+        return (request.args.get(name) or '').strip() or None
+
+    def _num(name):
+        v = _s(name)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except ValueError:
+            return None
+
+    return jsonify(run_terrain_inference(
+        db,
+        lat=_num('lat'), lng=_num('lng'), place_name=_s('place_name'),
+        event_date=_coerce_event_date(_s('event_date')),
+        race_name=_s('name'), distance_km=_num('distance_km'),
+        elevation_gain_m=_num('elevation_gain_m'), race_format=_s('race_format'),
+        framework_sport=_s('framework_sport'), notes=_s('notes'), race_url=_s('race_url'),
+    ))
 
 
 @bp.route('/locale/acknowledge', methods=['POST'])
