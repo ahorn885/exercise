@@ -2,16 +2,16 @@
 `aidstation-sources/specs/Layer3D_Spec.md` (Slice 1: aggregation of the
 already-emitted upstream items + resolution/status rules + gate-status).
 
-The §5.2/§5.3 feasibility detectors and the 3C source are deferred to later
-slices and are not exercised here. Upstream payloads are built with minimal
-valid fixtures (same construction pattern as `tests/test_layer4_orchestrator.py`);
-HITL items are injected per scenario. No LLM, no DB — the node is a pure
-function (§3).
+The 3C source is deferred to a later slice and is not exercised here. The
+§5.2/§5.3 feasibility detectors (Slice 2) are covered by TS-3D-5/6/7. Upstream
+payloads are built with minimal valid fixtures (same construction pattern as
+`tests/test_layer4_orchestrator.py`); HITL items are injected per scenario.
+No LLM, no DB — the node is a pure function (§3).
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
@@ -29,6 +29,8 @@ from layer3d.gate import (
 from layer4.context import (
     DailyNutritionBaseline,
     DailyPhaseTargets,
+    DisciplineRisk,
+    ExerciseRisk,
     GoalViability,
     Layer2ADiscipline,
     Layer2APayload,
@@ -43,6 +45,8 @@ from layer4.context import (
     PeriodizationShape,
     PhaseLoadBands,
     RationaleMetadata,
+    ResolvedExercise,
+    SubstituteRecommendation,
     SupplementIntegrationPayload,
     TrainingGapsSummary,
     UnresolvedFlag,
@@ -52,6 +56,7 @@ from layer4.context import (
 _EVS = {"0A": "v7", "0B": "v7", "0C": "v7"}
 _USER_ID = 42
 _PVID = 100
+_PLAN_START = date(2026, 7, 1)
 
 
 # ─── Minimal valid upstream payload builders ────────────────────────────────
@@ -62,6 +67,7 @@ def _layer2a(
     disciplines: list[Layer2ADiscipline] | None = None,
     unresolved_flags: list[UnresolvedFlag] | None = None,
     hitl_required: bool = False,
+    weekly_total_hours_by_phase: dict[str, tuple[float, float]] | None = None,
     etl_version_set: dict[str, str] | None = None,
 ) -> Layer2APayload:
     return Layer2APayload(
@@ -79,6 +85,7 @@ def _layer2a(
         rationale_metadata=RationaleMetadata(
             template_version="v1", generated_at="2026-06-01T10:00:00Z"
         ),
+        weekly_total_hours_by_phase=weekly_total_hours_by_phase or {},
     )
 
 
@@ -111,29 +118,86 @@ def _discipline(
     )
 
 
-def _layer2c(*, etl_version_set: dict[str, str] | None = None) -> Layer2CPayload:
+def _layer2c(
+    *,
+    exercises_resolved: list[ResolvedExercise] | None = None,
+    etl_version_set: dict[str, str] | None = None,
+) -> Layer2CPayload:
     return Layer2CPayload(
         locale_id="home",
         etl_version_set=etl_version_set or dict(_EVS),
-        effective_pool=[],
+        effective_pool=[rx.exercise_id for rx in (exercises_resolved or [])],
         discipline_coverage=[],
-        exercises_resolved=[],
+        exercises_resolved=exercises_resolved or [],
         coaching_flags=[],
+    )
+
+
+def _resolved_ex(
+    *,
+    exercise_id: str,
+    exercise_type: str = "Strength",
+    discipline_id: str = "D-trail",
+    tier: int = 1,
+) -> ResolvedExercise:
+    return ResolvedExercise(
+        exercise_id=exercise_id,
+        exercise_name=exercise_id.replace("EX", "Exercise "),
+        exercise_type=exercise_type,
+        discipline_ids=[discipline_id],
+        sport_relevance_notes={},
+        priority_per_discipline={discipline_id: "High"},
+        tier=tier,  # type: ignore[arg-type]
+        terrain_required=[],
+        contraindicated_parts=[],
+        contraindicated_conditions=[],
+        accommodations=[],
+    )
+
+
+def _excluded_ex(*, exercise_id: str, discipline_id: str = "D-trail") -> ExerciseRisk:
+    return ExerciseRisk(
+        exercise_id=exercise_id,
+        exercise_name=exercise_id.replace("EX", "Exercise "),
+        discipline_ids=[discipline_id],
+        verdict="exclude",
+        accommodations=[],
+        evidence=[],
+    )
+
+
+def _disc_risk(
+    *,
+    discipline_id: str = "D-trail",
+    name: str = "trail_running",
+    risk_level: str = "high",
+    substitutes: list[SubstituteRecommendation] | None = None,
+) -> DisciplineRisk:
+    return DisciplineRisk(
+        discipline_id=discipline_id,
+        discipline_name=name,
+        risk_level=risk_level,  # type: ignore[arg-type]
+        matched_current_parts=[],
+        matched_history_parts=[],
+        suggested_substitutes=substitutes or [],
+        reasoning="Injury rules out the discipline.",
     )
 
 
 def _layer2d(
     *,
     hitl_items: list[Layer2DHitlItem] | None = None,
+    excluded_exercises: list[ExerciseRisk] | None = None,
+    discipline_risk_profiles: list[DisciplineRisk] | None = None,
     hitl_required: bool = False,
     etl_version_set: dict[str, str] | None = None,
 ) -> Layer2DPayload:
     return Layer2DPayload(
         etl_version_set=etl_version_set or dict(_EVS),
-        excluded_exercises=[],
+        excluded_exercises=excluded_exercises or [],
         accommodated_exercises=[],
         clean_exercise_ids=[],
-        discipline_risk_profiles=[],
+        discipline_risk_profiles=discipline_risk_profiles or [],
         coaching_flags=[],
         hitl_required=hitl_required,
         hitl_items=hitl_items or [],
@@ -223,10 +287,15 @@ def _layer3b(
     )
 
 
-def _2d_item(*, hitl_type: str = "post_surgical_clearance", severity: str = "block") -> Layer2DHitlItem:
+def _2d_item(
+    *,
+    hitl_type: str = "post_surgical_clearance",
+    severity: str = "block",
+    discipline_id: str | None = None,
+) -> Layer2DHitlItem:
     return Layer2DHitlItem(
         hitl_type=hitl_type,  # type: ignore[arg-type]
-        discipline_id=None,
+        discipline_id=discipline_id,
         severity=severity,  # type: ignore[arg-type]
         message="Post-surgical clearance required before high-load training.",
         suggested_resolutions=["Confirm clearance with your surgeon"],
@@ -554,3 +623,235 @@ def test_hitl_required_with_no_items_does_not_fabricate(caplog):
     assert gate.gate_status == "green"
     assert gate.items == []
     assert any("2D hitl_required=True" in r.message for r in caplog.records)
+
+
+# ─── §5.2/§5.3 feasibility detectors ─────────────────────────────────────────
+#
+# These pass `plan_start_date` + `total_weeks`, which is what switches the
+# detectors on (the aggregation-only tests above leave `plan_start_date` None
+# and so never build a phase structure). total_weeks=20 (standard, no event) →
+# all four phases Base(10)/Build(6)/Peak(3)/Taper(1).
+
+
+def test_feasibility_detectors_off_without_plan_start_date():
+    # Same emptied strength pool, but no plan_start_date → no phase structure →
+    # detectors skipped → clean aggregation stays green.
+    pool = [_resolved_ex(exercise_id=f"EX00{i}") for i in (1, 2, 3)]
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads={"home": _layer2c(exercises_resolved=pool)},
+        layer2d_payload=_layer2d(
+            excluded_exercises=[_excluded_ex(exercise_id="EX001"), _excluded_ex(exercise_id="EX002")]
+        ),
+    )
+    assert gate.gate_status == "green"
+    assert gate.items == []
+
+
+# TS-3D-5 — injury empties a phase's strength pool → blocker.
+def test_ts3d5_injury_empties_strength_pool_blocks():
+    pool = [_resolved_ex(exercise_id=f"EX00{i}") for i in (1, 2, 3)]
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads={"home": _layer2c(exercises_resolved=pool)},
+        layer2d_payload=_layer2d(
+            excluded_exercises=[_excluded_ex(exercise_id="EX001"), _excluded_ex(exercise_id="EX002")]
+        ),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "blocked"
+    assert len(gate.items) == 1
+    it = gate.items[0]
+    assert it.source == "3D_feasibility"
+    assert it.source_item_id == "injury_pool_empty"
+    assert it.severity == "blocker"
+    assert it.can_acknowledge is False
+    assert it.revise_target == "profile.injuries"
+    assert it.evidence["usable_count"] == 1
+    assert it.evidence["pool_before_count"] == 3
+    assert set(it.evidence["excluding_2d_ids"]) == {"EX001", "EX002"}
+    assert it.evidence["phases"]  # the phases that program strength
+    assert it.evidence["headline_phase"] == it.evidence["phases"][0]
+
+
+def test_structurally_strength_light_plan_is_not_flagged():
+    # Only 2 strength exercises ever resolved (pool_before < floor): a pure
+    # MTB/climbing-style plan that never had a strength surface — sport sessions
+    # cover it, so excluding one is NOT a blocker.
+    pool = [_resolved_ex(exercise_id="EX001"), _resolved_ex(exercise_id="EX002")]
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads={"home": _layer2c(exercises_resolved=pool)},
+        layer2d_payload=_layer2d(excluded_exercises=[_excluded_ex(exercise_id="EX001")]),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "green"
+    assert [it for it in gate.items if it.source == "3D_feasibility"] == []
+
+
+def test_non_strength_types_do_not_count_toward_the_floor():
+    # Cardio/skill rows are not strength-session exercises, so a pool of them is
+    # not a strength surface (pool_before < floor) — no blocker even if excluded.
+    pool = [
+        _resolved_ex(exercise_id="EX001", exercise_type="Aerobic / Endurance"),
+        _resolved_ex(exercise_id="EX002", exercise_type="Interval / Tempo"),
+        _resolved_ex(exercise_id="EX003", exercise_type="Technical / Skill"),
+    ]
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads={"home": _layer2c(exercises_resolved=pool)},
+        layer2d_payload=_layer2d(),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert [it for it in gate.items if it.source_item_id == "injury_pool_empty"] == []
+
+
+# TS-3D-6 — all-running-banned removes a discipline's only cardio modality.
+def test_ts3d6_cardio_modality_banned_blocks():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2d_payload=_layer2d(
+            discipline_risk_profiles=[_disc_risk(discipline_id="D-trail", name="trail_running")]
+        ),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "blocked"
+    items = [it for it in gate.items if it.source_item_id == "cardio_modality_banned"]
+    assert len(items) == 1
+    it = items[0]
+    assert it.source == "3D_feasibility"
+    assert it.severity == "blocker"
+    assert it.can_acknowledge is False
+    assert it.revise_target == "profile.injuries"
+    assert it.evidence["discipline_id"] == "D-trail"
+    assert "trail_running" in it.title
+
+
+def test_cardio_ban_with_usable_substitute_does_not_block():
+    sub = SubstituteRecommendation(
+        substitute_discipline_id="D-bike",
+        substitute_name="cycling",
+        fidelity=0.7,
+        still_at_risk=False,
+        still_at_risk_body_parts=[],
+    )
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2d_payload=_layer2d(discipline_risk_profiles=[_disc_risk(substitutes=[sub])]),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "green"
+    assert [it for it in gate.items if it.source == "3D_feasibility"] == []
+
+
+def test_cardio_ban_not_for_non_included_or_non_high_discipline():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2d_payload=_layer2d(
+            discipline_risk_profiles=[
+                _disc_risk(discipline_id="D-other", risk_level="high"),  # not included in 2A
+                _disc_risk(discipline_id="D-trail", risk_level="elevated"),  # included but not high
+            ]
+        ),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert [it for it in gate.items if it.source == "3D_feasibility"] == []
+
+
+def test_cardio_ban_suppressed_when_2d_hitl_already_covers_it():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2d_payload=_layer2d(
+            discipline_risk_profiles=[_disc_risk(discipline_id="D-trail")],
+            hitl_items=[
+                _2d_item(hitl_type="no_substitute_for_high_risk", severity="block", discipline_id="D-trail")
+            ],
+        ),
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    # 2D already surfaced the finding (source 2D); 3D does not double-show it.
+    assert [it for it in gate.items if it.source_item_id == "cardio_modality_banned"] == []
+    twod = [it for it in gate.items if it.source == "2D"]
+    assert len(twod) == 1
+    assert gate.gate_status == "blocked"  # the 2D blocker still blocks
+
+
+# TS-3D-7 — available 4 h/wk vs Build 10–12 h → warning → acknowledge → green.
+def _schedule_inputs():
+    l2a = _layer2a(
+        disciplines=[_discipline()],
+        weekly_total_hours_by_phase={
+            "Base": (5.0, 8.0),
+            "Build": (10.0, 12.0),
+            "Peak": (8.0, 10.0),
+            "Taper": (4.0, 6.0),
+        },
+    )
+    l1 = {
+        "daily_availability_windows": [
+            {"enabled": True, "window_duration": 240, "second_window_duration": 0}
+        ],
+        "identity": {"weekly_hours_target": 10},
+    }
+    return l2a, l1
+
+
+def test_ts3d7_schedule_under_target_warns():
+    l2a, l1 = _schedule_inputs()
+    gate = _evaluate(
+        layer2a_payload=l2a,
+        layer1_payload=l1,
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "needs_review"
+    assert len(gate.items) == 1
+    it = gate.items[0]
+    assert it.source == "3D_feasibility"
+    assert it.source_item_id == "schedule_volume_under_target"
+    assert it.severity == "warning"
+    assert it.can_acknowledge is True
+    assert it.revise_target == "profile.availability"
+    assert it.evidence["headline_phase"] == "Build"  # highest target low edge
+    assert "10" in it.message and "12" in it.message
+    assert {p["phase"] for p in it.evidence["phases"]} == {"Base", "Build", "Peak"}
+
+
+def test_ts3d7_acknowledge_goes_green():
+    l2a, l1 = _schedule_inputs()
+    key = make_item_key("3D_feasibility", "schedule_volume_under_target", "schedule")
+    res = GateResolution(kind="acknowledged", resolved_at=datetime(2026, 6, 1, 12, 0, 0))
+    gate = _evaluate(
+        layer2a_payload=l2a,
+        layer1_payload=l1,
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+        prior_resolutions={key: res},
+    )
+    assert gate.gate_status == "green"
+    assert gate.items[0].status == "acknowledged"
+
+
+def test_schedule_no_warning_when_capacity_meets_target():
+    l2a, _ = _schedule_inputs()
+    l1 = {
+        "daily_availability_windows": [
+            {"enabled": True, "window_duration": 600, "second_window_duration": 300}
+        ],
+        "identity": {"weekly_hours_target": 15},
+    }  # 15 h/wk available ≥ every phase low edge
+    gate = _evaluate(
+        layer2a_payload=l2a,
+        layer1_payload=l1,
+        plan_start_date=_PLAN_START,
+        total_weeks=20,
+    )
+    assert gate.gate_status == "green"
+    assert [it for it in gate.items if it.source == "3D_feasibility"] == []
