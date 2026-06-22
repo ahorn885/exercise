@@ -8,8 +8,8 @@ Single LLM call orchestrator. Wraps:
    tool-use (`tool_choice={"type": "tool", "name": "emit_layer3b_payload"}`).
 4. Single capped retry on schema violation per §5.5 step 1.
 5. Mode-discriminator enforcement per §5.5 step 2.
-6. `_check_evidence_basis(...)` — name-existence + mode-discriminator
-   warn-log; no fail (§5.5 + D9).
+6. `_check_evidence_basis(...)` — name-existence warn-log (no fail) +
+   mode-discriminator hard error (§5.5 + D9 + §7; #217).
 7. `_enforce_hitl_auto_emit(...)` — validator appends missing-but-required
    §6.1 items (§5.5 step 3 + D12).
 8. `_apply_confidence_floors(...)` — §6.5 4 floor rules + auto-append
@@ -1030,8 +1030,18 @@ def _collect_evidence_basis_paths(payload_dict: dict[str, Any]) -> list[str]:
 def _check_evidence_basis(
     tool_args: dict[str, Any], prep_dict: dict[str, Any], mode: str
 ) -> None:
-    """Per §5.5 + D9 — name-existence check + mode-discriminator on path
-    prefixes (§7 schema rule). Missing references warn but do not fail."""
+    """Per §5.5 + D9/§7 — two checks on `evidence_basis`:
+
+    - **Name-existence** (warn-only, parity with 3A): a cited path absent from
+      the input set is logged but does not fail the plan.
+    - **Mode-discriminator** (hard error per #217, §7 schema rule): event-mode
+      `goal_viability.evidence_basis` must reference ≥1 `h2.*` field; no-event
+      must reference none. A violation raises `Layer3BOutputError`. Safe to fail
+      on because §4 already guarantees the goal data is present pre-LLM
+      (event-mode requires `goal_outcome` → `event_mode_missing_goal_outcome`),
+      so a missing/illegal `h2.*` citation is an LLM grounding defect, not an
+      athlete entry gap — the entry gap never reaches the model. Was warn-only
+      under D9 until the §H.2 form-refresh shipped; now flipped."""
     cited = _collect_evidence_basis_paths(tool_args)
     valid_keys = set(prep_dict.keys())
     for path in cited:
@@ -1042,25 +1052,37 @@ def _check_evidence_basis(
                 stacklevel=3,
             )
 
-    # Mode-discriminator on goal_viability.evidence_basis (§7 schema rule)
+    # Mode-discriminator on goal_viability.evidence_basis (§7 schema rule).
+    # Hard failure per #217 (was warn-only under D9 until §H.2 capture shipped).
     gv = tool_args.get("goal_viability", {})
     if isinstance(gv, dict):
         gv_paths = gv.get("evidence_basis", [])
         h2_refs = [p for p in gv_paths if p.startswith("h2.")]
         if mode == "event" and not h2_refs:
-            warnings.warn(
-                "event-mode goal_viability.evidence_basis must reference at "
-                "least one h2.* field per §7 schema rule (got "
-                f"{gv_paths!r})",
-                Layer3BEvidenceBasisWarning,
-                stacklevel=3,
+            # Rule #15: emit the decision so /admin/logs can count how often
+            # plans fail the gate on this (the inputs + the failing reason).
+            print(
+                "_check_evidence_basis: FAIL evidence_basis_mode_violation "
+                f"mode=event reason=missing_h2 gv_evidence_basis={gv_paths!r}"
             )
-        elif mode == "no-event" and h2_refs:
-            warnings.warn(
-                "no-event-mode goal_viability.evidence_basis must NOT "
-                f"reference h2.* fields per §7 schema rule (got {h2_refs!r})",
-                Layer3BEvidenceBasisWarning,
-                stacklevel=3,
+            raise Layer3BOutputError(
+                "evidence_basis_mode_violation",
+                detail=(
+                    "event-mode goal_viability.evidence_basis must reference at "
+                    f"least one h2.* field per §7 schema rule (got {gv_paths!r})"
+                ),
+            )
+        if mode == "no-event" and h2_refs:
+            print(
+                "_check_evidence_basis: FAIL evidence_basis_mode_violation "
+                f"mode=no-event reason=illegal_h2 h2_refs={h2_refs!r}"
+            )
+            raise Layer3BOutputError(
+                "evidence_basis_mode_violation",
+                detail=(
+                    "no-event-mode goal_viability.evidence_basis must NOT "
+                    f"reference h2.* fields per §7 schema rule (got {h2_refs!r})"
+                ),
             )
 
 
@@ -1605,8 +1627,8 @@ def llm_layer3b_goal_timeline_viability(
     3. Up to 2 attempts on schema violation (§5.5 step 1).
     4. Schema validation via `Layer3BPayload.model_validate`.
     5. Mode-discriminator enforcement (§5.5 step 2).
-    6. `_check_evidence_basis(...)` — name-existence + mode-discriminator
-       warn-log (§5.5 + D9).
+    6. `_check_evidence_basis(...)` — name-existence warn-log; mode-discriminator
+       hard error per #217 (§5.5 + D9 + §7).
     7. `_enforce_hitl_auto_emit(...)` — §6.1 missing-but-required items.
     8. `_apply_confidence_floors(...)` — §6.5 4 floor rules + auto-append.
     9. `_enforce_periodization_sanity_loop(...)` — §5.5 step 4 (single
@@ -1736,7 +1758,8 @@ def llm_layer3b_goal_timeline_viability(
             ),
         )
 
-    # §5.5 step 5 / D9: evidence-basis cross-check (warn only)
+    # §5.5 step 5 / D9: evidence-basis cross-check (name-existence warn-only;
+    # mode-discriminator raises Layer3BOutputError per #217)
     _check_evidence_basis(llm_out.tool_args, prep_dict, mode)
 
     # §5.5 step 3 / D12: HITL auto-emit

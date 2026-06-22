@@ -27,7 +27,7 @@ The Layer 3D HITL gate is functionally complete end-to-end:
 |---|---|---|---|---|
 | **#216** | 3C: **decide** rules-only vs LLM + **enumerate** the conflict rules | designed/deferred (open design decision) | spec pass | med |
 | **#844** | 3C: **build** the `map_3c_items()` cross-node detector feeding the gate | designed (drops in, no contract change) | 1 slice | med |
-| **#217** | flip the 3B evidence-basis **warning → hard error** | designed, "ready to flip" | small | med |
+| **#217** | flip the 3B evidence-basis **warning → hard error** | ✅ **SHIPPED 2026-06-22** (mode-discriminator only → `Layer3BOutputError`; name-existence kept warn-only) — `handoffs/V5_Implementation_Layer3B_EvidenceBasisHardError_217_2026_06_22_Closing_Handoff_v1.md` | — | done |
 | **#302** | surface/trim **orphaned** Layer-3 analysis (notable_observations, viability adj., periodization rationale, sleep_quality) | deferred | med | med |
 | **#219** | 3A refinements (≥3 sources for 'high', completeness override, Haiku cost test) | deferred | small-med | low |
 | **#393** | confirm the **health-screening data contract** (blocks L3 spec) | deferred | contract decision | high (v1/compliance) |
@@ -35,8 +35,8 @@ The Layer 3D HITL gate is functionally complete end-to-end:
 
 **Recommended sequencing (4-tier order from CLAUDE.md):**
 1. **Live-verify #213** (tier-2, closes a shipped-but-unverified function) — Andy-action.
-2. **#217** (tier-3, fast clean win — flip 3B evidence-basis to a hard error; ready today).
-3. **3C: #216 design → #844 build** (tier-4, the headline remaining *node*). #216 is a **stop-and-ask** (see §3).
+2. ~~**#217** (flip 3B evidence-basis to a hard error)~~ — ✅ **SHIPPED 2026-06-22** (only the §7 mode-discriminator flipped; name-existence stays warn-only for 3A parity; Rule #15 FAIL log added). Closing handoff: `handoffs/V5_Implementation_Layer3B_EvidenceBasisHardError_217_2026_06_22_Closing_Handoff_v1.md`.
+3. **3C: #216 design → #844 build** (tier-4, the headline remaining *node*). #216 is a **stop-and-ask** (see §3). **← next.**
 4. **#302** (tier-3/4 — newly attractive: the gate can now consume the orphaned 3A/3B observations).
 5. **#219 / #393** as priority allows (#393 is a compliance contract, not gate code).
 
@@ -96,4 +96,4 @@ Work on the session branch, commit + push, finish bookkeeping, **wait for Andy's
 ---
 
 ## 7. Recommended first move next session
-Start **#217** (fast, ready-to-flip, low-risk) to clear a designed item, **or** open the **#216** 3C design conversation with Andy (rules-only vs LLM + the conflict-rule enumeration) since that gate decision blocks the largest remaining piece (#844). Don't start #844 before #216 is ratified.
+~~Start **#217** (fast, ready-to-flip, low-risk)~~ — ✅ **DONE 2026-06-22** (mode-discriminator → hard error; see §4). Next: open the **#216** 3C design conversation with Andy (rules-only vs LLM + the conflict-rule enumeration) since that gate decision blocks the largest remaining piece (#844). Don't start #844 before #216 is ratified. **#302** (orphaned 3A/3B observations → gate items) is the secondary option.
