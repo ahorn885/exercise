@@ -60,10 +60,16 @@
              placeholder="https://example.com/race"
              value="{{ target.race_url if target and target.race_url else '' }}">
       <small class="text-muted">
-        Link to the race director's site. Future site-parse pre-fill will
-        read this to populate the race notes field below.
+        Link to the race director's site. Paste it and hit
+        <em>Fetch details from URL</em> to pre-fill what we can read — you
+        review everything before saving.
       </small>
     </div>
+
+    {% with parse_url_endpoint=url_for('race_events.parse_url'),
+            infer_terrain_endpoint=url_for('race_events.infer_terrain_suggestion') %}
+      {% include '_race_url_autofill.html' %}
+    {% endwith %}
 
     {# D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
        Mirrors `templates/profile/race_event_edit.html` precedent. #}
