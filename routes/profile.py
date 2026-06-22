@@ -338,6 +338,12 @@ def edit():
     db = get_db()
     uid = current_user_id()
 
+    # #887 — Locations is consolidated under the Log nav group and no longer
+    # has a profile tab. Redirect any lingering ?tab=locations links/bookmarks
+    # to the canonical standalone surface.
+    if request.method == 'GET' and request.args.get('tab') == 'locations':
+        return redirect(url_for('locales.list_profiles'))
+
     if request.method == 'POST':
         # Profile section — POST body carries the profile fields. Empty
         # strings are coerced to None so we don't store '' for unset.
@@ -524,15 +530,6 @@ def edit():
     # §C pack-load history — load-carriage base, summarized into Layer 3B.
     pack_loads = list_pack_loads(db, uid)
 
-    # Locations tab (#619) embeds the full locales surface. Build its context
-    # only when that tab is active so the per-locale equipment-tag queries don't
-    # run on every profile view. Local import avoids a routes.locales <-> profile
-    # import cycle (connections already imports load_connections from here).
-    locales_ctx = {}
-    if request.args.get('tab') == 'locations':
-        from routes.locales import build_locales_list_context
-        locales_ctx = build_locales_list_context(db, uid)
-
     from datetime import datetime as _dt
     return render_template(
         'profile/edit.html',
@@ -586,7 +583,6 @@ def edit():
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
-        **locales_ctx,
     )
 
 
