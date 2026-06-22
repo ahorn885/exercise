@@ -175,7 +175,7 @@ The first four are foundational (adapted from Karpathy's CLAUDE.md, github.com/m
 - **AI backend:** Claude API (Sonnet/Opus latest)
 - **Database:** PostgreSQL (Neon) — both production and dev. SQLite path retired 2026-05-16 (PR13).
 - **ETL / data work:** Python (openpyxl, rapidfuzz, pandas).
-- **Web app:** Flask + Jinja templates, deployed to Vercel (`aidstation-pro.vercel.app`). Code at the repo root (`app.py`, `routes/`, `init_db.py`, etc.). This is the **v1 app**, current production target for the v2 LLM-pipeline build being designed in `aidstation-sources/`. TrueNAS / Docker deployment path retired 2026-05-16 (PR13).
+- **Web app:** Flask + Jinja templates, deployed to Vercel. **Production domain: `app.aidstation.pro`** (custom domain, live 2026-06-21; the Vercel-platform alias `aidstation-pro.vercel.app` still resolves). Code at the repo root (`app.py`, `routes/`, `init_db.py`, etc.). This is the **v1 app**, current production target for the v2 LLM-pipeline build being designed in `aidstation-sources/`. TrueNAS / Docker deployment path retired 2026-05-16 (PR13).
 - **Athlete integrations:** COROS + Ride With GPS shipped (Phase-0 webhook stubs); Strava/Whoop/TrainingPeaks/Zwift stubs prepped on a separate branch; Polar + Wahoo next; Garmin paused (API closed); Apple Health + Samsung Health out of scope (need native iOS/Android clients).
 
 ---
@@ -187,7 +187,7 @@ These are stable across sessions — look them up here, don't re-derive them eac
 **Vercel (for the MCP tools — `list_teams`/`list_projects` return these every time):**
 - Team: slug `andy-horns-projects` — id `team_rkZGxltBw2ykWtrIPCYy16JZ`
 - Project: name `exercise` — id `prj_MRcYT23wGVekzavrrfWYUOTYlUPO`
-- Prod domain `aidstation-pro.vercel.app` (git-main alias `exercise-git-main-andy-horns-projects.vercel.app`); the current prod deployment is whichever `target: production` row is newest in `list_deployments`.
+- Prod domain **`app.aidstation.pro`** (custom, live 2026-06-21); Vercel-platform alias `aidstation-pro.vercel.app` and git-main alias `exercise-git-main-andy-horns-projects.vercel.app` also resolve. The current prod deployment is whichever `target: production` row is newest in `list_deployments`.
 - **Function Max Duration = 800s** (Pro plan max available; Andy 2026-05-31). `vercel.json` can't set it (legacy `builds` array can't coexist with the `functions` key) — it's a dashboard setting. **Correction:** prior handoffs/this file said `300s`; that was wrong. It skewed the #48 504 triage ("a single LLM call exceeding the 300s cap, hard-killed before any `except`") — with an 800s cap a ~300s 504 is **not** the function ceiling but an earlier limit (Vercel gateway, or the SDK non-streaming guard #331 pinned). Re-validate that triage against real timings.
 - **Runtime-log gotcha:** a `query timed out before all pages were fetched` warning makes a NEGATIVE log result UNRELIABLE (the search aborted mid-scan). Only clean negatives + any positive match are trustworthy. Narrow the time window or filter by `deploymentId` to get a clean query.
 
