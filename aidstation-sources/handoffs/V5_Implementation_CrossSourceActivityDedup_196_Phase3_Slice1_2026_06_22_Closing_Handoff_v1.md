@@ -1,7 +1,9 @@
 # V5 Implementation — Cross-Source Activity Dedup + Merge (#196 Phase 3) — Slice 1 — Closing Handoff (2026-06-22)
 
-**Branch:** `claude/admiring-albattani-pp6zqi` · **Commit:** `221d96a` · **Suite:** 3425 passed / 30 skipped · **PR:** opened on Andy's go (this session).
+**Branch:** `claude/admiring-albattani-pp6zqi` · **Commit:** `221d96a` (+ merge `f876a4b`) · **Suite:** 3446 passed / 30 skipped (post-merge) · **PR:** [#906](https://github.com/ahorn885/exercise/pull/906) — **MERGED 2026-06-22** (squash `80b071b`).
 **Predecessor:** the kickoff `handoffs/V5_CrossSourceActivityDedup_196_Phase3_Kickoff_2026_06_22_v1.md` (the problem, the design defaults, the slice sequence, the Trigger-#3 DDL gate). This handoff is **Slice 1** of that plan.
+
+**Merge note (parallel collision, resolved).** While #906 awaited CI, `main` advanced with #885/#892 (race event type) + #905 (#886/#893), which also appended to `init_db.py:_PG_MIGRATIONS` and touched `CURRENT_STATE.md` → #906 went conflicted. Both conflicts were **additive**: kept this slice's `_PG_MIGRATIONS` block alongside the #892 `framework_sport` heal; took main's `CURRENT_STATE.md` and re-applied this slice's pointer on top. Merge `f876a4b`, full suite re-verified **3446 passed / 30 skipped**, auto-merged as squash `80b071b`. (The CARRY_FORWARD parallel-build lesson again — check `origin/main` before/at PR time.)
 
 ---
 
@@ -66,5 +68,5 @@ A pure-ish function `cluster_activity(db, user_id, new_row) -> cluster_id` calle
 | Cardio writer wiring | `routes/garmin.py` | `_bulk_insert_cardio`: `started_at = _normalize_started_at(data)`; `started_at` in the INSERT column list; `[cardio-insert] … started_at=` Rule #15 print (grep) |
 | Strava UTC start | `routes/strava_ingest.py` | `'started_at': a.get('start_date')` in `normalize_strava_activity` (grep) |
 | Tests | `tests/test_garmin_bulk_source.py` / `tests/test_strava_ingest.py` | `TestNormalizeStartedAt` + `TestCardioInsertStartedAt`; `test_started_at_uses_utc_start_date_not_local` |
-| Suite | — | `… pytest tests/ -q` → 3425 passed / 30 skipped |
-| Issue | #196 | comment: Phase 3 Slice 1 (schema + started_at) shipped, commit `221d96a`; stays open through Slice 4 (consumer repoint) |
+| Suite | — | `… pytest tests/ -q` → 3446 passed / 30 skipped (post-merge, incl. #885/#892/#905 tests) |
+| Issue | #196 | comment: Phase 3 Slice 1 (schema + started_at) shipped + MERGED via #906 (squash `80b071b`); stays open through Slice 4 (consumer repoint) |
