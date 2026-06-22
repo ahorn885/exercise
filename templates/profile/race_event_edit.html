@@ -188,9 +188,15 @@
                value="{{ race.race_url if race and race.race_url else '' }}">
         <small class="text-muted">
           Link to the race director's site (rules, mandatory gear, course map).
-          Future site-parse pre-fill will read this to populate the rules &amp; equipment fields below.
+          Paste it and hit <em>Fetch details from URL</em> to pre-fill what we
+          can read — you review everything before saving.
         </small>
       </div>
+
+      {% with parse_url_endpoint=url_for('race_events.parse_url'),
+              infer_terrain_endpoint=url_for('race_events.infer_terrain_suggestion') %}
+        {% include '_race_url_autofill.html' %}
+      {% endwith %}
 
       {# D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
          Free-text matching the Profile primary-sport input precedent; no

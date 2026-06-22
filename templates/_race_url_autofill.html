@@ -1,0 +1,267 @@
+{# Shared race-detail auto-fill (#256 / #592) — the "Fetch details from URL"
+   button + the JS that calls /parse-url + /infer-terrain and pre-fills the
+   form.
+
+   Included by target_race.html + race_event_edit.html right after the race_url
+   field. Relies on the shared field ids (#name, #event_date, #race_format,
+   #distance_km, #primary_metric, #total_elevation_gain_m, #framework_sport,
+   #notes), the locale picker (#elp_query / #elp_search_btn / #elp_lat /
+   #elp_lng / #elp_place_name / #elp_results), and the terrain editor
+   (#race-terrain-rows / #race-terrain-template). Pre-fills EMPTY fields only —
+   never clobbers athlete input. Best-effort: any failure shows a hint (or, for
+   the silent terrain auto-fire, nothing) and leaves the form for manual entry.
+
+   Required context: parse_url_endpoint, infer_terrain_endpoint (url_for strs).
+
+   The partial sits mid-form, so its script defers wiring to DOMContentLoaded —
+   the picker + terrain editor render AFTER this point in the document.
+
+   #592 terrain fallback fires AUTOMATICALLY (Andy 2026-06-22): on an in-page
+   location-confirm, and on page load when an existing race already has coords
+   and the terrain editor is still empty. Precedence: it never runs when the
+   page parse already supplied terrain (terrain editor non-empty). No backend
+   cache yet, so it re-fires on each load of a coords-without-terrain race until
+   terrain is entered — acceptable for v1 (the conditions nudge is useful each
+   time); a dedup cache is the noted follow-up. #}
+
+<div class="col-12">
+  <div class="border rounded p-2 mb-1 d-flex flex-wrap align-items-center gap-2" id="rud_panel">
+    <button type="button" class="btn btn-sm btn-outline-primary" id="rud_fetch_btn">
+      Fetch details from URL
+    </button>
+    <span class="small text-muted d-none" id="rud_status"></span>
+  </div>
+  <div class="alert py-2 small mt-2 d-none" id="rud_banner" role="status"></div>
+  <div class="mt-2 d-none" id="rud_distance_chooser">
+    <label class="form-label small mb-1">Which distance are you racing?</label>
+    <div id="rud_distance_opts" class="d-flex flex-wrap gap-2"></div>
+    <small class="text-muted d-block mt-1">
+      Pick one to set the distance (and its date/elevation if the page listed them); you can still edit it below.
+    </small>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce() }}">
+(function () {
+  var PARSE_URL = "{{ parse_url_endpoint }}";
+  var INFER_URL = "{{ infer_terrain_endpoint }}";
+
+  function ready(fn) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+    else fn();
+  }
+
+  ready(function init() {
+    var fetchBtn = document.getElementById('rud_fetch_btn');
+    var statusEl = document.getElementById('rud_status');
+    var banner = document.getElementById('rud_banner');
+    var chooser = document.getElementById('rud_distance_chooser');
+    var chooserOpts = document.getElementById('rud_distance_opts');
+    if (!fetchBtn) return;
+
+    function $(id) { return document.getElementById(id); }
+
+    function setStatus(msg) {
+      if (!msg) { statusEl.classList.add('d-none'); statusEl.textContent = ''; }
+      else { statusEl.textContent = msg; statusEl.classList.remove('d-none'); }
+    }
+
+    function showBanner(msg, kind) {
+      banner.className = 'alert py-2 small mt-2 alert-' + (kind || 'info');
+      banner.textContent = msg;
+      banner.classList.remove('d-none');
+    }
+
+    // Set an input/select value only when it's currently blank (never clobber).
+    function setIfEmpty(id, value) {
+      if (value == null || value === '') return false;
+      var el = $(id);
+      if (!el || (el.value || '').trim() !== '') return false;
+      el.value = value;
+      return true;
+    }
+
+    function optionExists(sel, value) {
+      return !!sel && Array.prototype.some.call(sel.options, function (o) { return o.value === value; });
+    }
+
+    // ── scalar + select pre-fill ──────────────────────────────────────────
+    function prefillFields(f) {
+      setIfEmpty('name', f.name);
+      setIfEmpty('event_date', f.event_date);
+      setIfEmpty('total_elevation_gain_m', f.total_elevation_gain_m);
+      setIfEmpty('notes', f.rules_notes);
+
+      var fmt = $('race_format');
+      if (f.race_format && fmt && !fmt.value && optionExists(fmt, f.race_format)) {
+        fmt.value = f.race_format;
+      }
+
+      // framework_sport — set then fire `input` so the discipline grid rebinds.
+      var fs = $('framework_sport');
+      if (f.framework_sport && fs && !(fs.value || '').trim()) {
+        fs.value = f.framework_sport;
+        fs.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
+
+    // ── distance/event chooser (distance is athlete-selected) ─────────────
+    function renderDistanceChooser(options) {
+      chooserOpts.innerHTML = '';
+      if (!options || !options.length) { chooser.classList.add('d-none'); return; }
+      options.forEach(function (o) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm btn-outline-info';
+        var parts = [o.label];
+        if (o.distance_km != null) parts.push(o.distance_km + ' km');
+        btn.textContent = parts.join(' · ');
+        btn.addEventListener('click', function () {
+          applyDistanceChoice(o);
+          Array.prototype.forEach.call(chooserOpts.children, function (c) {
+            c.classList.remove('btn-info', 'text-white'); c.classList.add('btn-outline-info');
+          });
+          btn.classList.remove('btn-outline-info'); btn.classList.add('btn-info', 'text-white');
+        });
+        chooserOpts.appendChild(btn);
+      });
+      chooser.classList.remove('d-none');
+    }
+
+    function applyDistanceChoice(o) {
+      var pm = $('primary_metric');
+      if (o.distance_km != null) {
+        var dk = $('distance_km');
+        if (dk) dk.value = o.distance_km;
+        if (pm) { pm.value = 'distance'; pm.dispatchEvent(new Event('change', { bubbles: true })); }
+      }
+      if (o.event_date) { var ed = $('event_date'); if (ed) ed.value = o.event_date; }
+      if (o.elevation_gain_m != null) { var elg = $('total_elevation_gain_m'); if (elg) elg.value = o.elevation_gain_m; }
+    }
+
+    // ── location → the existing Mapbox picker (athlete confirms a candidate) ─
+    function routeLocation(text) {
+      if (!text) return;
+      var lat = $('elp_lat');
+      if (lat && (lat.value || '').trim() !== '') return;   // already anchored
+      var q = $('elp_query'), sb = $('elp_search_btn');
+      if (q && sb) { q.value = text; sb.click(); }            // search UI present
+      else {
+        showBanner('Found a location ("' + text + '") — acknowledge map lookup, then search it to anchor the race.', 'info');
+      }
+    }
+
+    // ── terrain editor pre-fill (page-primary or the #592 fallback) ────────
+    function terrainEditorEmpty() {
+      var rows = document.querySelectorAll('#race-terrain-rows .race-terrain-row');
+      for (var i = 0; i < rows.length; i++) {
+        var sel = rows[i].querySelector('select[name$="[terrain_id]"]');
+        if (sel && sel.value) return false;
+      }
+      return true;
+    }
+
+    function addTerrainRow() {
+      var container = $('race-terrain-rows'), tpl = $('race-terrain-template');
+      if (!container || !tpl) return null;
+      var max = -1;
+      container.querySelectorAll('.race-terrain-row').forEach(function (r) {
+        var v = parseInt(r.dataset.rowIdx, 10);
+        if (!isNaN(v) && v > max) max = v;
+      });
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = tpl.innerHTML.replace(/__IDX__/g, String(max + 1)).trim();
+      var row = wrapper.firstChild;
+      container.appendChild(row);
+      return row;
+    }
+
+    function prefillTerrain(entries) {
+      if (!entries || !entries.length || !terrainEditorEmpty()) return false;
+      var any = false;
+      entries.forEach(function (e) {
+        var row = addTerrainRow();
+        if (!row) return;
+        var tsel = row.querySelector('select[name$="[terrain_id]"]');
+        var pct = row.querySelector('input[name$="[pct_of_race]"]');
+        var dsel = row.querySelector('select[name$="[discipline_id]"]');
+        if (optionExists(tsel, e.terrain_id)) { tsel.value = e.terrain_id; any = true; }
+        if (pct && e.pct_of_race != null) pct.value = e.pct_of_race;
+        if (e.discipline_id && optionExists(dsel, e.discipline_id)) dsel.value = e.discipline_id;
+      });
+      return any;
+    }
+
+    // ── parse-url (the #256 site parse) ───────────────────────────────────
+    fetchBtn.addEventListener('click', function () {
+      var urlEl = $('race_url');
+      var url = urlEl ? (urlEl.value || '').trim() : '';
+      if (!url) { showBanner('Paste a race URL first.', 'warning'); return; }
+      fetchBtn.disabled = true; setStatus('Reading the race page…'); banner.classList.add('d-none');
+      fetch(PARSE_URL + '?url=' + encodeURIComponent(url), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (out) {
+          if (!out || !out.ok) {
+            showBanner((out && out.hint) || 'Could not read that page — fill the form in by hand.', 'warning');
+            return;
+          }
+          prefillFields(out.fields || {});
+          renderDistanceChooser(out.distance_options || []);
+          if (out.fields && out.fields.location_text) routeLocation(out.fields.location_text);
+          if (out.terrain && out.terrain.entries) prefillTerrain(out.terrain.entries);
+          var conf = out.confidence ? (' (confidence: ' + out.confidence + ')') : '';
+          showBanner((out.summary || 'Pulled what I could — review the highlighted fields.') + conf,
+                     out.confidence === 'low' ? 'warning' : 'success');
+        })
+        .catch(function () { showBanner('Could not read that page (network error). Fill the form in by hand.', 'warning'); })
+        .then(function () { fetchBtn.disabled = false; setStatus(''); });
+    });
+
+    // ── infer-terrain (the #592 subordinate fallback) — AUTO-FIRE ─────────
+    var inferInFlight = false;
+
+    function fireInferTerrain() {
+      if (inferInFlight || !terrainEditorEmpty()) return;     // precedence + don't clobber
+      var lat = ($('elp_lat') || {}).value, lng = ($('elp_lng') || {}).value;
+      if (!lat || !lng) return;                               // needs a confirmed location
+      inferInFlight = true; setStatus('Suggesting terrain for the area…');
+      var qs = new URLSearchParams();
+      qs.set('lat', lat); qs.set('lng', lng);
+      var place = ($('elp_place_name') || {}).value || ($('elp_name') || {}).value;
+      if (place) qs.set('place_name', place);
+      [['name', 'name'], ['event_date', 'event_date'], ['distance_km', 'distance_km'],
+       ['elevation_gain_m', 'total_elevation_gain_m'], ['race_format', 'race_format'],
+       ['framework_sport', 'framework_sport'], ['notes', 'notes'], ['race_url', 'race_url']
+      ].forEach(function (p) {
+        var el = $(p[1]);
+        if (el && (el.value || '').trim()) qs.set(p[0], el.value.trim());
+      });
+      fetch(INFER_URL + '?' + qs.toString(), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (out) {
+          var msgs = [];
+          if (out && out.terrain && out.terrain.entries && prefillTerrain(out.terrain.entries)) {
+            msgs.push(out.terrain.summary || 'Suggested likely terrain for the area — review and adjust.');
+          }
+          if (out && out.conditions) msgs.push(out.conditions);
+          if (msgs.length) showBanner(msgs.join(' '), 'info');
+        })
+        // Auto-fire: stay silent on a network error — the athlete didn't ask.
+        .catch(function () {})
+        .then(function () { inferInFlight = false; setStatus(''); });
+    }
+
+    // Fire when the athlete confirms a location in-page (picker "Use this
+    // location" sets the hidden coords; let it run first, then suggest).
+    var results = $('elp_results');
+    if (results) {
+      results.addEventListener('click', function (ev) {
+        if (ev.target && ev.target.closest('button')) setTimeout(fireInferTerrain, 50);
+      });
+    }
+
+    // Fire on load when an existing race is already anchored but has no terrain.
+    fireInferTerrain();
+  });
+})();
+</script>
