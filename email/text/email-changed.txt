@@ -1,0 +1,18 @@
+AIDSTATION
+Your email address was changed
+────────────────────────────────────────
+
+Hi {{display_name}},
+
+The email address on your AIDSTATION account was just changed. We're sending this to your previous address so you always have the last word on your account.
+
+Previous: {{old_email}}
+New:      {{new_email}}
+When:     {{timestamp}}
+
+Didn't make this change? Someone may have access to your account. Contact support immediately at {{support_email}} — we can reverse the change and lock things down.
+
+────────────────────────────────────────
+AIDSTATION — the aid station for your training.
+aidstation.pro  ·  {{support_email}}
+AIDSTATION · {{company_address}}

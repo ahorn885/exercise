@@ -1,0 +1,17 @@
+AIDSTATION
+Confirm your email
+────────────────────────────────────────
+
+Confirm this email address to continue with AIDSTATION.
+
+Confirm email:
+{{verify_url}}
+
+This link expires in {{expiry}}.
+
+If you didn't request this, you can safely ignore this email — nothing changes.
+
+────────────────────────────────────────
+AIDSTATION — the aid station for your training.
+aidstation.pro  ·  {{support_email}}
+AIDSTATION · {{company_address}}

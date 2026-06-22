@@ -1,0 +1,20 @@
+AIDSTATION
+We lost the trail mid-build
+────────────────────────────────────────
+
+Hi {{display_name}},
+
+Your plan "{{plan_name}}" didn’t finish generating. Nothing’s gone — your inputs are saved at the last checkpoint.
+
+Detail:
+{{error_message}}
+
+Try again:
+{{retry_url}}
+
+Still off-route after a retry? Reply to this email and we'll plot it by hand — {{support_email}}.
+
+────────────────────────────────────────
+AIDSTATION — the aid station for your training.
+aidstation.pro  ·  {{support_email}}
+AIDSTATION · {{company_address}}
