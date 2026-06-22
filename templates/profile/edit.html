@@ -43,7 +43,7 @@
 <div class="conn-tabs" role="tablist" aria-label="Profile sections">
   {% for key, label, hint in [
        ('athlete', 'Athlete', 'baselines + notes'),
-       ('health', 'Fuel & health', 'nutrition · supps · meds'),
+       ('health', 'Fuel & health', 'nutrition · injuries · conditions · meds'),
        ('gear', 'Gear & skills', 'gear · skills · loads')] %}
   <a class="conn-tab{{ ' is-on' if sub == key else '' }}" role="tab"
      aria-selected="{{ 'true' if sub == key else 'false' }}"

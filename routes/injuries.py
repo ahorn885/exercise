@@ -45,6 +45,17 @@ MOD_TYPES = [
 ]
 
 
+def _after_save_redirect():
+    """Where to land after a create/edit/delete. The injury log is surfaced on
+    the profile Health tab (#886); when an action is launched from there the
+    form/list carries `return=profile`, so we bounce back to it (anchored at
+    the injuries card) instead of the standalone log. Fixed endpoints only —
+    no user-supplied URL, so no open-redirect surface."""
+    if request.values.get('return') == 'profile':
+        return redirect(url_for('profile.edit', tab='health') + '#injuries')
+    return redirect(url_for('injuries.list_entries'))
+
+
 @bp.route('/injuries')
 def list_entries():
     db = get_db()
@@ -99,14 +110,15 @@ def new_entry():
     if request.method == 'POST':
         _save(db, None)
         flash('Injury logged.', 'success')
-        return redirect(url_for('injuries.list_entries'))
+        return _after_save_redirect()
     return render_template('injuries/form.html', entry=None,
                            statuses=STATUSES, body_parts=BODY_PARTS,
                            injury_types=KNOWN_INJURY_TYPES,
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
                            body_part_constraints=BODY_PART_CONSTRAINTS,
-                           entry_movement_constraints=[])
+                           entry_movement_constraints=[],
+                           return_to=request.args.get('return'))
 
 
 @bp.route('/injuries/<int:entry_id>/edit', methods=['GET', 'POST'])
@@ -122,7 +134,7 @@ def edit_entry(entry_id):
     if request.method == 'POST':
         _save(db, entry_id)
         flash('Entry updated.', 'success')
-        return redirect(url_for('injuries.list_entries'))
+        return _after_save_redirect()
     # movement_constraints is JSONB on read — psycopg2 returns the parsed
     # list, but SQLite (legacy compatibility layer) returns the raw JSON
     # string. Normalize for the template's `in` membership checks.
@@ -139,7 +151,8 @@ def edit_entry(entry_id):
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
                            body_part_constraints=BODY_PART_CONSTRAINTS,
-                           entry_movement_constraints=entry_mc)
+                           entry_movement_constraints=entry_mc,
+                           return_to=request.args.get('return'))
 
 
 @bp.route('/injuries/<int:entry_id>/delete', methods=['POST'])
@@ -156,7 +169,7 @@ def delete_entry(entry_id):
     db.execute('DELETE FROM injury_log WHERE id=? AND user_id=?', (entry_id, uid))
     db.commit()
     flash('Entry deleted.', 'warning')
-    return redirect(url_for('injuries.list_entries'))
+    return _after_save_redirect()
 
 
 @bp.route('/injuries/<int:entry_id>/modifications/add', methods=['POST'])
