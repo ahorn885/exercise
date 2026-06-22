@@ -332,8 +332,8 @@ class Observation:
 
 **Schema-level rules:**
 
-- `mode == 'event'` requires `goal_viability.evidence_basis` to reference at least one §H.2 field.
-- `mode == 'no-event'` requires `goal_viability.evidence_basis` to reference §H.3 fields only (no §H.2 references).
+- `mode == 'event'` requires `goal_viability.evidence_basis` to reference at least one §H.2 field. **Hard-enforced (#217):** a violation raises `Layer3BOutputError('evidence_basis_mode_violation')` (was warn-only under D9 until §H.2 capture shipped; safe to fail because §4 guarantees `goal_outcome` pre-LLM, so a missing `h2.*` citation is an LLM grounding defect, not an athlete entry gap).
+- `mode == 'no-event'` requires `goal_viability.evidence_basis` to reference §H.3 fields only (no §H.2 references). **Hard-enforced (#217):** an `h2.*` reference raises `Layer3BOutputError('evidence_basis_mode_violation')`.
 - `periodization_shape.phase_weeks` is non-None iff `mode == 'custom'`.
 - `suggested_adjustments` is non-empty when `viability != 'achievable'`; empty when `viability == 'achievable'`.
 - `hitl_surface` items have unique `item_label` (no duplicates from the same condition firing twice).

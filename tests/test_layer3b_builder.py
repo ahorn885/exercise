@@ -1412,10 +1412,10 @@ class TestEvidenceBasisCheck:
         ]
         assert any("fictional.path" in str(w.message) for w in ev_warnings)
 
-    def test_event_mode_missing_h2_reference_warns(self):
+    def test_event_mode_missing_h2_reference_raises(self):
+        # #217: the §7 mode-discriminator is now a hard, plan-failing error.
         args = _good_tool_args(evidence_basis_h2=False)
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(Layer3BOutputError) as exc:
             llm_layer3b_goal_timeline_viability(
                 user_id=1,
                 layer1_payload=_make_layer1(),
@@ -1427,22 +1427,18 @@ class TestEvidenceBasisCheck:
                 goal_outcome="Finish",
                 llm_caller=_stub_caller(args),
             )
-        ev_warnings = [
-            w for w in caught if issubclass(w.category, Layer3BEvidenceBasisWarning)
-        ]
-        assert any(
-            "must reference at least one h2.*" in str(w.message) for w in ev_warnings
-        )
+        assert exc.value.code == "evidence_basis_mode_violation"
+        assert "at least one h2.*" in str(exc.value)
 
-    def test_no_event_mode_with_h2_reference_warns(self):
+    def test_no_event_mode_with_h2_reference_raises(self):
+        # #217: the §7 mode-discriminator is now a hard, plan-failing error.
         args = _good_tool_args(
             mode="no-event",
             periodization_mode="standard",
             start_phase="Base",
         )
         args["goal_viability"]["evidence_basis"] = ["h2.goal_outcome"]  # wrong mode
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+        with pytest.raises(Layer3BOutputError) as exc:
             llm_layer3b_goal_timeline_viability(
                 user_id=1,
                 layer1_payload=_make_layer1(),
@@ -1455,10 +1451,8 @@ class TestEvidenceBasisCheck:
                 non_event_goal_type="endurance",
                 llm_caller=_stub_caller(args),
             )
-        ev_warnings = [
-            w for w in caught if issubclass(w.category, Layer3BEvidenceBasisWarning)
-        ]
-        assert any("must NOT" in str(w.message) for w in ev_warnings)
+        assert exc.value.code == "evidence_basis_mode_violation"
+        assert "must NOT" in str(exc.value)
 
 
 # ─── §13 test scenarios (TS-1 .. TS-8) ───────────────────────────────────────
