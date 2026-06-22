@@ -139,30 +139,28 @@ The whole node is a pure function of its inputs + `prior_resolutions`. No clock,
 | `plan_version_id` | `int` | the row the gate state attaches to |
 | `gate_status` | `Literal['green','needs_review','blocked']` | `green` = advance to Layer 4; `needs_review` = warnings pending (resolvable by acknowledge); `blocked` = ≥1 pending blocker (revise-only) |
 | `items` | `list[GateItem]` | possibly empty (→ `green`) |
-| `evaluated_against` | `dict[str,str]` | the **input fingerprint** the gate was computed against — the cheap staleness guard (§6.1.1) |
+| `evaluated_against` | `dict[str,str]` | the `etl_version_set` the gate was computed against — provenance only (it does *not* move on an athlete edit, so it can't carry the staleness signal; that's `input_fingerprint`) |
+| `input_fingerprint` | `str \| None` | Reading-B staleness fingerprint (§6.1.1): a SHA-256 over the gate's raw leaf inputs, stamped by the caller when it parks a non-green gate; `None` on a green gate (proceeds to synthesis, never re-checked) or one parked before this shipped |
 | `evaluated_at` | `datetime` | stamped by the **caller** on persist, not inside the pure function |
 
-#### 6.1.1 `evaluated_against` — the input fingerprint (staleness guard)
+#### 6.1.1 `input_fingerprint` — the staleness fingerprint (Reading B)
 
-A composite of cheap hashes of the upstream **inputs** the gate consumed. Its only job is the §11.2 staleness check: re-derive it from current inputs and compare — equal ⇒ the persisted gate still holds; any difference ⇒ a recompute is owed. It must be computable **without running an LLM node**, so the check is cheap enough to run on every review re-entry. *(Pre-Slice 3 it held only the Layer-0 `etl_version_set` digest — which moves on a platform re-dump but is blind to a profile/race edit, so it could not detect the staleness §11.2 describes.)*
+`input_fingerprint` lets the review routes detect cheaply — **without an LLM call** — whether an athlete edit (or a provider sync) changed the gate's inputs since it was parked, so a stale verdict re-evaluates against current reality (§11.2). Computed by `layer4.orchestrator.compute_gate_input_fingerprint`, stamped on the gate when the orchestrator parks it non-green, and recomputed by the routes on re-entry / acknowledge / `[Generate]`.
 
-**Composition** (`dict[str,str]`; every value a hex digest or canonical-JSON string):
+**Reading A vs Reading B.** The signal could hash either the gate's *outputs* (the computed 2A/2C/2D/2E/3B payloads — "Reading A") or its *raw leaf inputs* ("Reading B"). Reading A is a non-starter for a cheap re-check: re-deriving 2E/3B would re-run the LLM stages 3A/3B just to learn whether anything changed. **Reading B is what shipped** — fingerprint the raw inputs those stages consume, so the re-check is a handful of indexed reads and no LLM:
 
-| Key | Value | Cheap because |
-|---|---|---|
-| `layer1` | `compute_payload_hash(layer1_payload)` | Layer 1 rebuilds from the DB (no LLM); covers injuries, availability, nutrition, disciplines, perf stats |
-| `2A` | `compute_payload_hash(layer2a_payload)` | deterministic query node (`q_layer2a_*`) — rebuild + hash |
-| `2C` | `compute_layer2c_bundle_hash(locale→hash)` | deterministic query node (per-locale bundle) |
-| `2D` | `compute_payload_hash(layer2d_payload)` | deterministic query node |
-| `3B_inputs` | `sha256(race_event_id ‖ canonical_json(section_h2_kwargs))` | the target-race/goal inputs 3B consumes that aren't yet folded into `layer1` (the §H.2 D11 kwargs — `goal_outcome`, `event_date`, `race_distance_km`, …); this is what makes an `h2.*` race edit register as staleness. Redundant-but-harmless once D11 folds them into `layer1`. |
-| `etl` | `canonical_json(etl_version_set)` | platform reference data (the pre-slice value, retained) |
+| Leaf input | Source |
+|---|---|
+| athlete profile | `build_layer1_payload` |
+| target race | the `RaceEventPayload` |
+| equipment / terrain | per-cluster-locale effective tags + terrain ids |
+| incoming training data | `assemble_layer3a_integration_bundle` (the 3A input bundle) |
+| declared availability | `load_event_windows` |
+| platform-data version | `_q_current_etl_version_set` |
+| 3A/3B prompt revision | `LAYER3_GATE_PROMPT_REVISION` |
+| plan start date | the plan's scope start |
 
-**2E, 3A and 3B are covered without re-running them.** The gate consumes 2E + 3B (and 3A only via 3B); all are pure functions of inputs already fingerprinted — 3A = f(`layer1`, `etl`, model params); 3B = f(`layer1`, 3A, `2A`, `etl`, `3B_inputs`, `current_date`, model params); **2E** = f(`layer1`, 3B, `etl`) — 2E runs *after* 3B in the pipeline (it consumes 3B's `start_phase`), so it can't be hashed standalone without re-running 3B, but its only non-`layer1`/`etl` input is 3B, already covered. So any input change that would move them is caught by the `layer1`/`2A`/`etl`/`3B_inputs` keys. **Two determinants are deliberately omitted** from the cheap check, both backstopped by the `[Generate plan]` guard's real re-run (§11.2):
-
-- **`current_date`** — 3B's viability is day-granular, so a parked plan technically drifts as the timeline compresses with no edit. Fingerprinting it would mark every parked plan stale on the next calendar day and fire a 3B LLM re-derivation on mere page-views — the synchronous-on-GET cost the async model (§11.2) exists to avoid. Time-passage drift is instead caught at the generate click (real re-run against today's date).
-- **3A/3B model/prompt params** — change only on a (global, rare) deploy; a plan parked across one is re-checked by the generate-click guard.
-
-**Comparison** is dict equality. An absent/empty stored fingerprint (a gate persisted before this slice) compares unequal ⇒ treated as stale ⇒ recomputed once. Self-healing; no migration.
+The leaf set is a deliberate **superset** of the gate's true determinants: a **false "stale"** (an edit to a field the gate ignores, or the training-data window sliding a day) is harmless — it only triggers a re-evaluation that mostly replays from cache; a **false "fresh"** (missing a real change) is the bug this closes, so when in doubt an input is included. `evaluated_against` (the etl-version stamp) stays for provenance — it does not move on athlete edits, which is exactly why it can't carry the staleness signal on its own.
 
 ### 6.2 `GateItem`
 
@@ -220,7 +218,7 @@ The set is **closed** (Control_Spec §7). A new gate-item source requires a spec
 
 ## 8. Caching
 
-3D is cheap (a handful of list comprehensions + one `phase_structure_from_3b()` call). No cache at launch, consistent with the Control_Spec §6 "caching not built at launch" posture. It is **designed** cache-friendly (pure, deterministic, inputs explicit). Invalidation, when added, is automatic: any upstream re-run that changes a 2A/2D/2E/3B payload changes the inputs and forces a fresh gate evaluation — which is exactly the resolution-round re-evaluation the gate already does, so there is nothing extra to invalidate. Staleness of a *persisted* gate (a parked plan whose inputs move later) is made explicit by the `evaluated_against` fingerprint (§6.1.1), checked on review re-entry and at the generate click (§11.2).
+3D is cheap (a handful of list comprehensions + one `phase_structure_from_3b()` call). No cache at launch, consistent with the Control_Spec §6 "caching not built at launch" posture. It is **designed** cache-friendly (pure, deterministic, inputs explicit). Invalidation, when added, is automatic: any upstream re-run that changes a 2A/2D/2E/3B payload changes the inputs and forces a fresh gate evaluation — which is exactly the resolution-round re-evaluation the gate already does, so there is nothing extra to invalidate. Staleness of a *persisted* gate (a parked plan whose inputs move later) is made explicit by the `input_fingerprint` (§6.1.1), recomputed on review re-entry, acknowledge, and the generate click to re-kick a fresh evaluation (§11.2).
 
 ---
 
@@ -274,20 +272,23 @@ The athlete does not have to resolve everything in one sitting. Two ways off the
 
 **One in flight at a time (v1).** An athlete may have **at most one** plan in `generating`/`needs_review` at once. Starting a new plan-create while one is parked is refused with a prompt to either resume or cancel the parked plan first. Keeps the model simple at handful-of-athletes scale; revisit if multi-plan drafting is ever needed.
 
-### 11.2 Staleness re-fire (Andy 2026-06-21; fingerprint + async recompute 2026-06-22)
+### 11.2 Staleness re-fire (Andy 2026-06-21; shipped as Reading-B, 2026-06-22)
 
-A parked plan can go stale: while it sits at `needs_review`, a profile edit, a target-race edit, or a provider sync can change an upstream input (e.g. new training data shifts 3A → 3B), adding, removing, or changing gate items. The gate must never show a resolution screen computed against inputs that no longer hold.
+A parked plan can go stale: while it sits at `needs_review`, a profile edit, a target-race edit, or a provider sync can change an upstream input (e.g. new training data shifts 3A → 3B), adding, removing, or changing gate items. The gate must never act on a verdict computed against inputs that no longer hold.
 
-**The guard is the `evaluated_against` input fingerprint (§6.1.1).** Re-deriving it from current inputs is cheap (deterministic query rebuilds + hashes, no LLM), so the check runs at two points:
+**The guard is the `input_fingerprint` (§6.1.1).** The orchestrator stamps it when it parks a non-green gate; the review routes recompute it from current inputs — **cheap, no LLM** (`compute_gate_input_fingerprint` is indexed reads) — and compare. A changed digest means the athlete edited something (or new data synced) since parking, so the verdict is stale. The check runs at three points:
 
-1. **On review re-entry** — compute the current fingerprint, compare to the persisted one. Equal ⇒ the gate is fresh, render it. Unequal ⇒ stale ⇒ a recompute is owed.
-2. **At the `[Generate plan]` click** — the same check as a hard gate before synthesis, and the click forces a **real cone re-run** (the existing advance path). This is the backstop for the determinants the cheap fingerprint omits (`current_date` timeline drift, model/prompt deploys — §6.1.1): a plan that became infeasible through pure time-passage is caught here even though the on-view check read it fresh.
+1. **On review re-entry** (`GET …/review`) — stale ⇒ re-kick (below); fresh ⇒ render the stored gate.
+2. **On acknowledge** (`POST …/review/resolve`) — stale ⇒ bounce back to the review screen rather than record a resolution against an item that may no longer exist.
+3. **At `[Generate plan]`** (`POST …/review/generate`) — stale ⇒ re-kick regardless of the stored verdict; only when fresh does the "every item resolved" guard hold. This closes the bug where a stale stored-non-green blocked an athlete who'd already fixed the issue.
 
-**Recompute runs asynchronously** (Andy 2026-06-22), mirroring plan generation instead of blocking a GET: a detected-stale gate (or a revise edit-save) flags a background cone re-run + `evaluate_layer3d_gate` + persist; the review screen shows a **"re-evaluating"** state and polls; on completion the item list and `generation_status` flip (`needs_review` ↔ `blocked`, or to `green`). Synchronous recompute inside the review GET was rejected — on a cache miss it would spin tens of seconds firing 3A/3B re-derivation while the athlete waits.
+**Re-kick = the async recompute.** A stale gate flips the row back to `generation_status='generating'` (guarded on `needs_review`, so concurrent re-kicks are idempotent); the resumable poller then re-runs the pipeline off the request path and re-evaluates the gate against current reality — re-parking with fresh findings, or proceeding to synthesis if the edit cleared the gate. The athlete sees the progress screen poll, not a blocked GET (this is the "recompute async like plan-gen" decision — the existing poller *is* the async worker). Synchronous recompute inside the review GET was rejected: on a cache miss it would spin tens of seconds firing 3A/3B re-derivation while the athlete waits.
 
-**Resolutions survive recompute by `item_key` (§6.4):** an already acknowledged/revised item that still applies keeps its resolution; one that no longer applies drops off; a newly-surfaced item is `pending`. So a stale-but-since-fixed warning clears itself, and a newly-introduced blocker correctly re-blocks a plan the athlete thought was ready. A `green` plan that recomputes to non-`green` reverts to `needs_review` and cannot generate until re-resolved.
+**Resolutions survive recompute by `item_key` (§6.4):** an already acknowledged/revised item that still applies keeps its resolution; one that no longer applies drops off; a newly-surfaced item is `pending`. So a stale-but-since-fixed warning clears itself, and a newly-introduced blocker correctly re-blocks a plan the athlete thought was ready.
 
-*(Build order: the fingerprint is computed + persisted on every gate evaluation first (so the generate-time re-gate — the existing advance-loop re-run — already never generates stale, and logs the fingerprint per Rule #15); the cheap on-view check + the async "re-evaluating" poll land together next, since both need the same off-request-path partial-cone rebuild. Until then, a parked plan's review screen shows its last-evaluated gate and re-checks at the generate click.)*
+**Fail-safe.** The staleness probe must never 500 the review screen: any error recomputing the fingerprint (e.g. the athlete deleted their home locale while parked) is swallowed and treated as fresh — the next `[Generate]` re-evaluates against current inputs and surfaces any such gap there. A gate with no stored `input_fingerprint` (green, or parked before this shipped) is likewise treated as fresh.
+
+*(`[Fix this]` revise links — turning each item's `revise_target` into a link to its edit surface — remain a follow-up; the staleness re-fire above ships independently.)*
 
 ---
 
@@ -328,7 +329,7 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 | TS-3D-13 | `[Save as pending & exit]` then return | plan still `needs_review`; `hitl_gate` (items + prior resolutions) intact; re-entry via plans-list "Needs review" badge (§11.1) |
 | TS-3D-14 | `[Cancel]` on the review screen | `plan_versions` row voided (D-64); no sessions written; plan leaves the plans list |
 | TS-3D-15 | Start a new plan-create while one is parked at `needs_review` | refused; prompt to resume or cancel the parked plan first (one-in-flight, §11.1) |
-| TS-3D-16 | Parked plan goes stale — provider sync re-runs 3B, adding a new blocker | on re-entry the gate recomputes (fingerprint mismatch, §6.1.1); prior resolutions persist by `item_key`; new blocker is `pending`; gate reverts to `blocked` (§11.2) |
+| TS-3D-16 | Parked plan goes stale — provider sync re-runs 3B, adding a new blocker | on re-entry the gate re-kicks (`input_fingerprint` mismatch, §6.1.1); prior resolutions persist by `item_key`; new blocker is `pending`; gate reverts to `blocked` (§11.2) |
 | TS-3D-17 | `green` plan goes stale, athlete clicks `[Generate plan]` | staleness guard recomputes at the click; if now non-`green`, generation refused → back to `needs_review` (§11.2) |
 
 ### Gut check

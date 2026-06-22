@@ -2,6 +2,8 @@
 
 **Date:** 2026-06-22. **Branch:** `claude/magical-carson-snzvvh`. **Outcome:** Slice 3a shipped — the Trigger-#3 `evaluated_against` fingerprint contract, spec-first then coded. PR opened (ready, auto-merge). The divergent **#874** was closed as superseded first. **Net to `main` (via PR):** spec `Layer3D_Spec.md` (§6.1.1 new + §11.2 rewrite) + `layer3d/gate.py` + `layer4/orchestrator.py` + `tests/test_layer3d_gate.py` + the bookkeeping.
 
+> **⚠️ SUPERSEDED IN PART (post-merge) — see §9.** After #881 merged, a parallel session's **#880** (`5959ed7`) was found to have shipped the *same* #213 staleness re-fire a different way ("Reading-B"). Andy chose to consolidate on #880; #881's "Reading-A" code (this handoff's §2–§3) was **reverted** and the spec rewritten to Reading-B in a follow-up cleanup PR. §1–§8 describe the as-built #881 Reading-A (now reverted); **§9 is the authoritative final state.**
+
 ---
 
 ## 1. What this session did
@@ -102,3 +104,26 @@ Then `git fetch origin main` + check #213 for any new in-flight 3b work (the par
 - **#213** — Slice 3a built (fingerprint contract); commented with the PR + the 3b scope (on-view check + async + `[Fix this]`). Stays **open** as the 3b tracker.
 - **#874** — closed (not merged); superseded by the #873-ratified design; reusable `[Fix this]` bits preserved at `5b4de06`.
 - **#211** epic, **#844** (3C) — untouched.
+
+---
+
+## 9. POST-MERGE CONSOLIDATION — #880 collision → consolidate on Reading-B (authoritative)
+
+After #881 merged, `git log origin/main` showed a parallel #213 merge immediately prior — **#880** (`claude/serene-newton-igye62`, `5959ed7`, "Reading-B staleness fingerprint for parked plans"), merged ~minutes before #881. It solved the **same** #213 staleness re-fire a different (and better) way. The two auto-merged with no textual conflict but were **never CI'd together**.
+
+**The two readings.**
+- **#881 "Reading-A" (this handoff §2–§3, now REVERTED):** `evaluated_against` = hashes of the *computed* 2A/2C/2D payloads (`compute_gate_fingerprint`). Detecting staleness this way needs the query layers rebuilt (a partial cone); 2E/3B can't be hashed cheaply.
+- **#880 "Reading-B" (KEPT):** `Layer3DGate.input_fingerprint` = one SHA-256 over the **raw leaf inputs** (`layer4.orchestrator.compute_gate_input_fingerprint`: profile / race / equipment+terrain / training-bundle / event-windows / etl / prompt-rev / start-date — all cheap indexed reads, **no LLM, no cone**). Stamped on the gate when the orchestrator parks it non-green. **Plus the on-view consumer** in `routes/plan_create.py`: `_gate_inputs_changed` (recompute + compare, fail-safe) gates `plan_review` (re-entry → re-kick), `resolve_review_item` (acknowledge → bounce), `generate_from_review` (generate → re-kick regardless of stored verdict); `_rekick_stale_gate` flips the row to `generating` (idempotent) so the resumable poller re-evaluates — the async recompute (the progress screen polls). Tests: `tests/test_gate_input_fingerprint.py` + `tests/test_layer3d_wiring.py` (+111).
+
+**Andy's call: consolidate on #880's Reading-B** — cheaper (no cone rebuild) and it already ships the consumer #881 had deferred. The cleanup PR:
+1. **Reverts #881's Reading-A code** — removed `compute_gate_fingerprint` (gate.py); the `evaluated_against` param + the cone `gate_fingerprint` field + the hook `evaluated_against=` arg + the fp log (orchestrator); the 8 fingerprint tests (test_layer3d_gate.py). `evaluate_layer3d_gate` returns `evaluated_against=etl_version_set` again — the etl-provenance stamp #880's design relies on (#880 keeps `evaluated_against` = etl, staleness in the separate `input_fingerprint`).
+2. **Rewrites `Layer3D_Spec` §6.1 table + §6.1.1 + §11.2 + §8 + TS-3D-16** to document the shipped Reading-B (#880 shipped no spec; #881's spec had described Reading-A).
+3. Leaves all of #880 untouched.
+
+**Verification:** combined main was green pre-cleanup (CI #783/#784 success); post-cleanup the gate + #880 suites pass locally (**128**, via `dangerouslyDisableSandbox` + `timeout`). #880's consumer reviewed end-to-end — covers re-entry / acknowledge / generate, fail-safe (probe error → treat as fresh, never 500s), idempotent re-kick.
+
+**Still owed for #213 staleness:**
+- **`[Fix this]` revise links** — `templates/plan_create/review.html` is still the plain-text `Fix via: {{ it.revise_target }}` stub. Turn it into a link per `revise_target`: `profile.injuries`→`routes/injuries.py` (`/injuries`); `profile.disciplines`/`profile.nutrition`/`profile.availability`→`routes/locales.py:edit_profile(locale)` (needs the athlete's primary locale — the cone exposes `primary_locale`); `h2.*` (3B items, e.g. `h2.goal_outcome`/`h2.event_date`)→`routes/race_events.py` `/<race_event_id>/edit` (needs the plan's target `race_event_id`). The parked **#874** commit `5b4de06` has a reusable `[Fix this]` form + `resolve_review_item` revise branch + `_REVISE_TARGET_ENDPOINTS` — `git show 5b4de06 -- templates/plan_create/review.html routes/plan_create.py`.
+- **Live-verify (Andy-action — container can't run plan-gen):** park a plan at `needs_review`, edit a profile/race field, re-enter the review screen → it re-kicks (progress screen) and re-evaluates against the edit; `/admin/logs` shows the re-kick.
+
+**Lesson (reinforced):** the collision was invisible until `git log origin/main` *after* the merge. Check the epic for in-flight parallel work both at session start **and immediately before opening a PR** — webhooks/CI don't surface a sibling branch racing the same issue.
