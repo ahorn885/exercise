@@ -2786,6 +2786,38 @@ _PG_MIGRATIONS = [
     "ALTER TABLE current_rx DROP COLUMN IF EXISTS inventory_sugg_volume",
     "DROP TABLE IF EXISTS exercise_equipment",
     "DROP TABLE IF EXISTS exercise_inventory",
+    # #892 — heal race_events.framework_sport values that drifted from the
+    # canonical `sport_discipline_bridge` vocabulary only by case / surrounding
+    # whitespace. The retired free-text "sport override" let these through, and
+    # an unmatched value made the discipline grid resolve to empty ("not
+    # included in disciplines" / only "Race-wide"). CONSERVATIVE on purpose:
+    # only remaps when the normalized forms are identical, so a genuinely
+    # different label (e.g. "Adventure Race" vs "Adventure Racing", or a
+    # discipline-level name like "Trail Running" that maps to several framework
+    # sports) is left for the athlete to re-pick via the #885 structured select
+    # — auto-guessing the sport there would silently mis-plan their training.
+    # The union-render + flagged select keep those races' disciplines visible
+    # meanwhile. DO block guards on the bridge table existing so a fresh DB
+    # (pre-ETL load) doesn't error here; mirrors the terrain_gap_rules
+    # precedent above. Idempotent: a second run finds nothing left to normalize.
+    "DO $$ "
+    "BEGIN "
+    "  IF EXISTS ("
+    "    SELECT 1 FROM information_schema.tables "
+    "    WHERE table_schema='layer0' AND table_name='sport_discipline_bridge'"
+    "  ) THEN "
+    "    UPDATE race_events re "
+    "    SET framework_sport = canon.framework_sport "
+    "    FROM ("
+    "      SELECT DISTINCT framework_sport "
+    "        FROM layer0.sport_discipline_bridge "
+    "       WHERE superseded_at IS NULL AND framework_sport IS NOT NULL"
+    "    ) canon "
+    "    WHERE re.framework_sport IS NOT NULL "
+    "      AND re.framework_sport <> canon.framework_sport "
+    "      AND lower(btrim(re.framework_sport)) = lower(btrim(canon.framework_sport)); "
+    "  END IF; "
+    "END $$;",
 ]
 
 _CLOTHING_SEEDS = [
