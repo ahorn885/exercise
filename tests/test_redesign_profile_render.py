@@ -99,8 +99,10 @@ def test_profile_athlete_tab_first_run(monkeypatch):
     assert 'Your profile.' in html
     # First-run banner when nothing is saved.
     assert 'First run' in html
-    # Sub-tabs present; athlete fields rendered.
-    assert '?tab=schedule' in html and '?tab=skills' in html
+    # Sub-tabs present; athlete fields rendered. #894 regrouped the strip into
+    # Athlete · Fuel & health · Gear & skills · Locations (Schedule moved out).
+    assert '?tab=health' in html and '?tab=gear' in html
+    assert '?tab=schedule' not in html  # Schedule left the profile (now in the sidebar)
     assert 'name="primary_sport"' in html
     # #469 — body weight is entered in the athlete's display unit; the form
     # field is `body_weight`, storage is canonical kg.
@@ -124,13 +126,19 @@ def test_profile_athlete_tab_populated_no_firstrun(monkeypatch):
     assert 'Last saved' in html
 
 
-def test_profile_skills_tab(monkeypatch):
+def test_profile_gear_skills_tab(monkeypatch):
+    # #894 — Gear & skills groups owned crafts + race-day skills + pack-load
+    # experience under one tab (?tab=gear).
     client = _client(monkeypatch, _Conn(profile={}))
-    resp = client.get('/profile/?tab=skills')
+    resp = client.get('/profile/?tab=gear')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'Race-day skills' in html
-    assert '/profile/skills' in html  # save action
+    assert '/profile/skills' in html        # skills save action
+    assert 'Gear you own' in html
+    assert '/profile/crafts' in html        # owned-craft save action
+    assert 'Pack-load experience' in html
+    assert '/profile/pack-load/add' in html  # pack-load add action
     assert 'style="' not in html
 
 
@@ -203,11 +211,14 @@ def test_coach_memory_empty(monkeypatch):
     assert 'style="' not in html
 
 
-def test_profile_schedule_tab(monkeypatch):
+def test_profile_schedule_page(monkeypatch):
+    # #894 — Schedule moved out of the profile tab strip onto its own page
+    # under "Train" in the sidebar (GET /profile/schedule).
     client = _client(monkeypatch, _Conn(profile={}))
-    resp = client.get('/profile/?tab=schedule')
+    resp = client.get('/profile/schedule')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
+    assert 'When can you train?' in html
     assert 'Training windows' in html
     assert '/profile/schedule' in html  # save action
     assert 'style="' not in html
@@ -244,20 +255,23 @@ def test_profile_nutrition_protocol_renders(monkeypatch):
         'updated_at': '2026-05-30 10:00:00',
     }
     client = _client(monkeypatch, _Conn(profile=profile))
-    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    # #894 — nutrition & fueling now lives on the Fuel & health tab, paired with
+    # supplements / conditions / medications.
+    html = client.get('/profile/?tab=health').get_data(as_text=True)
     assert 'Nutrition &amp; fueling' in html
-    # Editable controls present.
+    # Editable controls present, posting to the dedicated nutrition save handler.
     assert 'name="dietary_pattern"' in html
     assert 'name="fueling_format_preference"' in html
     assert 'name="caffeine_tolerance"' in html
+    assert '/profile/nutrition' in html  # nutrition save action (carved out of the main save)
     # Stored values pre-fill the inputs (free-text, number, and >=1 checkbox).
     assert 'high fructose' in html
     assert 'value="200"' in html
     assert 'checked' in html  # multi-select tokens pre-checked
-    # Supplements moved to a structured editor (separate card), not a textarea,
-    # and now live on their own ?tab=supplements surface (#619) — not here.
+    # The legacy free-text supplement textarea is gone; supplements are now a
+    # structured editor paired on this same tab (#619 + #894).
     assert 'name="supplement_protocol_notes"' not in html
-    assert 'Current supplements' not in html
+    assert 'Current supplements' in html
     # No live plan in the default conn -> the plan-baseline card stays hidden.
     assert 'Active plan · daily baseline' not in html
     assert 'style="' not in html
@@ -266,7 +280,7 @@ def test_profile_nutrition_protocol_renders(monkeypatch):
 def test_profile_nutrition_protocol_empty_form(monkeypatch):
     client = _client(monkeypatch, _Conn(
         profile={'primary_sport': 'run', 'updated_at': '2026-05-30 10:00:00'}))
-    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    html = client.get('/profile/?tab=health').get_data(as_text=True)
     assert 'Nutrition &amp; fueling' in html
     assert 'name="dietary_pattern"' in html      # form still rendered
     assert 'checked' not in html                  # nothing pre-selected
@@ -279,8 +293,9 @@ def test_profile_post_persists_nutrition(monkeypatch):
                         lambda db, uid, **kw: captured.update(kw) or {})
     monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
     client = _client(monkeypatch, _Conn(profile={}))
-    resp = client.post('/profile/', data={
-        'unit_preference': 'metric',
+    # #894 — nutrition fields now POST to their own /profile/nutrition handler
+    # (carved out of the main save so a partial POST can't wipe the baselines).
+    resp = client.post('/profile/nutrition', data={
         'dietary_pattern': ['vegan', 'keto', 'bogus'],   # 'bogus' not in vocab
         'fueling_format_preference': ['gel', 'drink_mix'],
         'caffeine_tolerance': 'moderate',
@@ -306,7 +321,8 @@ def test_profile_active_plan_baseline_renders(monkeypatch):
                         lambda db, uid: (77, _fake_plan_nutrition()))
     client = _client(monkeypatch, _Conn(
         profile={'primary_sport': 'run', 'updated_at': '2026-05-30 10:00:00'}))
-    html = client.get('/profile/?tab=athlete').get_data(as_text=True)
+    # #894 — the active-plan nutrition baseline rides with the Fuel & health tab.
+    html = client.get('/profile/?tab=health').get_data(as_text=True)
     assert 'Active plan · daily baseline' in html
     assert '3000 kcal' in html
     assert 'Iron 18mg with breakfast' in html
@@ -403,7 +419,7 @@ def test_profile_supplements_card_renders(monkeypatch):
                       timing='post_exercise', notes='micronized')]
     client = _client(monkeypatch, _SuppConn(vocab=vocab, supps=supps,
                                             profile={'primary_sport': 'run', 'updated_at': 'x'}))
-    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
+    html = client.get('/profile/?tab=health').get_data(as_text=True)
     assert 'Current supplements' in html
     assert 'Creatine monohydrate' in html                             # the record
     # Stored tokens render via their vocab labels, not the raw token.
@@ -531,7 +547,7 @@ def test_health_inputs_cards_render(monkeypatch):
                             medication_name='warfarin', notes=None)]
     client = _client(monkeypatch, _SuppConn(conditions=conditions, medications=medications,
                                             profile={'primary_sport': 'run', 'updated_at': 'x'}))
-    html = client.get('/profile/?tab=supplements').get_data(as_text=True)
+    html = client.get('/profile/?tab=health').get_data(as_text=True)
     # Both cards + the stored records (rendered via their §B labels).
     assert 'Health conditions' in html and 'Medications' in html
     assert 'Atrial fibrillation' in html and 'Cardiac' in html

@@ -1,8 +1,9 @@
 """Repository helpers for the athlete-side skill-capability toggle
 state and the canonical Layer 0 vocab.
 
-Wires the capture surface — `/onboarding/skills` + `/profile?tab=skills`
-— to the Bucket C sub-item (l) tables shipped 2026-05-24:
+Wires the capture surface — `/onboarding/skills` + the profile Gear & skills
+tab (`/profile?tab=gear`) — to the Bucket C sub-item (l) tables shipped
+2026-05-24:
 
 - `layer0.skill_capability_toggles` — canonical vocab (toggle_name,
   display_label, description, gated_terrain_ids, gated_discipline_ids).
