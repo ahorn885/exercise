@@ -58,10 +58,16 @@
           </form>
           {% endif %}
           {% if it.revise_target %}
-          {# Slice 1 surfaces the fix target; the in-place revise cascade is a
-             later slice. The athlete edits the named profile surface, then
-             re-enters the gate. #}
+          {# [Fix this] links to the edit surface that owns the input (#213). On
+             return, the review screen recomputes the staleness fingerprint and
+             re-evaluates the gate against the edit. A target with no known
+             surface falls back to naming it. #}
+          {% set revise_url = revise_urls.get(it.revise_target) %}
+          {% if revise_url %}
+          <a href="{{ revise_url }}" class="btn btn-ghost btn-sm">Fix this</a>
+          {% else %}
           <p class="pl-meta mono">Fix via: {{ it.revise_target }}</p>
+          {% endif %}
           {% endif %}
         </div>
       </div>

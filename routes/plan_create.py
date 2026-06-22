@@ -57,6 +57,7 @@ from flask import (
     abort,
     jsonify,
 )
+from werkzeug.routing import BuildError
 
 from database import get_db
 from layer4 import (
@@ -1506,6 +1507,75 @@ def _grouped_gate_items(gate) -> dict:
     return buckets
 
 
+# `revise_target` values that resolve to the athlete's main profile editor —
+# disciplines, nutrition, and availability/schedule all live on `GET /profile/`
+# (`profile.edit`). `profile.injuries` and the 3B `h2.*` race inputs resolve
+# elsewhere.
+_PROFILE_EDIT_REVISE_TARGETS = frozenset(
+    {"profile.disciplines", "profile.nutrition", "profile.availability"}
+)
+
+
+def _safe_url(endpoint: str, **values) -> str | None:
+    """`url_for` that yields None instead of raising for an unregistered/renamed
+    endpoint — a missing revise surface degrades to the plain-text target rather
+    than 500-ing the review screen (same fail-safe posture as the staleness
+    probe)."""
+    try:
+        return url_for(endpoint, **values)
+    except BuildError:
+        return None
+
+
+def _build_revise_urls(db, uid: int, gate) -> dict[str, str]:
+    """`{revise_target -> edit-surface URL}` for the gate's items, so the review
+    screen can render a [Fix this] link that takes the athlete straight to the
+    input behind each finding (#213). Maps:
+
+      * `profile.injuries`                          -> the injuries list/editor
+      * `profile.disciplines|nutrition|availability` -> the athlete profile editor
+      * 3B `h2.*` (target-race inputs)              -> the target race editor
+
+    A target with no edit surface (e.g. 3B `h3.plan_duration_weeks` on an
+    open-ended plan), or one whose surface can't be resolved (no target race, or
+    an unregistered endpoint), is omitted — the template falls back to naming the
+    target. Never raises: revise-link resolution must not break the review
+    render."""
+    targets = {it.revise_target for it in gate.items if it.revise_target}
+    urls: dict[str, str] = {}
+    if not targets:
+        return urls
+
+    if "profile.injuries" in targets:
+        url = _safe_url("injuries.list_entries")
+        if url:
+            urls["profile.injuries"] = url
+
+    profile_targets = targets & _PROFILE_EDIT_REVISE_TARGETS
+    if profile_targets:
+        url = _safe_url("profile.edit")
+        if url:
+            for t in profile_targets:
+                urls[t] = url
+
+    if any(t.startswith("h2.") for t in targets):
+        try:
+            race = load_target_race_event_payload(db, uid)
+        except Exception:  # noqa: BLE001 — never break review over a revise link
+            race = None
+        url = (
+            _safe_url("race_events.edit_race", race_event_id=race.race_event_id)
+            if race is not None
+            else None
+        )
+        if url:
+            for t in targets:
+                if t.startswith("h2."):
+                    urls[t] = url
+
+    return urls
+
+
 def _gate_inputs_changed(db, uid: int, plan_version: dict, gate) -> bool:
     """True when the athlete's gate-relevant inputs changed since the parked gate
     was evaluated (Reading-B staleness check, #213). Recomputes the
@@ -1543,6 +1613,15 @@ def _rekick_stale_gate(db, uid: int, plan_version_id: int):
     with fresh findings, or proceeding if the athlete's edit cleared the gate. The
     UPDATE is guarded on `needs_review` so concurrent re-kicks are idempotent.
     Returns a redirect to the progress screen."""
+    # Rule #15 — make the staleness re-fire observable so its firing frequency
+    # is visible in `/admin/logs` (#213 Reading-B). The fingerprint is a single
+    # opaque digest, so the changed leaf input isn't recoverable here; the event
+    # + plan is the signal.
+    print(
+        f"_rekick_stale_gate: plan_version_id={plan_version_id} uid={uid} — "
+        f"Layer 3D gate inputs changed since park; needs_review -> generating "
+        f"to re-evaluate (#213 Reading-B staleness)"
+    )
     db.execute(
         "UPDATE plan_versions SET generation_status = 'generating', "
         "generation_error = NULL WHERE id = ? AND user_id = ? "
@@ -1601,6 +1680,7 @@ def plan_review(plan_version_id: int):
         plan_version=plan_version,
         gate=gate,
         grouped=_grouped_gate_items(gate),
+        revise_urls=_build_revise_urls(db, uid, gate),
         resolve_url=url_for(
             'plan_create.resolve_review_item', plan_version_id=plan_version_id
         ),
