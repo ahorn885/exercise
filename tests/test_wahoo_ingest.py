@@ -81,6 +81,30 @@ class TestNormalize:
         assert d['discipline_id'] is None
         assert d['_provider_raw']['bucket'] == 3
 
+    def test_live_nested_workout_shape(self):
+        """The live webhook nests type/name/start under a `workout` sub-object
+        (verified against a 2026-06-22 push); the summary carries only the
+        accumulator metrics. Reading them top-level mislabels the ride as
+        `other`/unnamed — this is the regression guard for that fix."""
+        from routes.wahoo import normalize_wahoo_summary
+        d = normalize_wahoo_summary({
+            'id': 417773586, 'started_at': '2026-06-22T06:28:56.000Z',
+            'created_at': '2026-06-22T06:29:10.000Z',  # upload time — must NOT win
+            'distance_accum': '0.0', 'duration_total_accum': '4.0',
+            'duration_active_accum': '4.0',
+            'workout': {
+                'id': 468665132, 'name': 'Indoor Cycling test',
+                'workout_type_id': 12,  # BIKING_INDOOR → D-006
+                'starts': '2026-06-22T06:28:56.000Z',
+            },
+        })
+        assert d['activity'] == 'cycling'
+        assert d['discipline_id'] == 'D-006'
+        assert d['activity_name'] == 'Indoor Cycling test'
+        assert d['date'] == '2026-06-22'
+        assert d['_provider_raw']['payload']['workout_type_id'] == 12
+        assert d['_provider_raw']['payload']['wahoo_workout_id'] == 417773586
+
 
 # ── ingest ────────────────────────────────────────────────────────────
 
