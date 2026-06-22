@@ -16,7 +16,7 @@ import os
 from datetime import datetime
 
 import bcrypt
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, session
 
 from datetime import date
 
@@ -88,6 +88,7 @@ from health_inputs_repo import (
 from pack_load_repo import (
     list_pack_loads, add_pack_load, delete_pack_load,
 )
+from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
 
@@ -1148,9 +1149,84 @@ def account_settings():
         totp_status = 'pending'
     else:
         totp_status = 'off'
+    # Account-merge entry (#274 follow-up, design §6). Only surfaced when the
+    # feature flag is on; buttons are the identity providers whose client id is
+    # configured (the OAuth-into-the-other-account proof runs through them).
+    merge_enabled = account_merge.merge_enabled()
+    merge_providers = []
+    if merge_enabled:
+        merge_providers = [
+            {'slug': slug, 'label': label, 'endpoint': endpoint}
+            for slug, label, endpoint in CONNECTION_PROVIDERS
+            if slug in pi.SIGNIN_PROVIDERS
+            and os.environ.get(_PROVIDER_CLIENT_ID_ENV.get(slug, ''))
+        ]
     return render_template('profile/account.html',
                            user_row=dict(user_row) if user_row else {},
-                           totp_status=totp_status)
+                           totp_status=totp_status,
+                           merge_enabled=merge_enabled,
+                           merge_providers=merge_providers)
+
+
+@bp.route('/merge/confirm')
+def merge_confirm():
+    """Confirm screen for an account merge staged by a provider OAuth (design
+    §6). 404 when the feature is off; bounces to settings if nothing's staged."""
+    if not account_merge.merge_enabled():
+        abort(404)
+    db = get_db()
+    keep_id = current_user_id()
+    drop_id = account_merge.staged_drop_id(session)
+    if not drop_id or drop_id == keep_id:
+        flash('No account is staged to merge. Start from "Merge a duplicate '
+              'account" in settings.', 'info')
+        return redirect(url_for('profile.account_settings'))
+    drop = account_merge.account_label(db, drop_id)
+    if not drop:
+        account_merge.clear_staged_merge(session)
+        flash('That account no longer exists.', 'warning')
+        return redirect(url_for('profile.account_settings'))
+    keep = account_merge.account_label(db, keep_id)
+    return render_template('profile/merge_confirm.html', keep=keep, drop=drop)
+
+
+@bp.route('/merge/execute', methods=['POST'])
+def merge_execute():
+    """Run the staged merge (DESTRUCTIVE). Re-auths the survivor's password when
+    it has one (walk-up-attacker guard, §6) and requires a typed confirmation.
+    All-or-nothing: on any engine error nothing is changed."""
+    if not account_merge.merge_enabled():
+        abort(404)
+    db = get_db()
+    keep_id = current_user_id()
+    drop_id = account_merge.staged_drop_id(session)
+    if not drop_id or drop_id == keep_id:
+        flash('No account is staged to merge.', 'info')
+        return redirect(url_for('profile.account_settings'))
+
+    keep = account_merge.account_label(db, keep_id)
+    if keep and keep['has_password']:
+        row = db.execute('SELECT password_hash FROM users WHERE id=?', (keep_id,)).fetchone()
+        if not row or not _check_password(request.form.get('current_password') or '',
+                                          row['password_hash']):
+            flash('Current password is incorrect.', 'danger')
+            return redirect(url_for('profile.merge_confirm'))
+    if (request.form.get('confirm') or '').strip() != 'MERGE':
+        flash('Type MERGE to confirm the merge.', 'danger')
+        return redirect(url_for('profile.merge_confirm'))
+
+    try:
+        summary = account_merge.merge_accounts(db, keep_id, drop_id)
+    except Exception as exc:  # noqa: BLE001 — surface failure, change nothing
+        print(f'[account-merge] failed keep={keep_id} drop={drop_id}: {exc}')  # Rule #15
+        flash('Merge failed — nothing was changed.', 'danger')
+        return redirect(url_for('profile.account_settings'))
+
+    account_merge.clear_staged_merge(session)
+    moved = sum(summary.get('repointed', {}).values())
+    flash(f'Account merged — {moved} records moved in, and the duplicate '
+          f'account was removed.', 'success')
+    return redirect(url_for('profile.account_settings'))
 
 
 @bp.route('/memory')

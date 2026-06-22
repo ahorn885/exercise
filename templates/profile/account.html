@@ -110,6 +110,21 @@
     {% endif %}
   </div>
 
+  {% if merge_enabled and merge_providers %}
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Merge a duplicate account</p>
+    <p class="acct-hint">Accidentally created a second account by signing up with a different
+      provider? Sign in to that other account here — its training data moves into this one and the
+      duplicate is removed. You'll confirm before anything changes.</p>
+    <div class="acct-merge-actions">
+      {% for p in merge_providers %}
+      <a class="btn btn-ghost btn-sm"
+         href="{{ url_for(p.endpoint, intent='merge', return_to='/profile/account') }}">Merge via {{ p.label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="card card-pad acct-signout">
     <div class="acct-signout-txt">
       <p class="eyebrow">● Session</p>

@@ -44,6 +44,7 @@ from flask import (
 )
 
 from database import get_db
+from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
 from routes.auth import current_user_id
@@ -90,7 +91,13 @@ def oauth_start():
 
     state = secrets.token_urlsafe(32)
     session[_OAUTH_STATE] = state
-    session[_OAUTH_INTENT] = 'signin' if signin else 'connect'
+    if signin:
+        intent = 'signin'
+    elif request.args.get('intent') == 'merge':
+        intent = 'merge'  # account-merge entry (design §6) — prove the other account
+    else:
+        intent = 'connect'
+    session[_OAUTH_INTENT] = intent
     return_to = request.args.get('return_to') or '/'
     if not return_to.startswith('/') or return_to.startswith('//'):
         return_to = '/'
@@ -116,7 +123,7 @@ def oauth_callback():
     code for tokens, persist via `provider_auth`, record the scope ack."""
     user_id = current_user_id()
     signin = user_id is None
-    session.pop(_OAUTH_INTENT, None)
+    intent = session.pop(_OAUTH_INTENT, None)
     if signin and not pi.signin_enabled():
         return redirect(url_for('auth.login'))
 
@@ -208,6 +215,19 @@ def oauth_callback():
         session['user_id'] = user_id
         session['username'] = username
         return redirect(dest)
+
+    # ── Account-merge entry (design §6) ───────────────────────────────────
+    # The OAuth just proved control of whatever account owns this Strava
+    # identity. If that's a DIFFERENT account, stage it as the merge "drop" and
+    # bounce to the confirm screen — we do NOT persist/link here (the merge
+    # re-points drop's rows to keep). Nothing to merge → back with a notice.
+    if intent == 'merge':
+        other = pi.get_identity(db, 'strava', athlete_id)
+        sep = '&' if '?' in return_to else '?'
+        if other and other['user_id'] != user_id:
+            account_merge.stage_merge(session, other['user_id'])
+            return redirect(url_for('profile.merge_confirm'))
+        return redirect(f'{return_to}{sep}merge_error=nothing_to_merge')
 
     # ── Logged-in connect / link path ─────────────────────────────────────
     _persist_strava_auth(db, user_id, access_token, refresh_token,

@@ -34,6 +34,40 @@ def merge_enabled() -> bool:
     )
 
 
+# ── Entry-point staging (design §6) ──────────────────────────────────────────
+# The OAuth-into-the-other-account flow proves control of the duplicate ("drop")
+# account: a logged-in athlete (the survivor / "keep") runs a provider OAuth
+# with intent=merge; if that provider identity resolves to a DIFFERENT account,
+# the callback stages that account's id here and bounces to the confirm screen.
+# Keep is always the live session — never stored — so a stale value can't
+# redirect the merge at the destructive `execute` step.
+_SESSION_DROP_KEY = 'pending_merge_drop_id'
+
+
+def stage_merge(session: Any, drop_id: int) -> None:
+    session[_SESSION_DROP_KEY] = int(drop_id)
+
+
+def staged_drop_id(session: Any) -> Any:
+    return session.get(_SESSION_DROP_KEY)
+
+
+def clear_staged_merge(session: Any) -> None:
+    session.pop(_SESSION_DROP_KEY, None)
+
+
+def account_label(db: Any, user_id: int) -> Any:
+    """`{username, email, has_password}` for the confirm screen, or None."""
+    row = db.execute(
+        "SELECT username, email, COALESCE(password_hash, '') <> '' AS has_password "
+        "FROM users WHERE id = ?", (user_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {'username': row['username'], 'email': row['email'],
+            'has_password': bool(row['has_password'])}
+
+
 def user_fk_columns(db: Any) -> list[tuple[str, str]]:
     """Every (table, column) that is a FOREIGN KEY to users(id), discovered
     dynamically (design decision #2). Catches ownership columns that aren't
