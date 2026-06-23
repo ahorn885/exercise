@@ -2962,6 +2962,43 @@ _PG_MIGRATIONS = [
             cl.coros_label_id, cl.strava_activity_id, cl.rwgps_trip_id
         FROM cardio_log cl
         WHERE cl.cluster_id IS NULL""",
+    # ── #196 Phase 2 — the canonical daily-wellness layer ─────────────────────
+    # The daily-metrics analog of Phase 3's canonical_activity: one best-of row
+    # per (user, date), materialized on ingest by canonical_wellness.py:
+    # materialize_canonical_wellness. Replaces the coalesce-at-reader merge that
+    # lived only in layer3a (so all consumers share one wellness read surface).
+    #   - The 3 genuinely-multi-source fields (sleep_hours / hrv_rmssd_ms /
+    #     resting_hr — every device measures the same quantity) are merged
+    #     field-by-field, freshest-non-null with a garmin>whoop>oura>polar>coros
+    #     tiebreak, and carry a *_source provenance column ("HRV from Garmin,
+    #     sleep from Whoop").
+    #   - The widened context fields (hrv/rhr baselines, sleep_score,
+    #     training_readiness, vo2max, acute_training_load) are Garmin-origin today
+    #     and carry NO source column: provenance is only meaningful where a merge
+    #     chose between sources. "Readiness"/"load" are deliberately NOT coalesced
+    #     across providers — Garmin training_readiness, Whoop recovery, Polar ANS
+    #     charge are different quantities; merging them would average unlike units.
+    # Additive / idempotent / public-schema → auto-applies on each Vercel deploy;
+    # no Neon apply owed. Design: designs/CanonicalDailyWellness_196_Phase2_Design_v1.md
+    """CREATE TABLE IF NOT EXISTS canonical_daily_wellness (
+        id                       SERIAL PRIMARY KEY,
+        user_id                  INTEGER NOT NULL REFERENCES users(id),
+        date                     TEXT NOT NULL,
+        total_sleep_hours        REAL,    total_sleep_hours_source TEXT,
+        hrv_rmssd_ms             REAL,    hrv_rmssd_ms_source      TEXT,
+        resting_hr               INTEGER, resting_hr_source        TEXT,
+        hrv_7d_avg_ms            REAL,
+        resting_hr_7day_avg      INTEGER,
+        sleep_score              INTEGER,
+        training_readiness       INTEGER,
+        vo2max_running           REAL,
+        vo2max_cycling           REAL,
+        acute_training_load      INTEGER,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS canonical_daily_wellness_user_date_idx ON canonical_daily_wellness (user_id, date)",
 ]
 
 _CLOTHING_SEEDS = [
