@@ -2,7 +2,7 @@
 
 Boots the real Flask app with a fake DB and drives `connections.hub`
 through `render_template` on the new shell across its three tabs. The route
-reads provider_auth (via load_connections), cardio_log (Files), and the
+reads provider_auth (via load_connections), canonical_cardio_feed (Files), and the
 Garmin auth status (best-effort). A fake connection keyed off the SQL
 exercises each tab. Assertions stay structural + CSP-clean.
 """
@@ -47,13 +47,16 @@ class _Conn:
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
+        # The Files list reads the deduped canonical_cardio_feed (#196 Slice 4b),
+        # not raw cardio_log — match either so the fake tracks the live surface.
+        cardio_src = 'cardio_log' in s or 'canonical_cardio_feed' in s
         if 'FROM provider_auth' in s:
             return _Cursor(self._providers)
-        if 'COUNT(*)' in s and 'cardio_log' in s:
+        if 'COUNT(*)' in s and cardio_src:
             return _Cursor([], one=_FakeRow(n=len(self._activities)))
         if 'COUNT(*)' in s and 'training_sessions' in s:
             return _Cursor([], one=_FakeRow(n=len(self._strength)))
-        if 'FROM cardio_log' in s:
+        if 'FROM cardio_log' in s or 'FROM canonical_cardio_feed' in s:
             return _Cursor(self._activities)
         if 'FROM training_sessions' in s and 'JOIN training_log' in s:
             return _Cursor(self._strength)

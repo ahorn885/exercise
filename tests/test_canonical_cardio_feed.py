@@ -1,5 +1,7 @@
 """Tests for the #196 Phase 3 Slice 4 `canonical_cardio_feed` view + the
-"fix the math first" consumer repoints (training-load + plan-compliance).
+consumer repoints — Slice 4a "fix the math first" (training-load +
+plan-compliance + coaching) and Slice 4b "fix the display next" (the Data-hub
+Files list + the dashboard cardio surfaces).
 
 The view itself is raw SQL DDL that auto-applies on each deploy; the container
 has no Postgres to execute it against (Neon egress blocked), so — mirroring
@@ -113,3 +115,37 @@ class TestMathConsumersReadFeed:
         # already Postgres-broken (GROUP_CONCAT + non-aggregated GROUP BY), a
         # pre-existing bug flagged separately, not repointed in Slice 4a.
         assert "LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id" in src
+
+
+class TestDisplayConsumersReadFeed:
+    """Slice 4b — the summary/display surfaces collapse a cross-source ride to
+    one row; the literal activity-LOG/CRUD pages deliberately stay raw so a stray
+    duplicate stays visible and deletable (decision 2)."""
+
+    def test_connections_files_list_reads_feed(self):
+        src = _read("routes/connections.py")
+        # the Data-hub Files list + its count both read the deduped feed
+        assert "FROM canonical_cardio_feed WHERE user_id = ?" in src
+        assert "SELECT COUNT(*) AS n FROM canonical_cardio_feed" in src
+        # the old raw-table reads are gone (they showed N copies of one ride)
+        assert "FROM cardio_log WHERE user_id = ?" not in src
+        assert "SELECT COUNT(*) AS n FROM cardio_log" not in src
+
+    def test_dashboard_cardio_surfaces_read_feed(self):
+        src = _read("routes/dashboard.py")
+        # cardio_total stat + recent-cardio strip + unconditioned-cardio nudge
+        assert src.count("FROM canonical_cardio_feed") >= 3
+        assert "SELECT COUNT(*) FROM canonical_cardio_feed" in src
+        assert "LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id" in src
+        # the raw cardio_log reads for these three surfaces are gone
+        assert "SELECT COUNT(*) FROM cardio_log WHERE user_id = ?" not in src
+        assert "FROM cardio_log cl\n" not in src
+        # the strength count is a different table and stays put
+        assert "FROM training_log WHERE user_id = ?" in src
+
+    def test_literal_log_pages_stay_raw(self):
+        # decision 2: the literal cardio-LOG list/edit pages keep showing every
+        # imported copy, so they must NOT be repointed at the feed.
+        for rel in ("routes/cardio.py", "routes/training.py"):
+            src = _read(rel)
+            assert "canonical_cardio_feed" not in src, rel
