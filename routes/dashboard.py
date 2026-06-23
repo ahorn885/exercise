@@ -234,7 +234,8 @@ def index():
             'SELECT COUNT(*) FROM training_log WHERE user_id = ?', (uid,)
         ).fetchone()[0],
         'cardio_total': db.execute(
-            'SELECT COUNT(*) FROM cardio_log WHERE user_id = ?', (uid,)
+            # canonical_cardio_feed (#196 Slice 4b): count a cross-source ride once.
+            'SELECT COUNT(*) FROM canonical_cardio_feed WHERE user_id = ?', (uid,)
         ).fetchone()[0],
         'active_injuries': db.execute(
             "SELECT COUNT(*) FROM injury_log WHERE user_id = ? AND status='Active'", (uid,)
@@ -323,8 +324,11 @@ def index():
         (uid,)
     ).fetchall()
 
+    # canonical_cardio_feed (#196 Slice 4b): a ride synced from N providers shows
+    # once in the recent-cardio strip; unclustered rows still surface via the feed.
     recent_cardio = db.execute(
-        'SELECT date, activity, duration_min, distance_mi, avg_hr FROM cardio_log '
+        'SELECT date, activity, duration_min, distance_mi, avg_hr '
+        'FROM canonical_cardio_feed '
         'WHERE user_id = ? ORDER BY date DESC LIMIT 5',
         (uid,)
     ).fetchall()
@@ -345,10 +349,13 @@ def index():
 
     weather = _get_weather(db)
 
-    # Cardio sessions in the last 7 days with no conditions log entry
+    # Cardio sessions in the last 7 days with no conditions log entry.
+    # canonical_cardio_feed (#196 Slice 4b): a cross-source ride prompts for
+    # conditions once (against the feed's primary copy id), not N times; the
+    # conditions_log join still resolves on that primary copy's id.
     unconditioned_cardio = db.execute(
         '''SELECT cl.id, cl.date, cl.activity, cl.activity_name, cl.duration_min
-           FROM cardio_log cl
+           FROM canonical_cardio_feed cl
            LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id
            WHERE cl.user_id = ? AND cl.date >= ? AND cond.id IS NULL
            ORDER BY cl.date DESC''',
