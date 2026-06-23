@@ -184,6 +184,31 @@ _FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))
 _INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "330"))
 _INVOCATION_BUDGET_S = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
 
+# D-77 misconfiguration guard (#213). The reserve (330s ≈ worst ~250s block +
+# persist) was sized for an 800s cap; if the deployed cap is lower (the 300s
+# default, i.e. PLAN_GEN_FUNCTION_CAP_S unset), `cap - reserve` goes negative and
+# the budget SILENTLY floors to 30s. 30s can't cache a single dense week-block (a
+# Build/Peak week runs ~250s), so every resumable pass 504s mid-synthesis, caches
+# nothing, and the plan stalls at the wall-clock backstop with ZERO progress —
+# exactly the pv=80 "3 blocks then stalled at index 3" failure. This is purely a
+# config error (reserve must sit below the real Vercel Max Duration), so surface
+# it LOUDLY at import instead of letting it present as a mysterious generation
+# hang. Log-only: the budget value is unchanged (raising it blindly would 504 a
+# block started near a too-low real cap — the cap itself must be corrected).
+if _FUNCTION_CAP_S - _INVOCATION_RESERVE_S < 30.0:
+    import logging as _logging
+
+    _logging.getLogger(__name__).error(
+        "PLAN_GEN per-pass budget floored to %.0fs: reserve (%.0fs) >= function "
+        "cap (%.0fs). Dense week-blocks (~250s) cannot cache within the budget — "
+        "plan generation will STALL at the backstop with no progress. Set "
+        "PLAN_GEN_FUNCTION_CAP_S to the deployed Vercel maxDuration (with "
+        "PLAN_GEN_INVOCATION_RESERVE_S kept below it).",
+        _INVOCATION_BUDGET_S,
+        _INVOCATION_RESERVE_S,
+        _FUNCTION_CAP_S,
+    )
+
 # D-77 advance-claim TTL (see the concurrency-guard note above). Must EXCEED the
 # longest a LIVE pass can hold the claim -- the per-invocation budget plus the
 # worst single block that started just under the deadline and ran to completion

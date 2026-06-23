@@ -144,17 +144,45 @@ def load_hitl_gate(db: Any, user_id: int, plan_version_id: int) -> Any | None:
 def load_prior_resolutions(
     db: Any, user_id: int, plan_version_id: int
 ) -> dict[str, Any]:
-    """Extract the athlete's prior `GateResolution`s (keyed by `item_key`) from
-    the persisted gate, for `evaluate_layer3d_gate(prior_resolutions=...)`. Empty
-    dict when there's no gate or no resolutions yet (§5 step 5 / §6.4)."""
-    gate = load_hitl_gate(db, user_id, plan_version_id)
-    if gate is None:
+    """Extract the athlete's prior `GateResolution`s (keyed by `item_key`) for
+    `evaluate_layer3d_gate(prior_resolutions=...)`. Empty dict when there's no
+    gate or no resolutions yet (§5 step 5 / §6.4).
+
+    Carries resolutions ACROSS plan versions (#213 retry-loop fix). `item_key` is
+    a deterministic `sha256(source|source_item_id|discriminator)` — the *same*
+    finding keeps the *same* key on a freshly-minted plan version. Previously this
+    read only the current plan version's `hitl_gate`, so every [Retry] (which
+    allocates a new `plan_versions` row with an empty gate) re-pended all items the
+    athlete had already acknowledged — an inescapable loop. We now inherit prior
+    resolutions from the athlete's other plan versions (most-recent-first), with
+    the current plan's own resolutions taking precedence. A stale acknowledge can
+    never mis-apply: if the underlying finding changed, its `item_key` changes and
+    the old resolution simply doesn't match; a `revised` resolution whose item
+    re-surfaces is re-pended by `resolved_status` regardless."""
+    # Most-recent-first across ALL of the athlete's gates (current plan included),
+    # so the current version's resolution wins on any key collision.
+    try:
+        rows = db.execute(
+            "SELECT id, hitl_gate FROM plan_versions "
+            "WHERE user_id = ? AND hitl_gate IS NOT NULL "
+            "ORDER BY (id = ?) DESC, id DESC",
+            (user_id, plan_version_id),
+        ).fetchall()
+    except Exception:  # noqa: BLE001 — pre-migration column absence is non-fatal
         return {}
-    return {
-        it.item_key: it.resolution
-        for it in gate.items
-        if it.resolution is not None
-    }
+
+    from layer3d.gate import Layer3DGate
+
+    merged: dict[str, Any] = {}
+    for row in rows:
+        raw = row["hitl_gate"]
+        if raw is None:
+            continue
+        gate = Layer3DGate.model_validate(_decode_json(raw))
+        for it in gate.items:
+            if it.resolution is not None and it.item_key not in merged:
+                merged[it.item_key] = it.resolution
+    return merged
 
 
 def persist_layer4_sessions(
