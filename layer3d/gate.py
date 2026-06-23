@@ -25,9 +25,11 @@ Two net-new findings over the 2A/2C/2D payloads already in hand — conflicts th
 live only in the intersection of several nodes' outputs, so no single upstream
 node can emit them: CN-1 (an included discipline gated off at *every* locale) and
 CN-2 (an injury substitute gated off at *every* locale). Warnings, acknowledge-
-able, revise → the locations list. Surfacing the upstream advisory `coaching_flags`
-themselves (the orphaned 2A/2B/2C/2D/2E flags) is the next slice; it threads 2B in
-and adds the informational tier (§5.4).
+able, revise → the locations list. The companion `surface_orphaned_flags` surfaces
+the upstream advisory `coaching_flags` (the orphaned 2A/2B/2C/2D/2E flags, until now
+silently discarded) as **informational** gate items — display-only, never park a
+plan (`compute_gate_status` excludes them). 2B is threaded into the gate signature
+for this; all surfaced flags carry `source='3C'` (§5.4).
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -46,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from layer4.context import (
     Layer2APayload,
+    Layer2BPayload,
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
@@ -443,6 +446,175 @@ def map_3c_items(
     return items
 
 
+# Per-origin revise surface for a surfaced advisory flag. Every token is already
+# in the §6 revise registry (routes/plan_create._PROFILE_REVISE_SURFACES + the
+# `h2.*` race-editor branch) — surfacing adds no new revise wiring.
+_FLAG_REVISE_TARGET = {
+    "2A": "profile.disciplines",
+    "2B": "h2.race_terrain",  # any h2.* routes to the target-race editor
+    "2C": "profile.locales",
+    "2D": "profile.injuries",
+    "2E": "profile.nutrition",
+}
+
+
+def _msg_disc(message: str) -> str:
+    """Stable per-message discriminator for a flag with no natural id (a race-wide
+    advisory with `discipline_id=None`), so two distinct same-type advisories don't
+    collide on `item_key` and survive a reorder of the upstream flag list."""
+    return hashlib.sha256(message.encode("utf-8")).hexdigest()[:8]
+
+
+def _surfaced_flag_item(
+    origin: str,
+    flag_type: str,
+    discriminator: str,
+    message: str,
+    evidence: dict[str, Any],
+) -> GateItem:
+    """One surfaced upstream `coaching_flag` → an **informational** gate item
+    (§5.4 Slice 2). `source` is `3C` (the node doing the surfacing — keeps the
+    `GateSource` set closed); the originating layer rides in `source_item_id` +
+    `evidence['origin']`. Informational items are display-only —
+    `compute_gate_status` never parks a plan on them — so surfacing the whole
+    advisory backlog adds review-screen context without blocking anyone."""
+    return GateItem(
+        item_key=make_item_key("3C", f"{origin}:flag:{flag_type}", discriminator),
+        source="3C",
+        source_item_id=f"{origin}:flag:{flag_type}",
+        severity="informational",
+        title=flag_type.replace("_", " ").capitalize(),
+        message=message,
+        resolution_options=[],
+        revise_target=_FLAG_REVISE_TARGET[origin],
+        can_acknowledge=True,
+        evidence={"origin": origin, "flag_type": flag_type, **evidence},
+    )
+
+
+def surface_orphaned_flags(
+    layer2a_payload: Layer2APayload,
+    layer2b_payload: Layer2BPayload | None,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+    layer2e_payload: Layer2EPayload,
+    *,
+    cn_items: list[GateItem],
+) -> list[GateItem]:
+    """§5.4 Slice 2 — surface the advisory `coaching_flags` that 2A/2B/2C/2D/2E
+    compute today and silently discard, as **informational** gate items (display-
+    only; `compute_gate_status` never parks a plan on them). The athlete sees them
+    as FYI context on the review screen when a plan parks for a real reason; a clean
+    plan stays `green` and proceeds (they remain in the persisted gate record).
+
+    All surfaced flags map to gate-severity `informational` regardless of any
+    source-local severity (2E's own info/low/moderate/high rides in `evidence`):
+    the **gating** nutrition/injury/equipment paths are those layers' `hitl_items`
+    / detectors, not these advisory flags (Andy 2026-06-23 — keep them all
+    informational at v1, tune from prod signal).
+
+    Suppression (no double-surfacing): a 2C gear/skill-gate flag whose discipline is
+    already escalated to a CN-1/CN-2 warning is dropped (the conflict item carries
+    it); a 2D advisory flag whose discipline already has a mapped 2D `hitl_item` is
+    dropped (the hitl item is the gating surface)."""
+    items: list[GateItem] = []
+
+    # Disciplines a 3C conflict warning already covers (CN-1 discipline + CN-2
+    # gated substitutes) — don't also surface the raw 2C gate flag for them.
+    cn_disciplines: set[str] = set()
+    for it in cn_items:
+        did = it.evidence.get("discipline_id")
+        if did:
+            cn_disciplines.add(did)
+        cn_disciplines.update(it.evidence.get("gated_substitutes", []))
+
+    # 2A — discipline-scoped advisories → the Athlete tab.
+    for f in layer2a_payload.coaching_flags:
+        items.append(
+            _surfaced_flag_item(
+                "2A",
+                f.flag_type,
+                f.discipline_id or _msg_disc(f.message),
+                f.message,
+                {"discipline_id": f.discipline_id},
+            )
+        )
+
+    # 2B — terrain-scoped advisories → the target-race editor.
+    if layer2b_payload is not None:
+        for f in layer2b_payload.coaching_flags:
+            items.append(
+                _surfaced_flag_item(
+                    "2B",
+                    f.flag_type,
+                    f.target_terrain_id or _msg_disc(f.message),
+                    f.message,
+                    {"target_terrain_id": f.target_terrain_id},
+                )
+            )
+
+    # 2C — per-locale gear/skill advisories; suppress the ones a CN item escalated.
+    for locale_id, p in layer2c_payloads.items():
+        for f in p.coaching_flags:
+            if (
+                f.flag_type in ("toggle_off_for_discipline", "requires_skill_capability")
+                and f.discipline_id in cn_disciplines
+            ):
+                continue
+            items.append(
+                _surfaced_flag_item(
+                    "2C",
+                    f.flag_type,
+                    f"{locale_id}:{f.discipline_id or _msg_disc(f.message)}",
+                    f.message,
+                    {"locale_id": locale_id, "discipline_id": f.discipline_id},
+                )
+            )
+
+    # 2D — discipline advisories; suppress when a 2D hitl_item already gates it.
+    hitl_disciplines = {
+        hi.discipline_id for hi in layer2d_payload.hitl_items if hi.discipline_id
+    }
+    for f in layer2d_payload.coaching_flags:
+        if f.discipline_id is not None and f.discipline_id in hitl_disciplines:
+            continue
+        items.append(
+            _surfaced_flag_item(
+                "2D",
+                f.flag_type,
+                f.discipline_id or _msg_disc(f.message),
+                f.message,
+                {"discipline_id": f.discipline_id},
+            )
+        )
+
+    # 2E — nutrition advisories → the Fuel & health tab (2E's own severity in
+    # evidence; the gating nutrition path is 2E's hitl_items, not these flags).
+    for f in layer2e_payload.coaching_flags:
+        items.append(
+            _surfaced_flag_item(
+                "2E",
+                f.flag_type,
+                f.supplement_id or f.event_id or _msg_disc(f.message),
+                f.message,
+                {
+                    "supplement_id": f.supplement_id,
+                    "event_id": f.event_id,
+                    "flag_severity": f.severity,
+                },
+            )
+        )
+
+    if items:
+        by_origin = {o: sum(1 for i in items if i.evidence["origin"] == o)
+                     for o in ("2A", "2B", "2C", "2D", "2E")}
+        logger.info(
+            "layer3d.surface_orphaned_flags: surfaced %d advisory coaching_flag(s) "
+            "as informational %s", len(items), by_origin,
+        )
+    return items
+
+
 # ─── Feasibility detectors (§5.2 / §5.3) ─────────────────────────────────────
 
 # §5.2 — a workable strength session needs ≥3 distinct exercises; a pool below
@@ -704,11 +876,16 @@ def resolved_status(item: GateItem) -> GateItemStatus:
 
 
 def compute_gate_status(items: list[GateItem]) -> GateStatus:
-    """§5 step 6. `green` when every item is resolved; `blocked` when any blocker
-    is still pending; otherwise `needs_review`."""
-    if all(it.status in ("acknowledged", "revised") for it in items):
+    """§5 step 6. Only blocker/warning items drive the verdict; `informational`
+    items are **display-only** (the surfaced advisory `coaching_flags` of §5.4) and
+    never park a plan — they ride the review screen when it's shown for another
+    reason, but a plan that is otherwise clean stays `green`. `green` when every
+    *gating* item is resolved; `blocked` when any blocker is still pending;
+    otherwise `needs_review`."""
+    gating = [it for it in items if it.severity != "informational"]
+    if all(it.status in ("acknowledged", "revised") for it in gating):
         return "green"
-    if any(it.severity == "blocker" and it.status == "pending" for it in items):
+    if any(it.severity == "blocker" and it.status == "pending" for it in gating):
         return "blocked"
     return "needs_review"
 
@@ -755,6 +932,7 @@ def evaluate_layer3d_gate(
     plan_version_id: int,
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload | None,
+    layer2b_payload: Layer2BPayload | None = None,
     layer2c_payloads: dict[str, Layer2CPayload] | None,
     layer2d_payload: Layer2DPayload | None,
     layer2e_payload: Layer2EPayload | None,
@@ -813,9 +991,20 @@ def evaluate_layer3d_gate(
     items += map_2d_items(layer2d_payload)
     items += map_2e_items(layer2e_payload)
     items += map_3b_items(layer3b_payload)
-    # 3C: cross-locale / cross-source conflicts over payloads already in hand
-    # (§5.4). No signature change — reads 2A × 2C(all locales) × 2D.
-    items += map_3c_items(layer2a_payload, layer2c_payloads, layer2d_payload)
+    # 3C (§5.4): CN-1/CN-2 cross-locale/cross-source conflict warnings + the
+    # surfaced orphaned coaching_flags (informational FYI). Both read payloads
+    # already in hand; 2B is the one optional flag source (surfaced only when the
+    # orchestrator passes it). cn_items feeds the surfacer's suppression set.
+    cn_items = map_3c_items(layer2a_payload, layer2c_payloads, layer2d_payload)
+    items += cn_items
+    items += surface_orphaned_flags(
+        layer2a_payload,
+        layer2b_payload,
+        layer2c_payloads,
+        layer2d_payload,
+        layer2e_payload,
+        cn_items=cn_items,
+    )
 
     # 4. Feasibility detectors (§5.2/§5.3) — need 3B's periodization shape ×
     #    2A bands × 2C pool × 2D exclusions × §K availability. They run only when

@@ -79,7 +79,9 @@ evaluate_layer3d_gate(...):
      items += map_2d_items(layer2d_payload)       # hitl_items: severity 'block'->blocker, 'warn'->warning
      items += map_2e_items(layer2e_payload)       # hitl_items + supplement_integration.contraindication_hitl_items
      items += map_3b_items(layer3b_payload)       # hitl_surface: 'blocker'->blocker, 'warning'/'informational' kept
-     items += map_3c_items(layer2a, layer2c_payloads, layer2d)  # §5.4 CN-1/CN-2 cross-locale/cross-source conflicts
+     cn_items = map_3c_items(layer2a, layer2c_payloads, layer2d)        # §5.4 CN-1/CN-2 cross-locale/cross-source conflict WARNINGS
+     items += cn_items
+     items += surface_orphaned_flags(layer2a, layer2b, layer2c_payloads, layer2d, layer2e, cn_items=cn_items)  # §5.4 surfaced coaching_flags (INFORMATIONAL)
   4. # --- Feasibility detectors (need the phase structure) ---
      phase_structure = phase_structure_from_3b(layer3b_payload, plan_start_date, total_weeks)
      items += detect_injury_pool_empty(phase_structure, layer2a, layer2c_payloads, layer2d)   # blocker(s)
@@ -89,8 +91,10 @@ evaluate_layer3d_gate(...):
      for it in items:
        it.resolution = prior_resolutions.get(it.item_key)   # acknowledged | revised | None(pending)
        it.status = resolved_status(it)                       # §6.3
-  6. gate_status = green if all(it.status == resolved) else (
-                     blocked if any pending blocker else needs_review)
+  6. # informational items are display-only (excluded from the verdict — §5.4)
+     gating = [it for it in items if it.severity != 'informational']
+     gate_status = green if all(it.status == resolved for it in gating) else (
+                     blocked if any pending blocker in gating else needs_review)
   7. return Layer3DGate(items=items, gate_status=gate_status, evaluated_against=etl_version_set, ...)
 ```
 
@@ -102,7 +106,7 @@ evaluate_layer3d_gate(...):
 | 2D | `Layer2DHitlItem.severity` `block` → **blocker**, `warn` → **warning** |
 | 2E | `Layer2EHitlItem.block_level == 'block'` → **blocker** (other levels → **warning** until 2E adds finer levels per its §7 note) |
 | 3B | `Layer3BHITLItem.severity` `blocker` → **blocker**, `warning` → **warning**, `informational` → **informational** |
-| 3C | CN-1 (discipline gated off everywhere) / CN-2 (substitute gated off everywhere) → **warning** (acknowledge-able); surfaced upstream `coaching_flags` → **informational** (Slice 2, §5.4) |
+| 3C | CN-1 (discipline gated off everywhere) / CN-2 (substitute gated off everywhere) → **warning** (acknowledge-able); surfaced upstream `coaching_flags` (2A/2B/2C/2D/2E) → **informational** / display-only (§5.4) |
 | 3D feasibility | injury-pool-empty → **blocker**; schedule-volume-under-target → **warning** |
 
 `blocker` items can be resolved **only by revise** (never acknowledged) — carried straight from each source's own contract (3B already sets `acknowledge_option = None` when `severity == 'blocker'`; 2D `block` and 2E `block` are likewise revise-only). `warning` / `informational` items accept **acknowledge or revise**.
@@ -135,7 +139,12 @@ This does **not** block and does **not** raise. Layer 4's existing volume math a
 
 Both are deliberately **conservative**: they fire only on an *every-locale* intersection, so a discipline trainable at even one location never trips. They **under-fire rather than false-fire** — the safe bias for a gate the athlete sees, and the right posture for a v1 detector whose precision we'll tune from production signal. With zero locales the detectors are skipped (an "everywhere" claim is vacuous).
 
-**Slice 2 — surface the orphaned `coaching_flags` (deferred; §13).** The upstream advisory `coaching_flags` from 2A/2B/2C/2D/2E are computed today and silently discarded. Slice 2 surfaces them into the gate as **informational** items so they ride the review screen without parking a plan. This requires one primitive change — `compute_gate_status` must treat `informational` as **display-only / non-gating** (today any unresolved item, informational included, forces `needs_review`; surfacing a flood of advisory flags under that rule would park every plan) — plus threading `layer2b_payload` into the gate signature (2B is the one flag source not yet passed; `cone.layer2b_payload` is already in hand at the orchestrator call site, kept **out** of the §4 etl-coherence check exactly like 2C). The per-flag severity mapping (which advisory flags, if any, warrant `warning` vs `informational`) and cross-source suppression are designed in §13.
+**Slice 2 — surface the orphaned `coaching_flags` (shipped, `surface_orphaned_flags`).** The upstream advisory `coaching_flags` from 2A/2B/2C/2D/2E are computed today and silently discarded; Slice 2 surfaces them into the gate as **informational** items. Four pieces:
+
+- **`compute_gate_status` made informational-non-gating.** Only blocker/warning items drive the verdict; `informational` items are **display-only** — they ride the review screen *when it's shown for another reason* but never park a plan. Without this, surfacing a flood of advisory flags would force every plan to `needs_review` (today any unresolved item gates). A consequence worth stating: a plan whose *only* items are informational stays **green** and proceeds to synthesis — the flags stay in the persisted gate record (admin/debug, and any future plan-page coaching-notes UI) but aren't shown at gate-time. This also relaxes a pre-existing 3B `informational` hitl_surface item from gating → non-gating (consistent with the display-only intent).
+- **2B threaded in.** `layer2b_payload` added to `evaluate_layer3d_gate` (optional — Slice-1/test callers omit it and simply surface no 2B flags); the orchestrator passes `cone.layer2b_payload` (already in hand). Kept **out** of the §4 etl-coherence check, exactly like 2C — it's a flag source, not an aggregation-contract source.
+- **All surfaced flags map to gate-severity `informational`** regardless of any source-local severity (2E's own `info`/`low`/`moderate`/`high` rides in `evidence['flag_severity']`). The gating nutrition/injury/equipment surfaces are those layers' `hitl_items` / detectors, not these advisory flags — **Andy 2026-06-23: keep them all informational at v1, tune from prod signal** (the §13 open product call, resolved). `source` is **`3C`** (the node doing the surfacing — keeps `GateSource` a closed set, no `2B`/`2C` enum addition); the originating layer rides in `source_item_id` (`{origin}:flag:{flag_type}`) + `evidence['origin']`. `revise_target` per origin: 2A→`profile.disciplines`, 2B→`h2.*` (race editor), 2C→`profile.locales`, 2D→`profile.injuries`, 2E→`profile.nutrition` — all already in the §6 revise registry.
+- **Suppression (no double-surfacing).** A 2C gear/skill-gate flag whose discipline is already escalated to a CN-1/CN-2 *warning* is dropped (the conflict item carries it); a 2D advisory flag whose discipline already has a mapped 2D `hitl_item` is dropped (the hitl item is the gating surface). De-dup-by-`item_key` (§9) catches the rest.
 
 ### 5.5 Determinism
 
@@ -224,7 +233,7 @@ A blocker is only ever cleared by a **revise that makes it disappear** — there
 | **2E** | `hitl_items` + `supplement_integration.contraindication_hitl_items` (supplement×cardiac, raceday caffeine×cardiac, pregnancy×stimulant, anaphylaxis×aid-station-food) | `Layer2E_Spec` §7 |
 | **3B** | `hitl_surface` (unrealistic_goal, first_time_competitive_goal, dnf_recurrence_risk, compressed_on_fatigued_athlete) | `Layer3_3B_Spec` §6.1 |
 | **3D feasibility** | injury_pool_empty (blocker); schedule_volume_under_target (warning) | this spec §5.2/§5.3 |
-| **3C** | CN-1 discipline_gated_all_locales (warning); CN-2 substitute_gated_all_locales (warning). *Slice 2 (deferred, §13): surfaced upstream `coaching_flags` (informational).* | this spec §5.4 |
+| **3C** | CN-1 discipline_gated_all_locales (warning); CN-2 substitute_gated_all_locales (warning); surfaced upstream `coaching_flags` from 2A/2B/2C/2D/2E (`{origin}:flag:{flag_type}`, informational/display-only) | this spec §5.4 |
 
 The set is **closed** (Control_Spec §7). A new gate-item source requires a spec amendment here — the aggregator must not silently invent items.
 
@@ -249,6 +258,8 @@ The set is **closed** (Control_Spec §7). A new gate-item source requires a spec
 | Injury-pool-empty AND schedule warning together | Both items surface; `gate_status='blocked'` (the blocker dominates); the warning rides along and is acknowledgeable but the gate can't go green until the blocker is revised away. |
 | Upstream `hitl_required=True` but `hitl_items=[]` | Trust the items list, not the flag — if there are no items, there's nothing to gate on. Log the inconsistency (Rule #15) but don't fabricate an item. |
 | 2E `contraindication_hitl_items` duplicates a `hitl_items` entry | De-dup by `item_key`; the same finding surfaces once. |
+| Plan is clean except for surfaced advisory `coaching_flags` | `gate_status='green'`; orchestrator advances to synthesis. Informational items are display-only (§5.4) — they don't park the plan; they ride the review screen only when it's shown for another reason. |
+| 2C gate flag both escalated to CN-1 and present as a raw flag | Surfaced once, as the CN-1 **warning**; the raw 2C informational flag for that discipline is suppressed (§5.4). |
 
 ---
 
@@ -315,13 +326,7 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 ## 13. Open items / forward references
 
 - **3C — Slice 1 net-new detectors (shipped, §5.4).** `map_3c_items()` with CN-1 / CN-2 lands as one more source feeding §5 step 3 — rules-only, no aggregator/signature contract change. Tracked under epic #211 (build #844, design ratified #216, Andy 2026-06-23).
-- **3C — Slice 2: surface the orphaned `coaching_flags` (next slice).** Surface the upstream advisory flags (2A `training_gap` / `weight_override_divergence`; 2B `unbridgeable_terrain` / `requires_skill_capability` / `undefined_gap`; 2C `low_coverage` / `critical_dropped` / `craft_substitution_via_group`; 2D `elevated_discipline_risk` / `recurring_injury_pattern` / etc.; 2E `dietary_pattern_deficiency_risk` / `heat_acclim_gap` / `low_calorie_target_relative_to_rmr` / etc.) into the gate as **informational** items. Mechanically-applicable build steps (Rule #11):
-  1. **`layer3d/gate.py` — `compute_gate_status`:** make `informational` non-gating. Replace the body with: filter `gating = [it for it in items if it.severity != "informational"]`, then `green` when all `gating` items are resolved, `blocked` when any `gating` blocker is pending, else `needs_review`. (Without this, surfaced advisory flags would park every plan — today an unresolved informational item forces `needs_review`.)
-  2. **`layer3d/gate.py` — `evaluate_layer3d_gate` signature:** add `layer2b_payload: Layer2BPayload | None` (the one flag source not yet passed); thread it into `map_3c_items`. Keep 2B **out** of `_coherent_etl_version_set` (like 2C — it isn't an aggregation-contract source).
-  3. **`layer4/orchestrator.py`** (gate call ~line 1777): pass `layer2b_payload=cone.layer2b_payload` (already in hand).
-  4. **`map_3c_items` / a `surface_orphaned_flags` sibling:** emit one informational `GateItem` per flag with `can_acknowledge=True`, `revise_target` per source (2A→`profile.disciplines`; 2B→`h2.*` race editor; 2C equipment→`profile.locales`; 2D→`profile.injuries`; 2E→`profile.nutrition`), and **suppress** any flag already covered by a CN-1/CN-2 item or a mapped hitl_item for the same discipline (e.g. a 2C `toggle_off_for_discipline` already escalated to CN-1).
-  5. **Per-flag severity decision (open — needs Andy):** default **all** surfaced flags to `informational`; promote only a named few to `warning` if any warrant parking a plan. Recommend keeping them all informational at first (advisory by nature) and tuning from production signal. This is the one Slice-2 product call to confirm before building.
-  6. Tests in `tests/test_layer3d_gate.py` + spec: flip §7's 3C row + §5.4 Slice-2 note to "shipped", add the severity-mapping table.
+- **3C — Slice 2: surface the orphaned `coaching_flags` (shipped, §5.4 `surface_orphaned_flags`).** The upstream advisory flags (2A `training_gap`/`weight_override_divergence`; 2B `unbridgeable_terrain`/`undefined_gap`; 2C `low_coverage`/`critical_dropped`/`craft_substitution_via_group`; 2D `elevated_discipline_risk`/`recurring_injury_pattern`/…; 2E `heat_acclim_gap`/`low_calorie_target_relative_to_rmr`/…) now surface into the gate as **informational** items (`source='3C'`, `source_item_id='{origin}:flag:{flag_type}'`). `compute_gate_status` is informational-non-gating; 2B is threaded into `evaluate_layer3d_gate` + the orchestrator; cross-source suppression drops flags a CN-1/CN-2 item or a mapped 2D hitl_item already carries. **Severity resolved (Andy 2026-06-23): all-informational at v1, tune from prod signal** — no per-flag `warning` promotion yet. *(Future, if prod signal warrants: promote named flag_types to `warning`; surface informational flags on green plans as plan-page coaching notes — both out of this slice.)*
 - **Normalized `plan_hitl_items` table** — v2, if per-item querying/analytics is needed. v1 uses the JSONB column (§10).
 - **Revise-cascade wiring depth** — v1 routes the athlete to the Layer 1 edit surface and leans on the existing invalidation cascade; the exact re-run scope per item source is implementation-slice detail (named, not fully spec'd here).
 - **Layer 4 defensive raise.** With detection owned by 3D, the surviving `Layer4ShapeInfeasibleError` (injury-pool-empty) becomes a **defensive** raise in Layer 4 — fired only if synthesis is somehow reached on an infeasible shape the gate should have caught (mirrors Layer 4's §4 "caller pre-checks; Layer 4 raises defensively"). The schedule/frequency/skill classes are **removed** from Layer 4 entirely (see `Layer4_Spec.md` §10.2 revision, same change-set).
@@ -358,6 +363,9 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 | TS-3C-4 (CN-2) | `high`-risk discipline; its only usable substitute gated off at every locale | 1 `3C` warning `substitute_gated_all_locales`; `gated_substitutes` in `evidence` |
 | TS-3C-5 (CN-2 suppress) | Same, but 2D already emitted `no_substitute_for_high_risk` for the discipline | no `3C` item (2D already carries it) |
 | TS-3C-6 (CN-2 negative) | Substitute trainable at ≥1 locale, or every substitute `still_at_risk` (no usable sub) | no `substitute_gated_all_locales` item (CN-2 is mutually exclusive with the §5.2 no-substitute blocker) |
+| TS-3C-7 (surface) | A 2A/2B/2C/2D/2E `coaching_flag` present, plan otherwise clean | 1 `3C` **informational** item (`{origin}:flag:{type}`, revise_target per origin); `gate_status='green'` — informational never parks |
+| TS-3C-8 (surface suppress) | A 2C gear flag already escalated to CN-1, or a 2D flag whose discipline has a 2D hitl_item | the raw flag is **not** also surfaced (the warning / hitl item carries it) |
+| TS-3C-9 (informational non-gating) | A pending `informational` item alongside a pending `warning` | `needs_review` (the warning gates); the informational alone → `green` |
 
 ### Gut check
 
