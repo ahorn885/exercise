@@ -159,22 +159,32 @@ def load_prior_resolutions(
     never mis-apply: if the underlying finding changed, its `item_key` changes and
     the old resolution simply doesn't match; a `revised` resolution whose item
     re-surfaces is re-pended by `resolved_status` regardless."""
-    # Most-recent-first across ALL of the athlete's gates (current plan included),
-    # so the current version's resolution wins on any key collision.
+    merged: dict[str, Any] = {}
+
+    # Current plan version first — highest precedence — via the existing loader.
+    current = load_hitl_gate(db, user_id, plan_version_id)
+    if current is not None:
+        for it in current.items:
+            if it.resolution is not None:
+                merged[it.item_key] = it.resolution
+
+    # Inherit from the athlete's OTHER plan versions, most-recent-first, filling
+    # only keys the current version hasn't already resolved. Best-effort: a
+    # backend that can't serve the cross-version query (a pre-migration column, or
+    # a unit stub) simply yields the current-version resolutions.
     try:
         rows = db.execute(
             "SELECT id, hitl_gate FROM plan_versions "
-            "WHERE user_id = ? AND hitl_gate IS NOT NULL "
-            "ORDER BY (id = ?) DESC, id DESC",
+            "WHERE user_id = ? AND id != ? AND hitl_gate IS NOT NULL "
+            "ORDER BY id DESC",
             (user_id, plan_version_id),
         ).fetchall()
     except Exception:  # noqa: BLE001 — pre-migration column absence is non-fatal
-        return {}
+        return merged
 
     from layer3d.gate import Layer3DGate
 
-    merged: dict[str, Any] = {}
-    for row in rows:
+    for row in rows or []:
         raw = row["hitl_gate"]
         if raw is None:
             continue
