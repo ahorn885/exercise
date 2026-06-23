@@ -2851,6 +2851,56 @@ _PG_MIGRATIONS = [
     "      AND lower(btrim(re.framework_sport)) = lower(btrim(canon.framework_sport)); "
     "  END IF; "
     "END $$;",
+    # ── #196 Phase 3 (cross-source activity dedup + merge) — Slice 3 schema ────
+    # Completeness scoring + canonical materialization. Slice 2 groups the N
+    # cardio_log rows of one real-world activity (a Wahoo ride auto-forwarded to
+    # Strava) into one activity_clusters row; THIS slice merges each cluster into a
+    # single best-of record. Storage shape B (Andy 2026-06-23, Trigger-#3 DDL
+    # ratification): a separate canonical_activity row per cluster — NOT a flag or
+    # in-place gap-fill on cardio_log — plus per-field provenance mirroring the
+    # athlete_profile_field_provenance pattern.
+    #   - canonical_activity: the merged "one clean ride". Mirrors cardio_log's
+    #     mergeable metric columns so Slice 4 consumers read it almost identically
+    #     to a cardio_log row. One row per cluster (UNIQUE cluster_id = the upsert
+    #     key); primary_cardio_log_id = the copy that won the weighted-completeness
+    #     score ("richest data wins", Andy 2026-06-23); the metric columns are the
+    #     best-of (primary's value, gap-filled from the higher-scoring secondaries).
+    #     Written by routes/garmin.py:materialize_canonical_activity, re-run on
+    #     every cluster member add (a late Strava/RWGPS arrival re-merges).
+    #   - canonical_activity_field_provenance: which source supplied each merged
+    #     field ("power from Wahoo, HR from Garmin"). UNIQUE (cluster_id, field_name);
+    #     replaced wholesale on each re-materialization. A source='manual_override'
+    #     slot is reserved (mirrors athlete_profile_field_provenance) but no cardio
+    #     manual-edit path writes it yet — deferred, not built this slice.
+    """CREATE TABLE IF NOT EXISTS canonical_activity (
+        id                    SERIAL PRIMARY KEY,
+        user_id               INTEGER NOT NULL REFERENCES users(id),
+        cluster_id            INTEGER NOT NULL UNIQUE REFERENCES activity_clusters(id),
+        primary_cardio_log_id INTEGER REFERENCES cardio_log(id),
+        completeness_score    REAL,
+        date          TEXT, activity TEXT, activity_name TEXT, discipline_id TEXT,
+        started_at    TIMESTAMP,
+        duration_min  REAL, moving_time_min REAL, distance_mi REAL, avg_pace TEXT, avg_speed REAL,
+        avg_hr INTEGER, max_hr INTEGER, calories INTEGER,
+        elev_gain_ft REAL, elev_loss_ft REAL, avg_cadence INTEGER, max_cadence INTEGER,
+        avg_power INTEGER, max_power INTEGER, norm_power INTEGER,
+        aerobic_te REAL, anaerobic_te REAL, swolf INTEGER, active_lengths INTEGER,
+        stride_length_m REAL, vert_oscillation_cm REAL, vert_ratio_pct REAL,
+        gct_ms REAL, gct_balance TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
+    "CREATE INDEX IF NOT EXISTS canonical_activity_user_idx ON canonical_activity (user_id)",
+    """CREATE TABLE IF NOT EXISTS canonical_activity_field_provenance (
+        id                   SERIAL PRIMARY KEY,
+        cluster_id           INTEGER NOT NULL REFERENCES activity_clusters(id),
+        field_name           TEXT NOT NULL,
+        source_cardio_log_id INTEGER REFERENCES cardio_log(id),
+        source_provider      TEXT,
+        last_updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (cluster_id, field_name)
+    )""",
+    "CREATE INDEX IF NOT EXISTS cafp_cluster_idx ON canonical_activity_field_provenance (cluster_id)",
 ]
 
 _CLOTHING_SEEDS = [
