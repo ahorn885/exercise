@@ -8,6 +8,7 @@
   <div>
     <p class="eyebrow accent">● {{ range_days }}-day readiness</p>
     <h1 class="page-title">Wellness</h1>
+    <p class="rail-note"><a href="{{ url_for('body.list_entries') }}">Body metrics history →</a></p>
   </div>
   <form method="get" action="{{ url_for('wellness.index') }}" class="wl-range">
     <label class="field"><span class="lbl">Range</span>
@@ -65,6 +66,45 @@
       </div>
     </form>
   </div>
+
+  {# ── Recent self-reports (#893): readable history + per-entry edit/delete.
+       Edit deep-links back to the form above via ?date=, which prefills the
+       picked day; the charts above stay fed by the same rows. ── #}
+  {% if self_report_history %}
+  <div class="card card-pad" id="self-report-history">
+    <div class="set-log-head">
+      <span class="eyebrow">Recent self-reports · last {{ range_days }} days</span>
+    </div>
+    <div class="table-scroll">
+      <table class="data">
+        <thead>
+          <tr><th>Date</th><th>Sleep h</th><th>Sleep</th><th>Energy</th><th>Soreness</th><th>Mood</th><th>Notes</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for r in self_report_history %}
+        <tr>
+          <td class="text-nowrap">{{ r.date }}</td>
+          <td>{{ '%g' % r.sleep_hours if r.sleep_hours is not none else '—' }}</td>
+          <td>{{ r.sleep_quality if r.sleep_quality is not none else '—' }}</td>
+          <td>{{ r.energy if r.energy is not none else '—' }}</td>
+          <td>{{ r.soreness if r.soreness is not none else '—' }}</td>
+          <td>{{ r.mood if r.mood is not none else '—' }}</td>
+          <td class="dim">{{ r.notes or '' }}</td>
+          <td class="loglist-act">
+            <a href="{{ url_for('wellness.index', range=range_days, date=r.date) }}#self-report" class="btn btn-ghost btn-sm">Edit</a>
+            <form method="post" action="{{ url_for('wellness.delete_self_report', report_id=r.id) }}" data-confirm="Delete this self-report?">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="range" value="{{ range_days }}">
+              <button class="btn btn-outline-danger btn-sm">Del</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 
   {# ── Charts ── #}
   {% if not has_any_data %}

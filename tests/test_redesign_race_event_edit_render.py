@@ -59,5 +59,11 @@ def test_race_event_add_render(monkeypatch):
     assert 'onb-form' in html                # Bootstrap grids keep gutters
     # The shared race partials are present (locale picker hidden inputs).
     assert 'name="race_format"' in html
+    # Issue #885 — "Race event type" is a structured <select>, not free text,
+    # and the old "sport override" framing is gone.
+    assert 'Race event type' in html
+    assert '<select class="form-select" id="framework_sport" name="framework_sport">' in html
+    assert 'Sport (override' not in html
+    assert 'type="text" class="form-control" id="framework_sport"' not in html
     assert 'style="' not in html             # CSP-clean
     assert 'onclick=' not in html

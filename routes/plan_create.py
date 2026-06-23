@@ -85,6 +85,7 @@ from layer3d.gate import (
 )
 from plan_sessions_repo import (
     allocate_plan_version_row,
+    fill_rest_gaps,
     load_hitl_gate,
     load_plan_sessions_by_version,
     persist_layer4_sessions,
@@ -1101,27 +1102,12 @@ def _plan_lifecycle_label(plan_version: dict, today: date) -> str:
 
 def _plan_days_with_rest_gaps(sessions_by_date: dict) -> list:
     """Ordered `(date, day_of_week, sessions)` covering every calendar day from
-    the first to the last session date. Days with no persisted session surface
-    as explicit rest days (empty `sessions`) so the week reads continuously
-    rather than skipping straight past off days (#618).
+    the first to the last session date, with off days as explicit rest (#618).
 
-    Production keys are real `date`s (`PlanSession.date`) → they get the
-    gap-fill. A key that can't be coerced to a date (a render-harness fake)
-    degrades to a no-fill passthrough rather than erroring."""
-    if not sessions_by_date:
-        return []
-    ordered = sorted(sessions_by_date.items(), key=lambda kv: str(kv[0]))
-    coerced = [(_coerce_view_date(d), d, ss) for d, ss in ordered]
-    if any(cd is None for cd, _, _ in coerced):
-        # Non-date keys → list the dated days as-is, no synthetic rest gaps.
-        return [(d, (ss[0].day_of_week if ss else ''), ss) for _, d, ss in coerced]
-    by_date = {cd: ss for cd, _, ss in coerced}
-    days = []
-    d, last = coerced[0][0], coerced[-1][0]
-    while d <= last:
-        days.append((d, d.strftime('%a'), by_date.get(d, [])))
-        d += timedelta(days=1)
-    return days
+    Thin wrapper over the shared `plan_sessions_repo.fill_rest_gaps` rule so the
+    plan's daily view and the home Today/Tomorrow cards stay in lockstep — the
+    rest-day-as-absence convention lives in exactly one place (#888)."""
+    return fill_rest_gaps(sessions_by_date)
 
 
 @bp.route('/<int:plan_version_id>', methods=['GET'])
@@ -1507,13 +1493,17 @@ def _grouped_gate_items(gate) -> dict:
     return buckets
 
 
-# `revise_target` values that resolve to the athlete's main profile editor —
-# disciplines, nutrition, and availability/schedule all live on `GET /profile/`
-# (`profile.edit`). `profile.injuries` and the 3B `h2.*` race inputs resolve
-# elsewhere.
-_PROFILE_EDIT_REVISE_TARGETS = frozenset(
-    {"profile.disciplines", "profile.nutrition", "profile.availability"}
-)
+# `revise_target` values that resolve to an athlete-profile edit surface. After
+# the #894 IA reorg these no longer all share one URL: disciplines stay on the
+# Athlete tab (`profile.edit`), nutrition moved to the Fuel & health tab
+# (`profile.edit?tab=health`), and availability/schedule moved to its own page
+# under "Train" (`profile.schedule`). `profile.injuries` and the 3B `h2.*` race
+# inputs resolve elsewhere. Each entry is `(endpoint, url_for kwargs)`.
+_PROFILE_REVISE_SURFACES = {
+    "profile.disciplines": ("profile.edit", {}),
+    "profile.nutrition": ("profile.edit", {"tab": "health"}),
+    "profile.availability": ("profile.schedule", {}),
+}
 
 
 def _safe_url(endpoint: str, **values) -> str | None:
@@ -1532,9 +1522,11 @@ def _build_revise_urls(db, uid: int, gate) -> dict[str, str]:
     screen can render a [Fix this] link that takes the athlete straight to the
     input behind each finding (#213). Maps:
 
-      * `profile.injuries`                          -> the injuries list/editor
-      * `profile.disciplines|nutrition|availability` -> the athlete profile editor
-      * 3B `h2.*` (target-race inputs)              -> the target race editor
+      * `profile.injuries`             -> the injuries list/editor
+      * `profile.disciplines`          -> the Athlete tab
+      * `profile.nutrition`            -> the Fuel & health tab
+      * `profile.availability`         -> the standalone Schedule page
+      * 3B `h2.*` (target-race inputs) -> the target race editor
 
     A target with no edit surface (e.g. 3B `h3.plan_duration_weeks` on an
     open-ended plan), or one whose surface can't be resolved (no target race, or
@@ -1551,12 +1543,11 @@ def _build_revise_urls(db, uid: int, gate) -> dict[str, str]:
         if url:
             urls["profile.injuries"] = url
 
-    profile_targets = targets & _PROFILE_EDIT_REVISE_TARGETS
-    if profile_targets:
-        url = _safe_url("profile.edit")
+    for t in targets & set(_PROFILE_REVISE_SURFACES):
+        endpoint, kwargs = _PROFILE_REVISE_SURFACES[t]
+        url = _safe_url(endpoint, **kwargs)
         if url:
-            for t in profile_targets:
-                urls[t] = url
+            urls[t] = url
 
     if any(t.startswith("h2.") for t in targets):
         try:

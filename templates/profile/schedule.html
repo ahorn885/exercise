@@ -1,0 +1,33 @@
+{# §G Schedule & availability — standalone page under "Train" in the sidebar.
+   #894 lifted this out of the athlete-profile tab strip so training windows
+   sit with the rest of Train. The fields live in the shared
+   `_schedule_form.html` partial (also used by onboarding Step 3b); this
+   template owns the page chrome + Save wrapper. POST → profile.save_schedule. #}
+{% extends 'base.html' %}
+{% set nav_active = 'schedule' %}
+{% block title %}Schedule — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Schedule</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Train · availability</p>
+    <h1 class="page-title">When can you train?</h1>
+    <p class="page-sub">Mark the days you have a training window, the earliest you can start, and how
+      long it runs. Plans schedule sessions inside these windows — never past
+      <em>start + duration</em>. Editable any time.</p>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('profile.save_schedule') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad">
+    <p class="eyebrow">● Training windows</p>
+    {% include 'onboarding/_schedule_form.html' %}
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save schedule</button>
+  </div>
+</form>
+{% endblock %}

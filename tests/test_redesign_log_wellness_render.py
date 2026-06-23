@@ -193,6 +193,93 @@ def test_plan_gen_progress_is_cup_pour(client, monkeypatch):
     assert 'style="' not in html
 
 
+# ── #893 wellness self-report history (read view + scoped delete) ─────────────
+
+class _HistCursor:
+    def __init__(self, rows, one='__none__'):
+        self._rows = rows
+        self._one = one
+
+    def fetchone(self):
+        return None if self._one == '__none__' else self._one
+
+    def fetchall(self):
+        return self._rows
+
+
+class _HistConn:
+    """Serves the self-report *history* SELECT (the DESC-ordered list view) and
+    a truthy users row for auth hydration; everything else is empty so the
+    chart builder takes its all-empty path."""
+    def __init__(self, history):
+        self._history = history
+
+    def execute(self, sql, *a, **k):
+        s = ' '.join(sql.split())
+        if 'wellness_self_report' in s and 'ORDER BY date DESC' in s:
+            return _HistCursor(self._history)
+        if 'FROM users' in s:
+            return _HistCursor([], one=_FakeRow(
+                id=1, username='owner', email='o@x.test', display_name='Owner'))
+        return _HistCursor([])
+
+    def commit(self):
+        pass
+
+
+def _boot_client(monkeypatch, conn):
+    for mod in list(sys.modules.values()):
+        if mod is not None and getattr(mod, 'get_db', None) is not None:
+            monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn, raising=False)
+    _appmod.app.config['TESTING'] = True
+    c = _appmod.app.test_client()
+    with c.session_transaction() as sess:
+        sess['user_id'] = 1
+    return c
+
+
+def test_wellness_self_report_history_renders(monkeypatch):
+    rows = [
+        _FakeRow(id=11, date='2026-06-20', sleep_hours=7.5, sleep_quality=4,
+                 energy=3, soreness=2, mood=4, notes='solid'),
+        _FakeRow(id=12, date='2026-06-19', sleep_hours=None, sleep_quality=None,
+                 energy=None, soreness=None, mood=None, notes=None),
+    ]
+    client = _boot_client(monkeypatch, _HistConn(rows))
+    html = client.get('/wellness').get_data(as_text=True)
+    assert 'id="self-report-history"' in html
+    assert 'Recent self-reports' in html
+    assert '2026-06-20' in html and 'solid' in html
+    # Edit deep-links back to the form for that day; delete is wired per entry.
+    assert 'date=2026-06-20' in html
+    assert '/wellness/self-report/11/delete' in html
+    # Body-metrics history is reachable from the header.
+    assert 'Body metrics history' in html and '/body' in html
+    assert 'style="' not in html
+
+
+def test_wellness_self_report_delete_is_user_scoped(monkeypatch):
+    captured = {}
+
+    class _DelConn:
+        def execute(self, sql, *a, **k):
+            s = ' '.join(sql.split())
+            if 'DELETE FROM wellness_self_report' in s:
+                captured['params'] = a[0]
+            return _FakeCursor()
+
+        def commit(self):
+            captured['committed'] = True
+
+    monkeypatch.setitem(_appmod.app.config, 'WTF_CSRF_ENABLED', False)
+    client = _boot_client(monkeypatch, _DelConn())
+    resp = client.post('/wellness/self-report/11/delete', data={'range': '30'})
+    assert resp.status_code in (302, 303)
+    assert captured['params'] == (11, 1)        # (report_id, user_id) — scoped
+    assert captured.get('committed')
+    assert 'range=30' in resp.headers['Location']
+
+
 def test_plan_gen_view_renders_sessions(client, monkeypatch):
     import types
     import routes.plan_create as pc

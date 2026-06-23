@@ -113,19 +113,29 @@ def clean_severity(value: str | None) -> int | None:
     return sev if 1 <= sev <= 5 else None
 
 
+# Lifecycle states a condition can move between. 'Active' is the capture
+# default; 'Resolved' is the history bucket (#893) — only the active set feeds
+# the Layer 2E contraindication screen, so resolving a condition removes it
+# from screening without losing the record.
+KNOWN_CONDITION_STATUSES = {"Active", "Resolved"}
+
+
 # ─── Health conditions ──────────────────────────────────────────────────────
 
 
-def list_health_conditions(db, user_id) -> list[dict]:
-    """The athlete's active health-condition records, newest first."""
+def list_health_conditions(db, user_id, *, status: str = "Active") -> list[dict]:
+    """The athlete's health-condition records for one lifecycle `status`
+    (default 'Active'), newest first. Pass status='Resolved' for the history
+    list (#893)."""
     if user_id is None:
         return []
     rows = db.execute(
-        "SELECT id, system_category, condition_name, severity, notes "
+        "SELECT id, system_category, condition_name, severity, notes, "
+        "       status, start_date, resolved_date "
         "  FROM health_conditions_log "
-        " WHERE user_id = ? AND status = 'Active' "
+        " WHERE user_id = ? AND status = ? "
         " ORDER BY created_at DESC, id DESC",
-        (user_id,),
+        (user_id, status),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -146,6 +156,46 @@ def add_health_condition(
         "  (user_id, system_category, condition_name, severity, notes, status) "
         "VALUES (?, ?, ?, ?, ?, 'Active')",
         (user_id, system_category, name, severity, notes),
+    )
+    return True
+
+
+def update_health_condition(
+    db, user_id, condition_id, *, system_category: str, condition_name: str,
+    severity: int | None, notes: str | None,
+) -> bool:
+    """Edit one condition's fields (#886/#893 — historical edit). Returns False
+    (no update) when the category isn't in the §B vocab or the name is blank.
+    Scoped on `user_id` so a crafted POST can't reach another athlete's row.
+    Caller commits."""
+    if system_category not in KNOWN_SYSTEM_CATEGORIES:
+        return False
+    name = (condition_name or "").strip()
+    if not name:
+        return False
+    db.execute(
+        "UPDATE health_conditions_log "
+        "   SET system_category = ?, condition_name = ?, severity = ?, "
+        "       notes = ?, updated_at = NOW() "
+        " WHERE id = ? AND user_id = ?",
+        (system_category, name, severity, notes, condition_id, user_id),
+    )
+    return True
+
+
+def set_health_condition_status(
+    db, user_id, condition_id, *, status: str, resolved_date: str | None = None,
+) -> bool:
+    """Move one condition between 'Active' and 'Resolved' (#893). Resolving
+    stamps `resolved_date`; reactivating clears it (pass resolved_date=None).
+    Returns False for an unknown status. Scoped on `user_id`. Caller commits."""
+    if status not in KNOWN_CONDITION_STATUSES:
+        return False
+    db.execute(
+        "UPDATE health_conditions_log "
+        "   SET status = ?, resolved_date = ?, updated_at = NOW() "
+        " WHERE id = ? AND user_id = ?",
+        (status, resolved_date, condition_id, user_id),
     )
     return True
 

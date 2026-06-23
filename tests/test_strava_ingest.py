@@ -68,6 +68,19 @@ class TestNormalize:
         assert d['_provider_raw']['bucket'] == 3
         assert d['activity'] == 'pickleball'
 
+    def test_started_at_uses_utc_start_date_not_local(self):
+        # #196 P3 Slice 1 — the cross-source fingerprint instant must be UTC, so
+        # started_at carries start_date (UTC), NOT start_date_local (local wall-
+        # clock). observed_at keeps its existing local-preferring contract.
+        from routes.strava_ingest import normalize_strava_activity
+        d = normalize_strava_activity({
+            'id': 7, 'sport_type': 'Ride',
+            'start_date': '2026-06-22T06:28:56Z',
+            'start_date_local': '2026-06-21T22:28:56Z',
+        })
+        assert d['started_at'] == '2026-06-22T06:28:56Z'
+        assert d['_provider_raw']['observed_at'] == '2026-06-21T22:28:56Z'
+
 
 # ── fetch_and_ingest_activity ─────────────────────────────────────────
 

@@ -51,7 +51,32 @@
       <small class="text-muted">
         The race's <em>structure</em>, not its sport: <strong>Single day</strong> (one push under ~24h),
         <strong>Continuous multi day</strong> (one continuous effort over 24h+ — expedition AR, multi-day ultras),
-        or <strong>Stage race</strong> (discrete daily stages). Set the sport separately below.
+        or <strong>Stage race</strong> (discrete daily stages). Set the sport in “Race event type”.
+      </small>
+    </div>
+
+    {# Issue #885 — structured "Race event type" (replaces the free-text
+       "sport override"), paired with Race format and above the discipline
+       grid + terrain editor it drives. Constrained to canonical
+       `framework_sport` values (via `_framework_sport_choices`) so the value
+       always resolves to a discipline set — the #892 data-loss fix where an
+       unmatched free-text value collapsed the discipline grid to empty.
+       Blank = inherit the athlete's profile primary sport; a saved value
+       that's no longer canonical is preserved as a flagged option. Mirrors
+       `templates/profile/race_event_edit.html`. #}
+    <div class="col-md-6">
+      <label class="form-label" for="framework_sport">Race event type</label>
+      <select class="form-select" id="framework_sport" name="framework_sport">
+        <option value="">— Same as my profile sport —</option>
+        {% for fs in framework_sport_choices %}
+          <option value="{{ fs }}" {% if target and target.framework_sport == fs %}selected{% endif %}>{{ fs }}</option>
+        {% endfor %}
+        {% if target and target.framework_sport and target.framework_sport not in framework_sport_choices %}
+          <option value="{{ target.framework_sport }}" selected>{{ target.framework_sport }} — unrecognized, pick a type</option>
+        {% endif %}
+      </select>
+      <small class="text-muted">
+        The race's sport — drives the disciplines and terrain options below. Leave as “Same as my profile sport” to plan around your profile's primary sport.
       </small>
     </div>
     <div class="col-md-6">
@@ -70,19 +95,6 @@
             infer_terrain_endpoint=url_for('race_events.infer_terrain_suggestion') %}
       {% include '_race_url_autofill.html' %}
     {% endwith %}
-
-    {# D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
-       Mirrors `templates/profile/race_event_edit.html` precedent. #}
-    <div class="col-md-6">
-      <label class="form-label" for="framework_sport">Sport (override, optional)</label>
-      <input type="text" class="form-control" id="framework_sport" name="framework_sport"
-             placeholder="e.g. Adventure Racing, Trail Running, Triathlon"
-             maxlength="100"
-             value="{{ target.framework_sport if target and target.framework_sport else '' }}">
-      <small class="text-muted">
-        Leave blank to inherit your profile's primary sport. Set when this race differs.
-      </small>
-    </div>
 
     {# D-73 Phase 5.2 Bucket E.(b)-B2 — discipline filter checkbox grid.
        Mirrors `templates/profile/race_event_edit.html` precedent. The
@@ -254,8 +266,8 @@
 </form>
 
 {# D-73 Phase 5.2 Bucket E.(b)-B2 — discipline-grid + per-row discipline
-   `<select>` rebind on framework_sport input change. Mirrors
-   `templates/profile/race_event_edit.html` script block exactly. #}
+   `<select>` rebind on Race-event-type `<select>` change (#885). Mirrors
+   `templates/profile/race_event_edit.html` script block. #}
 <script nonce="{{ csp_nonce() }}">
   (function () {
     const fsInput = document.getElementById('framework_sport');
@@ -263,7 +275,6 @@
     if (!fsInput || !grid) return;
 
     const ENDPOINT = "{{ url_for('race_events.disciplines_search') }}";
-    let debounceTimer = null;
 
     function htmlEscape(s) {
       return String(s == null ? '' : s)
@@ -354,11 +365,11 @@
       } catch (_e) { /* network/parse error — leave existing grid alone */ }
     }
 
-    fsInput.addEventListener('input', function () {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(function () {
-        fetchDisciplinesAndRebind(fsInput.value.trim());
-      }, 350);
+    // #885 — framework_sport is a <select>; rebind on `change` (fires once
+    // per selection, so no debounce). A blank value (the "inherit" option)
+    // resolves server-side to the athlete's profile sport.
+    fsInput.addEventListener('change', function () {
+      fetchDisciplinesAndRebind(fsInput.value.trim());
     });
 
     // Re-narrow the per-row selects whenever the included set changes.
