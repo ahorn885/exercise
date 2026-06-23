@@ -3,7 +3,7 @@
 **Date:** 2026-06-23
 **Branch:** `claude/unified-gear-craft-model-6noxyt`
 **Issue:** #884 (go-live blocker). Predecessor: slice 1 (`0022`, PR #914/#915 merged) + slice 2 boundary de-drift (#919).
-**PR:** #PLACEHOLDER (opened + auto-merge armed this session).
+**PR:** [#923](https://github.com/ahorn885/exercise/pull/923) (opened + auto-merge SQUASH armed this session).
 
 ## 0. Thread continuity — STAY ON THIS THREAD (READ FIRST)
 
