@@ -133,6 +133,47 @@ def _review(prior_ss, next_ss, *, prior_mult, next_mult, prior_recovery, next_re
     )
 
 
+def _strength_session(*, d: date, week_in_phase: int, idx: int = 1, duration_min: int = 60) -> PlanSession:
+    """A kind=strength session (no cardio_blocks) — its time is real volume but
+    belongs to no cardio zone, so it must surface as `non_cardio_hours`."""
+    return PlanSession.model_validate(
+        {
+            "session_id": f"str-{d.isoformat()}-{idx}",
+            "plan_version_id": 1,
+            "date": d.isoformat(),
+            "day_of_week": d.strftime("%a"),
+            "session_index_in_day": idx,
+            "time_of_day": "afternoon",
+            "kind": "strength",
+            "duration_min": duration_min,
+            "intensity_summary": "moderate",
+            "session_notes": "strength.",
+            "coaching_intent": "strength.",
+            "coaching_flags": [],
+            "phase_metadata": {
+                "phase_name": "Build",
+                "week_in_phase": week_in_phase,
+                "total_weeks_in_phase": 4,
+                "intended_volume_band": _BAND,
+                "intended_intensity_distribution": _INTENSITY,
+            },
+            "strength_exercises": [
+                {
+                    "exercise_id": "EX-1",
+                    "exercise_name": "Squat",
+                    "resolution_tier": 1,
+                    "sets": 3,
+                    "reps_per_set": 5,
+                    "load_prescription": "bodyweight",
+                    "rest_between_sets_sec": 90,
+                    "instructions": "squat.",
+                    "coaching_flags": [],
+                }
+            ],
+        }
+    )
+
+
 class TestWeekRollup:
     def test_total_and_zone_split(self):
         # 3 sessions, each 60 min total (50 Z2 + 10 Z1) -> 3.0 hr, all Z1-Z2.
@@ -142,12 +183,31 @@ class TestWeekRollup:
         assert roll.z12_hours == pytest.approx(3.0)
         assert roll.z3_hours == pytest.approx(0.0)
         assert roll.z45_hours == pytest.approx(0.0)
+        # All-cardio week: nothing falls outside the zones.
+        assert roll.non_cardio_hours == pytest.approx(0.0)
 
     def test_z3_and_z45_buckets(self):
         roll = compute_week_rollup(_week(2, n_sessions=1, main_min=40, zone="Z4"))
         # 40 min Z4 main -> Z4-Z5 bucket; 10 min Z1 cooldown -> Z1-Z2.
         assert roll.z45_hours == pytest.approx(40 / 60.0)
         assert roll.z12_hours == pytest.approx(10 / 60.0)
+
+    def test_non_cardio_hours_is_the_unzoned_residual(self):
+        # plan #82 issue #4 regression: strength time is real volume but no zone.
+        # 2 cardio (each 1.0 hr, all Z1-Z2) + 1 strength (1.0 hr) -> total 3.0,
+        # zoned 2.0, non_cardio 1.0; total reconciles as zones + non_cardio.
+        sessions = _week(2, n_sessions=2, main_min=50, zone="Z2") + [
+            _strength_session(d=_START + timedelta(days=1), week_in_phase=2, duration_min=60)
+        ]
+        roll = compute_week_rollup(sessions)
+        assert roll.total_hours == pytest.approx(3.0)
+        assert roll.z12_hours + roll.z3_hours + roll.z45_hours == pytest.approx(2.0)
+        assert roll.non_cardio_hours == pytest.approx(1.0)
+        # The reconciliation invariant the reviewer relies on.
+        assert (
+            roll.z12_hours + roll.z3_hours + roll.z45_hours + roll.non_cardio_hours
+            == pytest.approx(roll.total_hours)
+        )
 
 
 class TestRenderGridAnchors:
@@ -204,6 +264,39 @@ class TestRenderGridAnchors:
         )
         assert "ITERATION 1 ISSUES" in prompt
         assert "planned deload" in prompt
+
+    def test_non_cardio_volume_is_surfaced(self):
+        # plan #82 issue #4 regression: a week with strength must render the
+        # non-cardio volume line + the "zones don't sum to total" disclaimer, so
+        # the reviewer doesn't flag the strength hours as "unaccounted".
+        prior = _week(2, n_sessions=2, main_min=50, zone="Z2") + [
+            _strength_session(d=_START + timedelta(days=1), week_in_phase=2, duration_min=60)
+        ]
+        prompt = render_week_seam_prompt(
+            phase_name="Build",
+            prior_week_in_phase=2,
+            next_week_in_phase=3,
+            prior_week_sessions=prior,
+            next_week_sessions=_week(3, n_sessions=2),
+            prior_planned_multiplier=1.0,
+            next_planned_multiplier=1.0,
+            prior_is_recovery=False,
+            next_is_recovery=False,
+            phase_volume_band=_BAND,
+            prior_intended_intensity=_INTENSITY,
+            next_intended_intensity=_INTENSITY,
+            layer2d_payload=None,
+            discipline_mix=["D-run"],
+            mode="standard",
+            race_format="open_ended",
+            event_date=None,
+            seam_iteration=1,
+            prior_seam_issues=[],
+        )
+        assert "Strength/other non-cardio volume" in prompt
+        assert "NOT expected to sum to the total" in prompt
+        # 1.0 hr of strength surfaced explicitly.
+        assert "1.0 hr" in prompt
 
 
 class TestReviewVerdict:

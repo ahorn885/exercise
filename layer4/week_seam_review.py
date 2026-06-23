@@ -118,6 +118,19 @@ class _WeekRollup:
     z45_hours: float = 0.0
     session_count: int = 0
 
+    @property
+    def non_cardio_hours(self) -> float:
+        """Volume NOT attributable to any cardio intensity zone — strength,
+        recovery, rest, and any unzoned cardio time. Computed as the residual so
+        `total == z12 + z3 + z45 + non_cardio` ALWAYS reconciles. Without this,
+        the reviewer saw the cardio-zone hours undershoot the stated total on any
+        multi-discipline week (strength time is real volume but lives in no zone)
+        and spent a flag on the phantom "unaccounted hours" gap (plan #82 W1:
+        7.8 hr total vs 6.0 hr zoned). Clamped at 0 defensively."""
+        return max(
+            0.0, self.total_hours - (self.z12_hours + self.z3_hours + self.z45_hours)
+        )
+
 
 def compute_week_rollup(sessions: list[PlanSession]) -> _WeekRollup:
     """Aggregate one week's sessions into total hours + zone split. Mirrors the
@@ -162,8 +175,12 @@ def _format_week_block(
         f"(planned phase-total band this week: {plan_low:.1f}-{plan_high:.1f} hr)",
         f"- Actual synthesized volume: {roll.total_hours:.1f} hr "
         f"across {roll.session_count} session(s)",
-        f"- Actual intensity (Z1-Z2 / Z3 / Z4-Z5 hr): "
+        f"- Actual CARDIO intensity (Z1-Z2 / Z3 / Z4-Z5 hr): "
         f"{roll.z12_hours:.1f} / {roll.z3_hours:.1f} / {roll.z45_hours:.1f}",
+        f"- Strength/other non-cardio volume (carries no cardio intensity zone): "
+        f"{roll.non_cardio_hours:.1f} hr "
+        f"(total volume = Z1-Z2 + Z3 + Z4-Z5 + non-cardio; the zone hours are "
+        f"NOT expected to sum to the total)",
         f"- Intended intensity distribution (Z1-Z2 / Z3 / Z4-Z5): "
         f"{intended_intensity.get('Z1-Z2', 0) * 100:.0f}% / "
         f"{intended_intensity.get('Z3', 0) * 100:.0f}% / "
