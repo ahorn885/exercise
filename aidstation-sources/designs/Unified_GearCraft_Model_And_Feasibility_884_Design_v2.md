@@ -109,11 +109,13 @@ Per Decision 3/4: remove craft/gear-covered items from the per-locale gym-equipm
 Per included discipline `D`, in `_gather_feasibility_inputs` / `resolve_*_feasibility` (the existing craft-terrain cascade, generalized):
 
 1. **Skill gate** (if `D` has a `skill_capability_toggles` row): skill absent → **STRENGTH** (today's behaviour; safety substitution, #336). Skill present → continue.
-2. **Gear/craft gate** — gather the athlete's owned/available gear+craft that aliases to `D` (home cluster, or the away set when in an event window — §7), and walk fidelity:
-   - **primary** gear/craft available → full-fidelity session (EXACT tier; for crafts, terrain still resolves EXACT/PROXY within this).
-   - else **degraded** gear/craft available (e.g. Skate when no Classic) → substitute session (PROXY tier).
-   - else a **gym proxy machine** for `D` present at the locale (ski-erg/trainer/paddle-erg) → degraded cardio (INDOOR tier).
-   - else → **STRENGTH** (last resort).
+2. **Gear/craft gate** — gather the athlete's owned/available gear+craft that aliases to `D` (home cluster, or the away set in an event window — §7), and walk fidelity:
+   - **primary** gear/craft owned **and** the discipline's required terrain present → full-fidelity real session (**EXACT**). Terrain is the *discipline's*, not the gear's (Decision 6): XC skiing needs skis **and** snow for EXACT, exactly as cycling needs the bike **and** the terrain.
+   - else **degraded**-rank gear/craft, or real gear on a gap-rule proxy terrain → substitute (**PROXY**).
+   - else a **gym proxy machine** for `D` in the locale's pool → degraded cardio (**INDOOR**). This tier is **gear-independent** — the existing `session_feasibility._DISCIPLINE_INDOOR_MACHINES` map (the "ski-erg when you don't own skis" path).
+   - else → **STRENGTH**.
+
+   The INDOOR map already covers the gear disciplines (ski/snowshoe/mountaineering), so the merge only adds the **gear-ownership condition to the EXACT/PROXY (real-terrain) tiers** — the INDOOR/STRENGTH fallbacks are unchanged.
 3. Disciplines with no gear/craft alias and no skill gate (running) → feasible on terrain alone (unchanged).
 
 This **maps onto the existing 4 tiers** (EXACT/PROXY/INDOOR/STRENGTH), so plan-gen handling, the saturation cap (#590), and the coaching surfaces need no new tier logic — only the *inputs* change (gear now participates; fidelity rank chooses among same-discipline gear). The un-starving: feed `cluster_gear_toggle_states` (and the away set) from `athlete_gear` at both 2C call sites (`orchestrator.py` full-cone + single-session, today hard-coded `{}`), and route gear through the cascade above rather than the flag-only path.
@@ -161,7 +163,7 @@ Two indexed `athlete_gear` reads per cone (replacing the CSV parse). Away path a
 ## 16. Open items — final sign-off before build
 - **Trigger #2 (vocab):** ratify the §4 table — exact **skimo/AT setup** toggle name + gear description, and confirm the deletions (bouldering, fencing, shooting, whitewater) extend to *all* app mentions (disciplines already gone; toggles + any template/test strings remain).
 - **Trigger #3 (cross-layer):** the §5/§9 schema + invalidation (re-homing crafts off the Layer-1 baseline; `gear_discipline_aliases` rename/extend; `brought_gear` hash).
-- **Proxy map:** confirm the gym proxy machines per discipline (ski-erg→D-028; trainer→cycling; paddle-erg→paddling; treadmill→running) — these drive the INDOOR tier; verify the rows exist before relying on them.
+- **Proxy map (examined 2026-06-22 — already exists, mature):** `session_feasibility._DISCIPLINE_INDOOR_MACHINES` already maps every discipline to its indoor machine(s) — running/trekking/mtn-running→Treadmill(+Stair climber); snowshoe/mountaineering→Stair climber+Treadmill; ski D-021/022/028→Ski erg(+Stair climber); cycling→Cycling trainer/Assault bike; paddling→Paddle/Rowing erg; climbing→none (strength sub, by design). "Stairmaster" = `Stair climber`, already mapped. The **only unused** `Machines - Cardio` item is **`Elliptical`** — proposed addition (Trigger #2): a low-impact stride proxy for D-001/D-002 (after Treadmill), D-003/D-017/D-024 (after Stair climber), and optionally D-028 (after Ski erg). **No new machines** — `Stair climber` covers the vert stimulus (no-padding). *Andy to ratify the elliptical placement.*
 
 ## 17. Test scenarios
 - Athlete owns road bike only → D-006 EXACT, D-008 (no MTB) → strength (or trainer INDOOR if present).
