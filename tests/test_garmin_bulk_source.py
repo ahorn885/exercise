@@ -431,3 +431,153 @@ class TestClusterActivity:
             uid=1, gid="wahoo:x", source="wahoo")
         assert any("pg_advisory_xact_lock" in c[0] for c in conn.calls)
         assert any("INTO activity_clusters" in c[0] for c in conn.calls)
+
+
+# ─── canonical materialization (#196 P3 Slice 3) ─────────────────────────────
+
+
+class _CanonConn:
+    """Fake DB for materialize_canonical_activity: the queued `members` feed the
+    `FROM cardio_log WHERE cluster_id` SELECT; every (sql, params) is recorded so a
+    test can assert the upserted canonical row + provenance writes."""
+
+    def __init__(self, members):
+        self.calls = []
+        self._members = members
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        cur = _FakeCursor()
+        if "FROM cardio_log WHERE cluster_id" in sql:
+            rows = self._members
+            cur.fetchall = lambda: rows  # noqa: B023
+        return cur
+
+    def did(self, fragment):
+        return any(fragment in c[0] for c in self.calls)
+
+
+def _member(**over):
+    """A minimal cardio_log member row — every canonical + provider-id column
+    present as a key (None unless overridden), id defaulting to 1. Built from the
+    module constants so it tracks the real column set."""
+    base = {f: None for f in (*g._CANONICAL_FIELDS, *(c for c, _n in g._PROVIDER_ID_COLUMNS))}
+    base["id"] = over.pop("id", 1)
+    base.update(over)
+    return base
+
+
+def _canon_insert(conn):
+    """The upserted canonical_activity row as a {column: value} dict, or None."""
+    sql_params = next(((s, p) for s, p in conn.calls if "INTO canonical_activity (" in s), None)
+    if sql_params is None:
+        return None
+    cols = ["user_id", "cluster_id", *g._CANONICAL_FIELDS,
+            "primary_cardio_log_id", "completeness_score"]
+    return dict(zip(cols, sql_params[1]))
+
+
+def _prov_rows(conn):
+    """{field_name: (source_cardio_log_id, source_provider)} from provenance inserts."""
+    out = {}
+    for s, p in conn.calls:
+        if "INTO canonical_activity_field_provenance" in s:
+            out[p[1]] = (p[2], p[3])  # (cluster_id, field_name, source_id, provider)
+    return out
+
+
+class TestCompletenessScore:
+    def test_sensor_metric_outweighs_baseline(self):
+        # power (tier 3) beats distance (tier 1) — the "richest data wins" intent.
+        assert g._completeness_score(_member(avg_power=200)) > \
+               g._completeness_score(_member(distance_mi=10.0))
+
+    def test_zero_and_null_do_not_count(self):
+        # 0 power = no power meter, not data; NULL HR = absent. Score 0.
+        assert g._completeness_score(_member(avg_power=0, avg_hr=None, distance_mi=0.0)) == 0
+
+    def test_score_sums_field_weights(self):
+        # power(3) + hr(3) + distance(1) = 7
+        assert g._completeness_score(_member(avg_power=200, avg_hr=150, distance_mi=10.0)) == 7
+
+
+class TestRowProvider:
+    def test_resolves_provider_from_id_column(self):
+        assert g._row_provider(_member(wahoo_workout_id="417773586")) == "wahoo"
+        assert g._row_provider(_member(strava_activity_id="19018321756")) == "strava"
+        assert g._row_provider(_member(garmin_activity_id="fit:abc")) == "garmin"
+        assert g._row_provider(_member()) == "unknown"
+
+
+class TestMaterializeCanonical:
+    def test_single_member_mirrors_into_canonical(self):
+        m = _member(id=73, date="2026-06-22", activity="cycling", discipline_id="D-006",
+                    duration_min=30.0, distance_mi=0.0, avg_power=210, avg_hr=150,
+                    wahoo_workout_id="417773586")
+        conn = _CanonConn([m])
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        row = _canon_insert(conn)
+        assert row["primary_cardio_log_id"] == 73
+        assert row["avg_power"] == 210
+        assert row["duration_min"] == 30.0
+        assert row["distance_mi"] is None          # 0.0 indoor → 'sensor absent'
+        prov = _prov_rows(conn)
+        assert prov["avg_power"] == (73, "wahoo")
+        assert "distance_mi" not in prov            # nobody carried a real distance
+
+    def test_richest_copy_is_primary_and_gap_fills(self):
+        # The repro shape: Wahoo copy has power (tier 3) → richer primary; the
+        # Strava copy alone has elevation → canonical takes power from Wahoo and
+        # elevation from Strava ("HR from Garmin, power from Wahoo").
+        wahoo = _member(id=73, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                        avg_power=210, avg_hr=150, wahoo_workout_id="w1")
+        strava = _member(id=74, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                         elev_gain_ft=900.0, strava_activity_id="s1")
+        conn = _CanonConn([wahoo, strava])
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        row = _canon_insert(conn)
+        assert row["primary_cardio_log_id"] == 73   # Wahoo richer (power)
+        assert row["avg_power"] == 210
+        assert row["elev_gain_ft"] == 900.0         # gap-filled from Strava
+        prov = _prov_rows(conn)
+        assert prov["avg_power"] == (73, "wahoo")
+        assert prov["elev_gain_ft"] == (74, "strava")
+
+    def test_equal_score_breaks_on_source_order(self):
+        # Two equally-complete copies → garmin beats strava (recording device over
+        # downstream re-import). Strava listed first to prove order, not position.
+        strava = _member(id=74, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                         strava_activity_id="s1")
+        garmin = _member(id=73, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                         garmin_activity_id="g1")
+        conn = _CanonConn([strava, garmin])
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        assert _canon_insert(conn)["primary_cardio_log_id"] == 73
+
+    def test_upsert_and_provenance_replace_on_rematerialization(self):
+        # Idempotent re-merge: canonical upsert is ON CONFLICT, provenance wiped
+        # first so a re-run can't leave stale rows.
+        m = _member(id=73, activity="cycling", duration_min=30.0, avg_power=210,
+                    wahoo_workout_id="w1")
+        conn = _CanonConn([m])
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        canon_sql = next(s for s, _ in conn.calls if "INTO canonical_activity (" in s)
+        assert "ON CONFLICT (cluster_id)" in canon_sql
+        assert conn.did("DELETE FROM canonical_activity_field_provenance")
+
+    def test_no_members_clears_canonical(self):
+        conn = _CanonConn([])
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        assert conn.did("DELETE FROM canonical_activity WHERE cluster_id")
+        assert _canon_insert(conn) is None
+
+    def test_cluster_attach_triggers_rematerialization(self):
+        # cluster_activity must re-merge on a MATCH (late arrival): the canonical
+        # SELECT runs for the cluster it attached to.
+        conn = _ClusterConn(candidates=[_cluster_row(id=7, duration_min=30.0)])
+        cluster_activity(
+            conn, uid=1, cardio_id=74,
+            data={"activity": "cycling", "discipline_id": "D-006",
+                  "duration_min": 30.2, "distance_mi": 0.0},
+            started_at=TestClusterActivity.REPRO_START)
+        assert any("FROM cardio_log WHERE cluster_id" in c[0] for c in conn.calls)

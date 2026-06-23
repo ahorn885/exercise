@@ -706,6 +706,7 @@ def cluster_activity(db, uid: int, cardio_id: int, data: dict, started_at):
               f"started_at={started_at} dur={data.get('duration_min')} "
               f"dist={data.get('distance_mi')} -> MATCH cluster={cluster_id} "
               f"(of {len(candidates)} candidate(s))")
+        materialize_canonical_activity(db, uid, cluster_id)  # #196 P3 Slice 3 — re-merge
         return cluster_id
 
     cluster_id = db.execute(
@@ -719,7 +720,159 @@ def cluster_activity(db, uid: int, cardio_id: int, data: dict, started_at):
           f"started_at={started_at} dur={data.get('duration_min')} "
           f"dist={data.get('distance_mi')} -> NEW cluster={cluster_id} "
           f"({len(candidates)} candidate(s), none matched)")
+    materialize_canonical_activity(db, uid, cluster_id)  # #196 P3 Slice 3 — first merge
     return cluster_id
+
+
+# ── #196 Phase 3 Slice 3 — completeness scoring + canonical materialization ───
+# Slice 2 groups the N cardio_log rows of one real-world activity into an
+# activity_clusters row; this slice merges each cluster into ONE best-of
+# canonical_activity record + per-field provenance. materialize_canonical_activity
+# runs at the tail of cluster_activity on every member add, so a late Strava/RWGPS
+# arrival (cron-deferred up to 24h) re-merges. Storage shape B + weighted "richest
+# data wins" (Andy 2026-06-23, Trigger-#3 ratified).
+#
+# Per-field weights: sensor/device-grade metrics (power, HR, running dynamics,
+# training effect, swim) outweigh GPS/derived, which outweigh the baseline fields
+# present on nearly every copy. The richest copy becomes the primary; each merged
+# field is gap-filled from the highest-scoring copy that actually carries it.
+_METRIC_WEIGHTS = {
+    # tier 3 — sensor/device-grade (the "better device" signal)
+    'avg_power': 3, 'max_power': 3, 'norm_power': 3,
+    'avg_hr': 3, 'max_hr': 3,
+    'aerobic_te': 3, 'anaerobic_te': 3,
+    'stride_length_m': 3, 'vert_oscillation_cm': 3, 'vert_ratio_pct': 3,
+    'gct_ms': 3, 'gct_balance': 3,
+    'swolf': 3, 'active_lengths': 3,
+    # tier 2 — GPS / derived
+    'elev_gain_ft': 2, 'elev_loss_ft': 2,
+    'avg_cadence': 2, 'max_cadence': 2,
+    'avg_speed': 2, 'avg_pace': 2, 'calories': 2, 'moving_time_min': 2,
+    # tier 1 — baseline, on nearly every copy
+    'duration_min': 1, 'distance_mi': 1, 'activity_name': 1,
+}
+# Identity fields: primary-wins, non-null gap-fill, NOT scored (every copy of the
+# same activity carries the same date/sport/start, so they don't differentiate).
+_IDENTITY_FIELDS = ('date', 'activity', 'discipline_id', 'started_at')
+# Every column the merged canonical row carries (identity first, then the metrics).
+_CANONICAL_FIELDS = _IDENTITY_FIELDS + tuple(_METRIC_WEIGHTS)
+
+# A cardio_log row's origin provider = whichever per-source dedup id column is set
+# (manual file uploads land in their file-type's column too — _SOURCE_MAP — so
+# this names the data's origin). Drives provenance display ("power from wahoo")
+# and the score-TIE tiebreaker: prefer the recording device over a downstream
+# re-import. Order here = the tiebreaker order; it rarely fires (score decides).
+_PROVIDER_ID_COLUMNS = (
+    ('garmin_activity_id', 'garmin'),
+    ('wahoo_workout_id', 'wahoo'),
+    ('polar_exercise_id', 'polar'),
+    ('coros_label_id', 'coros'),
+    ('rwgps_trip_id', 'rwgps'),
+    ('strava_activity_id', 'strava'),
+)
+_SOURCE_ORDER = {name: i for i, (_col, name) in enumerate(_PROVIDER_ID_COLUMNS)}
+
+
+def _has_value(v) -> bool:
+    """Does a field carry a meaningful value for scoring / gap-fill? Non-null, and
+    non-zero for numerics (a 0 avg_power / 0 distance is 'sensor absent', not real
+    data — the same reason the Slice-2 clusterer treats 0 distance as 'can't
+    tell'), and non-empty for text."""
+    if v is None:
+        return False
+    if isinstance(v, (int, float)):  # bool is an int subclass; False reads as absent
+        return v != 0
+    if isinstance(v, str):
+        return v.strip() != ''
+    return True
+
+
+def _completeness_score(row) -> int:
+    """Weighted count of the meaningful metric fields a cardio_log row carries.
+    Higher = richer copy = preferred primary (Andy 2026-06-23 'richest data wins')."""
+    return sum(w for f, w in _METRIC_WEIGHTS.items() if _has_value(row.get(f)))
+
+
+def _row_provider(row) -> str:
+    """Origin provider of a cardio_log row, from whichever per-source id column is
+    set. 'unknown' if none is (e.g. a pre-provider manual entry)."""
+    for col, name in _PROVIDER_ID_COLUMNS:
+        if _has_value(row.get(col)):
+            return name
+    return 'unknown'
+
+
+def _primary_rank(row):
+    """Primary-selection sort key: richest completeness first, then the static
+    source order as the tiebreaker (lower index = preferred)."""
+    return (-_completeness_score(row), _SOURCE_ORDER.get(_row_provider(row), len(_SOURCE_ORDER)))
+
+
+def materialize_canonical_activity(db, uid: int, cluster_id: int):
+    """(Re)build the single best-of canonical_activity record for a cluster + its
+    per-field provenance. Idempotent: called at the tail of cluster_activity on
+    every member add, so a late cross-source arrival re-merges. Picks the richest
+    copy as primary (weighted completeness; static source order breaks ties),
+    gap-fills each field from the highest-scoring copy that carries it, upserts the
+    canonical row (ON CONFLICT cluster_id) and replaces the cluster's provenance.
+    Rule #15: logs the members, the chosen primary, and the per-field source map."""
+    id_cols = tuple(col for col, _name in _PROVIDER_ID_COLUMNS)
+    select_cols = ', '.join(('id',) + _CANONICAL_FIELDS + id_cols)
+    members = db.execute(
+        f'SELECT {select_cols} FROM cardio_log WHERE cluster_id = ? ORDER BY id',
+        (cluster_id,),
+    ).fetchall()
+    if not members:
+        # Defensive: a cluster with no members keeps no canonical record. (Slice 3
+        # never empties a cluster, but re-materialization must be self-consistent.)
+        db.execute('DELETE FROM canonical_activity_field_provenance WHERE cluster_id = ?', (cluster_id,))
+        db.execute('DELETE FROM canonical_activity WHERE cluster_id = ?', (cluster_id,))
+        print(f"[cardio-canon] cluster={cluster_id} user={uid} no members -> cleared")
+        return
+
+    ranked = sorted(members, key=_primary_rank)
+    primary = ranked[0]
+
+    # Best-of merge: each field takes the value of the highest-scoring copy that
+    # actually carries one (primary first since it leads `ranked`); provenance
+    # records which copy + provider that was.
+    merged, provenance = {}, {}
+    for f in _CANONICAL_FIELDS:
+        src = next((m for m in ranked if _has_value(m.get(f))), None)
+        merged[f] = src.get(f) if src is not None else None
+        if src is not None:
+            provenance[f] = (src['id'], _row_provider(src))
+
+    insert_cols = ['user_id', 'cluster_id', *_CANONICAL_FIELDS,
+                   'primary_cardio_log_id', 'completeness_score']
+    values = [uid, cluster_id, *[merged[f] for f in _CANONICAL_FIELDS],
+              primary['id'], _completeness_score(primary)]
+    placeholders = ', '.join(['?'] * len(insert_cols))
+    update_assign = ', '.join(
+        f'{c} = EXCLUDED.{c}'
+        for c in (*_CANONICAL_FIELDS, 'primary_cardio_log_id', 'completeness_score'))
+    db.execute(
+        f'''INSERT INTO canonical_activity ({', '.join(insert_cols)}, updated_at)
+            VALUES ({placeholders}, NOW())
+            ON CONFLICT (cluster_id) DO UPDATE SET {update_assign}, updated_at = NOW()''',
+        tuple(values),
+    )
+
+    # Replace provenance wholesale — re-materialization is the only writer, and a
+    # field that lost its source on a re-merge must not leave a stale row behind.
+    db.execute('DELETE FROM canonical_activity_field_provenance WHERE cluster_id = ?', (cluster_id,))
+    for f, (src_id, prov) in provenance.items():
+        db.execute(
+            '''INSERT INTO canonical_activity_field_provenance
+               (cluster_id, field_name, source_cardio_log_id, source_provider)
+               VALUES (?,?,?,?)''',
+            (cluster_id, f, src_id, prov),
+        )
+
+    field_map = ', '.join(f'{f}<-{prov}' for f, (_id, prov) in sorted(provenance.items()))
+    print(f"[cardio-canon] cluster={cluster_id} user={uid} members={len(members)} "
+          f"primary=id{primary['id']}/{_row_provider(primary)} "
+          f"score={_completeness_score(primary)} fields={{{field_map}}}")
 
 
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
