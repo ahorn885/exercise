@@ -3,7 +3,20 @@
 **Date:** 2026-06-23
 **Branch:** `claude/unified-gear-craft-model-6noxyt`
 **Issue:** #884 (go-live blocker). Predecessor: slice 1 (`0022`, PR #914/#915 merged) + slice 2 boundary de-drift (#919).
-**PR:** not opened (PR-gated operating model — awaiting Andy's go).
+**PR:** #PLACEHOLDER (opened + auto-merge armed this session).
+
+## 0. Thread continuity — STAY ON THIS THREAD (READ FIRST)
+
+**This is a continuous build of #884, not a pick-your-next-issue session.** The next session's job is the **very next chunk of this same model**, in this order, and nothing else:
+
+1. **Slice 3 — the public `athlete_gear` store** (its own PR; see §4.2). ← start here
+2. Slice 3b — swim-drill gear gate.
+3. Slice 4 — cascade cutover (re-home reads onto `gear_discipline_aliases`, fidelity walk, rollerski dryland carve-out, retire `craft_discipline_aliases`).
+4. Slice 5 — away overlay. 5. Slice 6 — capture UX + gear registry.
+
+Do **not** drift to a different epic (Layer 3, #196, etc.) until #884's slices 3→6 are done or Andy explicitly redirects. The authoritative plan is `designs/Unified_GearCraft_Model_And_Feasibility_884_Design_v3.md` §15 — follow that slice order. The 4-tier next-step rule (CLAUDE.md) puts this at tier 1 (**finish the in-flight task**): #884 is in flight and partially built; close its slices before anything new.
+
+
 
 ## 1. What shipped
 
