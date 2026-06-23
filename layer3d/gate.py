@@ -18,8 +18,18 @@ exclusions empty the strength pool below the 3-exercise floor, or ban an
 included discipline with no usable substitute) and §5.3
 `detect_schedule_volume_under_target` (warning — available weekly hours fall
 below a phase's whole-sport target band). They append `GateItem`s at the marked
-call site with no `Layer3DGate` / `GateItem` contract change. The 3C source is
-still deferred (§13); it drops in at the same aggregation point.
+call site with no `Layer3DGate` / `GateItem` contract change.
+
+**3C — cross-locale / cross-source conflict detectors (§5.4, `map_3c_items`).**
+Two net-new findings over the 2A/2C/2D payloads already in hand — conflicts that
+live only in the intersection of several nodes' outputs, so no single upstream
+node can emit them: CN-1 (an included discipline gated off at *every* locale) and
+CN-2 (an injury substitute gated off at *every* locale). Warnings, acknowledge-
+able, revise → the locations list. The companion `surface_orphaned_flags` surfaces
+the upstream advisory `coaching_flags` (the orphaned 2A/2B/2C/2D/2E flags, until now
+silently discarded) as **informational** gate items — display-only, never park a
+plan (`compute_gate_status` excludes them). 2B is threaded into the gate signature
+for this; all surfaced flags carry `source='3C'` (§5.4).
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -38,6 +48,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from layer4.context import (
     Layer2APayload,
+    Layer2BPayload,
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
@@ -294,6 +305,337 @@ def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
                 can_acknowledge=hi.severity != "blocker",
                 evidence={"revise_option": hi.revise_option},
             )
+        )
+    return items
+
+
+# ─── 3C: cross-locale / cross-source conflict detectors (§5.4) ───────────────
+
+
+def map_3c_items(
+    layer2a_payload: Layer2APayload,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+) -> list[GateItem]:
+    """3C — conflicts no single upstream node can see, because they only exist in
+    the *intersection* of several already-built payloads (§5.4). Two net-new
+    detectors over 2A × 2C(all locales) × 2D:
+
+    * **CN-1 — included discipline gated off at every location.** An included
+      (race-relevant) discipline that *every* locale's 2C surface gates via
+      `toggle_off_for_discipline` (gear toggle off) or `requires_skill_capability`
+      (athlete-skill capability off). Each per-locale 2C payload only knows its own
+      locale — none can tell "off here" from "off everywhere" — so the cross-locale
+      AND is genuinely new signal. Warning + acknowledge-able: the athlete can
+      enable the toggle at a location, add a location where the discipline is
+      trainable, or accept training it off-plan. Revise → the locations list.
+    * **CN-2 — injury substitute gated off at every location.** A high/elevated-risk
+      discipline whose 2D `suggested_substitutes` are *all* (counting only the
+      usable, not-`still_at_risk` ones) gated off across every locale: 2D, looking
+      only at injury risk, recommends a fallback that 2C, looking only at locale
+      gear/skill, has made un-trainable. Suppressed when 2D already surfaced a
+      `no_substitute_for_high_risk` / `gap_x_high_risk_concurrent` hitl_item for the
+      discipline (that item already carries the gap; §9 de-dup can't merge it across
+      sources). Mutually exclusive with the §5.2 `cardio_modality_banned` blocker,
+      which fires only when *no* usable substitute exists. Warning + acknowledge-able;
+      revise → the locations list (enable the substitute's gear) or relax the injury.
+
+    Both are deliberately conservative: they fire only on an *every-locale*
+    intersection, so a discipline trainable at even one location never trips. They
+    under-fire rather than false-fire — the safe bias for a gate the athlete sees.
+    3C adds no signature/contract change: it reads payloads already in
+    `evaluate_layer3d_gate`'s hand and appends to the same item list (§5 step 3)."""
+    items: list[GateItem] = []
+    if not layer2c_payloads:
+        return items  # no locales → "gated everywhere" is vacuous
+
+    # Disciplines each locale gates off (gear toggle OFF or skill capability OFF).
+    gated_per_locale: list[set[str]] = [
+        {
+            f.discipline_id
+            for f in p.coaching_flags
+            if f.flag_type in ("toggle_off_for_discipline", "requires_skill_capability")
+            and f.discipline_id is not None
+        }
+        for p in layer2c_payloads.values()
+    ]
+    # Gated *everywhere* = present in every locale's gated set (the intersection).
+    gated_everywhere = set.intersection(*gated_per_locale)
+    if not gated_everywhere:
+        return items
+    n_locales = len(layer2c_payloads)
+
+    # CN-1 — included discipline gated off at every location.
+    for d in layer2a_payload.disciplines:
+        if d.inclusion != "included" or d.discipline_id not in gated_everywhere:
+            continue
+        logger.info(
+            "layer3d.map_3c_items: CN-1 — included discipline %s gated off at all "
+            "%d locale(s)",
+            d.discipline_id,
+            n_locales,
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3C", "discipline_gated_all_locales", d.discipline_id
+                ),
+                source="3C",
+                source_item_id="discipline_gated_all_locales",
+                severity="warning",
+                title=f"{d.discipline_name} isn't trainable at any of your locations",
+                message=(
+                    f"{d.discipline_name} is part of your race, but it's switched off at "
+                    f"every one of your {n_locales} location(s) — the gear isn't enabled "
+                    "or it needs a skill you haven't turned on. Enable it at a location, "
+                    "add a location where you can train it, or acknowledge that you'll "
+                    "train it on your own."
+                ),
+                resolution_options=[],
+                revise_target="profile.locales",
+                can_acknowledge=True,
+                evidence={
+                    "discipline_id": d.discipline_id,
+                    "locale_count": n_locales,
+                    "role": d.role,
+                },
+            )
+        )
+
+    # CN-2 — injury substitute gated off at every location.
+    covered_by_2d = {
+        hi.discipline_id
+        for hi in layer2d_payload.hitl_items
+        if hi.hitl_type in ("no_substitute_for_high_risk", "gap_x_high_risk_concurrent")
+        and hi.discipline_id is not None
+    }
+    for risk in layer2d_payload.discipline_risk_profiles:
+        if risk.risk_level not in ("high", "elevated") or risk.discipline_id in covered_by_2d:
+            continue
+        usable = [s for s in risk.suggested_substitutes if not s.still_at_risk]
+        # No usable substitute is 2D's own no-substitute case (→ §5.2 blocker), not
+        # CN-2; CN-2 is "a usable substitute was recommended but it's un-trainable".
+        if not usable or not all(
+            s.substitute_discipline_id in gated_everywhere for s in usable
+        ):
+            continue
+        gated_names = sorted({s.substitute_name for s in usable})
+        logger.info(
+            "layer3d.map_3c_items: CN-2 — %s substitute(s) %s gated off at all "
+            "%d locale(s)",
+            risk.discipline_id,
+            gated_names,
+            n_locales,
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3C", "substitute_gated_all_locales", risk.discipline_id
+                ),
+                source="3C",
+                source_item_id="substitute_gated_all_locales",
+                severity="warning",
+                title=f"The fallback for {risk.discipline_name} isn't trainable anywhere",
+                message=(
+                    f"To work around your injury we'd swap {risk.discipline_name} for "
+                    f"{', '.join(gated_names)}, but that's switched off at every one of "
+                    f"your {n_locales} location(s). Enable it at a location, or relax the "
+                    f"injury limit on {risk.discipline_name}."
+                ),
+                resolution_options=[],
+                revise_target="profile.locales",
+                can_acknowledge=True,
+                evidence={
+                    "discipline_id": risk.discipline_id,
+                    "risk_level": risk.risk_level,
+                    "gated_substitutes": [s.substitute_discipline_id for s in usable],
+                    "locale_count": n_locales,
+                },
+            )
+        )
+
+    return items
+
+
+# Per-origin revise surface for a surfaced advisory flag. Every token is already
+# in the §6 revise registry (routes/plan_create._PROFILE_REVISE_SURFACES + the
+# `h2.*` race-editor branch) — surfacing adds no new revise wiring.
+_FLAG_REVISE_TARGET = {
+    "2A": "profile.disciplines",
+    "2B": "h2.race_terrain",  # any h2.* routes to the target-race editor
+    "2C": "profile.locales",
+    "2D": "profile.injuries",
+    "2E": "profile.nutrition",
+}
+
+
+# Surfaced-flag severity policy (§5.4 / §7.1 table). Every upstream `coaching_flag`
+# is advisory by its own layer's design, so the default disposition is
+# `informational` (display-only — never parks a plan). This set is the *opt-in*
+# list of flag_types promoted to `warning` (gating, acknowledge-able): a flag_type
+# listed here parks the plan for an explicit acknowledgment. Empty at v1 (Andy
+# 2026-06-23 — keep them all informational, tune from prod signal); promoting a
+# flag_type is a one-line add here + a §7.1 table flip. Unknown/new flag_types fall
+# through to `informational` (safe default).
+_FLAG_WARNING: set[str] = set()
+
+
+def _msg_disc(message: str) -> str:
+    """Stable per-message discriminator for a flag with no natural id (a race-wide
+    advisory with `discipline_id=None`), so two distinct same-type advisories don't
+    collide on `item_key` and survive a reorder of the upstream flag list."""
+    return hashlib.sha256(message.encode("utf-8")).hexdigest()[:8]
+
+
+def _surfaced_flag_item(
+    origin: str,
+    flag_type: str,
+    discriminator: str,
+    message: str,
+    evidence: dict[str, Any],
+) -> GateItem:
+    """One surfaced upstream `coaching_flag` → a gate item (§5.4 Slice 2).
+    Severity per the §7.1 policy: `informational` (display-only) by default, or
+    `warning` (gating, acknowledge-able) for a flag_type opted into `_FLAG_WARNING`.
+    `source` is `3C` (the node doing the surfacing — keeps the `GateSource` set
+    closed); the originating layer rides in `source_item_id` + `evidence['origin']`.
+    Informational items are display-only — `compute_gate_status` never parks a plan
+    on them — so surfacing the whole advisory backlog adds review-screen context
+    without blocking anyone."""
+    severity: Severity = "warning" if flag_type in _FLAG_WARNING else "informational"
+    return GateItem(
+        item_key=make_item_key("3C", f"{origin}:flag:{flag_type}", discriminator),
+        source="3C",
+        source_item_id=f"{origin}:flag:{flag_type}",
+        severity=severity,
+        title=flag_type.replace("_", " ").capitalize(),
+        message=message,
+        resolution_options=[],
+        revise_target=_FLAG_REVISE_TARGET[origin],
+        can_acknowledge=True,
+        evidence={"origin": origin, "flag_type": flag_type, **evidence},
+    )
+
+
+def surface_orphaned_flags(
+    layer2a_payload: Layer2APayload,
+    layer2b_payload: Layer2BPayload | None,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+    layer2e_payload: Layer2EPayload,
+    *,
+    cn_items: list[GateItem],
+) -> list[GateItem]:
+    """§5.4 Slice 2 — surface the advisory `coaching_flags` that 2A/2B/2C/2D/2E
+    compute today and silently discard, as **informational** gate items (display-
+    only; `compute_gate_status` never parks a plan on them). The athlete sees them
+    as FYI context on the review screen when a plan parks for a real reason; a clean
+    plan stays `green` and proceeds (they remain in the persisted gate record).
+
+    All surfaced flags map to gate-severity `informational` regardless of any
+    source-local severity (2E's own info/low/moderate/high rides in `evidence`):
+    the **gating** nutrition/injury/equipment paths are those layers' `hitl_items`
+    / detectors, not these advisory flags (Andy 2026-06-23 — keep them all
+    informational at v1, tune from prod signal).
+
+    Suppression (no double-surfacing): a 2C gear/skill-gate flag whose discipline is
+    already escalated to a CN-1/CN-2 warning is dropped (the conflict item carries
+    it); a 2D advisory flag whose discipline already has a mapped 2D `hitl_item` is
+    dropped (the hitl item is the gating surface)."""
+    items: list[GateItem] = []
+
+    # Disciplines a 3C conflict warning already covers (CN-1 discipline + CN-2
+    # gated substitutes) — don't also surface the raw 2C gate flag for them.
+    cn_disciplines: set[str] = set()
+    for it in cn_items:
+        did = it.evidence.get("discipline_id")
+        if did:
+            cn_disciplines.add(did)
+        cn_disciplines.update(it.evidence.get("gated_substitutes", []))
+
+    # 2A — discipline-scoped advisories → the Athlete tab.
+    for f in layer2a_payload.coaching_flags:
+        items.append(
+            _surfaced_flag_item(
+                "2A",
+                f.flag_type,
+                f.discipline_id or _msg_disc(f.message),
+                f.message,
+                {"discipline_id": f.discipline_id},
+            )
+        )
+
+    # 2B — terrain-scoped advisories → the target-race editor.
+    if layer2b_payload is not None:
+        for f in layer2b_payload.coaching_flags:
+            items.append(
+                _surfaced_flag_item(
+                    "2B",
+                    f.flag_type,
+                    f.target_terrain_id or _msg_disc(f.message),
+                    f.message,
+                    {"target_terrain_id": f.target_terrain_id},
+                )
+            )
+
+    # 2C — per-locale gear/skill advisories; suppress the ones a CN item escalated.
+    for locale_id, p in layer2c_payloads.items():
+        for f in p.coaching_flags:
+            if (
+                f.flag_type in ("toggle_off_for_discipline", "requires_skill_capability")
+                and f.discipline_id in cn_disciplines
+            ):
+                continue
+            items.append(
+                _surfaced_flag_item(
+                    "2C",
+                    f.flag_type,
+                    f"{locale_id}:{f.discipline_id or _msg_disc(f.message)}",
+                    f.message,
+                    {"locale_id": locale_id, "discipline_id": f.discipline_id},
+                )
+            )
+
+    # 2D — discipline advisories; suppress when a 2D hitl_item already gates it.
+    hitl_disciplines = {
+        hi.discipline_id for hi in layer2d_payload.hitl_items if hi.discipline_id
+    }
+    for f in layer2d_payload.coaching_flags:
+        if f.discipline_id is not None and f.discipline_id in hitl_disciplines:
+            continue
+        items.append(
+            _surfaced_flag_item(
+                "2D",
+                f.flag_type,
+                f.discipline_id or _msg_disc(f.message),
+                f.message,
+                {"discipline_id": f.discipline_id},
+            )
+        )
+
+    # 2E — nutrition advisories → the Fuel & health tab (2E's own severity in
+    # evidence; the gating nutrition path is 2E's hitl_items, not these flags).
+    for f in layer2e_payload.coaching_flags:
+        items.append(
+            _surfaced_flag_item(
+                "2E",
+                f.flag_type,
+                f.supplement_id or f.event_id or _msg_disc(f.message),
+                f.message,
+                {
+                    "supplement_id": f.supplement_id,
+                    "event_id": f.event_id,
+                    "flag_severity": f.severity,
+                },
+            )
+        )
+
+    if items:
+        by_origin = {o: sum(1 for i in items if i.evidence["origin"] == o)
+                     for o in ("2A", "2B", "2C", "2D", "2E")}
+        logger.info(
+            "layer3d.surface_orphaned_flags: surfaced %d advisory coaching_flag(s) "
+            "as informational %s", len(items), by_origin,
         )
     return items
 
@@ -559,11 +901,16 @@ def resolved_status(item: GateItem) -> GateItemStatus:
 
 
 def compute_gate_status(items: list[GateItem]) -> GateStatus:
-    """§5 step 6. `green` when every item is resolved; `blocked` when any blocker
-    is still pending; otherwise `needs_review`."""
-    if all(it.status in ("acknowledged", "revised") for it in items):
+    """§5 step 6. Only blocker/warning items drive the verdict; `informational`
+    items are **display-only** (the surfaced advisory `coaching_flags` of §5.4) and
+    never park a plan — they ride the review screen when it's shown for another
+    reason, but a plan that is otherwise clean stays `green`. `green` when every
+    *gating* item is resolved; `blocked` when any blocker is still pending;
+    otherwise `needs_review`."""
+    gating = [it for it in items if it.severity != "informational"]
+    if all(it.status in ("acknowledged", "revised") for it in gating):
         return "green"
-    if any(it.severity == "blocker" and it.status == "pending" for it in items):
+    if any(it.severity == "blocker" and it.status == "pending" for it in gating):
         return "blocked"
     return "needs_review"
 
@@ -610,6 +957,7 @@ def evaluate_layer3d_gate(
     plan_version_id: int,
     layer1_payload: dict[str, Any],
     layer2a_payload: Layer2APayload | None,
+    layer2b_payload: Layer2BPayload | None = None,
     layer2c_payloads: dict[str, Layer2CPayload] | None,
     layer2d_payload: Layer2DPayload | None,
     layer2e_payload: Layer2EPayload | None,
@@ -668,7 +1016,20 @@ def evaluate_layer3d_gate(
     items += map_2d_items(layer2d_payload)
     items += map_2e_items(layer2e_payload)
     items += map_3b_items(layer3b_payload)
-    # 3C deferred (§13). When built: items += map_3c_items(layer3c_payload)
+    # 3C (§5.4): CN-1/CN-2 cross-locale/cross-source conflict warnings + the
+    # surfaced orphaned coaching_flags (informational FYI). Both read payloads
+    # already in hand; 2B is the one optional flag source (surfaced only when the
+    # orchestrator passes it). cn_items feeds the surfacer's suppression set.
+    cn_items = map_3c_items(layer2a_payload, layer2c_payloads, layer2d_payload)
+    items += cn_items
+    items += surface_orphaned_flags(
+        layer2a_payload,
+        layer2b_payload,
+        layer2c_payloads,
+        layer2d_payload,
+        layer2e_payload,
+        cn_items=cn_items,
+    )
 
     # 4. Feasibility detectors (§5.2/§5.3) — need 3B's periodization shape ×
     #    2A bands × 2C pool × 2D exclusions × §K availability. They run only when
