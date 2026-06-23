@@ -189,6 +189,30 @@ class TestGatePersistence:
         conn = _GateConn(hitl_gate_json=None)
         assert plan_sessions_repo.load_prior_resolutions(conn, 3, 7) == {}
 
+    def test_prior_resolutions_inherit_across_plan_versions(self):
+        """#213 retry-loop fix — an acknowledge recorded on a PRIOR plan version
+        carries forward to a freshly-minted version by `item_key`, so [Retry] (a
+        new plan_versions row with an empty gate) no longer re-pends items the
+        athlete already resolved. Current-version resolutions still win on a key
+        collision (current is merged first; inheritance only fills gaps)."""
+        prior_gate = _gate(items=[_warning_item("k1", acknowledged=True)])
+        current_gate = _gate(items=[_warning_item("k2")])  # new version, unresolved
+
+        class _MultiVersionConn:
+            def execute(self, sql, params=()):
+                s = " ".join(sql.split())
+                if "SELECT hitl_gate FROM plan_versions" in s:
+                    return _FakeCursor(row={"hitl_gate": current_gate.model_dump_json()})
+                if s.startswith("SELECT id, hitl_gate FROM plan_versions"):
+                    return _FakeCursor(
+                        rows=[{"id": 7, "hitl_gate": prior_gate.model_dump_json()}]
+                    )
+                return _FakeCursor()
+
+        prior = plan_sessions_repo.load_prior_resolutions(_MultiVersionConn(), 3, 8)
+        assert set(prior) == {"k1"}
+        assert prior["k1"].kind == "acknowledged"
+
 
 # ─── Advance loop parking + short-circuit ────────────────────────────────────
 
