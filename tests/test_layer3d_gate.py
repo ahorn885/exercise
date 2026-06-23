@@ -596,6 +596,47 @@ def test_3b_informational_kept():
     assert items[0].can_acknowledge is True
 
 
+def test_3b_warning_with_null_acknowledge_option_is_still_acknowledgeable():
+    """Regression: the LLM-authored 3B surface can emit a *warning* with
+    `acknowledge_option = None` (the contract intends null only for blockers).
+    `can_acknowledge` must follow severity, not that null — otherwise the item is
+    unresolvable (no acknowledge path; its `revise_target` is an onboarding
+    hypothesis with no edit surface) and parks the plan at `needs_review` forever.
+    `3B.compressed_on_fatigued_athlete` hit exactly this."""
+    stuck = Layer3BHITLItem(
+        source="3B",
+        item_label="compressed_on_fatigued_athlete",
+        severity="warning",
+        description="Compressed periodization on a fatigued athlete.",
+        recommended_action="Layer 4 will apply load caps; extend the timeline.",
+        acknowledge_option=None,  # the LLM bug this guards against
+        revise_option="Extend the event timeline to relieve compression.",
+        revise_target="h2.event_date",  # an onboarding hypothesis — no edit surface
+    )
+    # The mapper alone must derive acknowledgeability from severity.
+    items = map_3b_items(_layer3b(hitl_surface=[stuck]))
+    assert items[0].severity == "warning"
+    assert items[0].can_acknowledge is True
+
+    # End to end: it parks at needs_review, and an acknowledge clears it to green.
+    key = make_item_key("3B", stuck.item_label, "")
+    parked = _evaluate(layer3b_payload=_layer3b(hitl_surface=[stuck]))
+    assert parked.gate_status == "needs_review"
+    assert parked.items[0].status == "pending"
+
+    res = GateResolution(
+        kind="acknowledged",
+        reasoning="I accept the compressed-plan risk.",
+        resolved_at=datetime(2026, 6, 23, 12, 0, 0),
+    )
+    green = _evaluate(
+        layer3b_payload=_layer3b(hitl_surface=[stuck]),
+        prior_resolutions={key: res},
+    )
+    assert green.gate_status == "green"
+    assert green.items[0].status == "acknowledged"
+
+
 # ─── §9 de-dup: 2E contraindication duplicates a hitl_items entry ────────────
 
 

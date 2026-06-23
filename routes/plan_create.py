@@ -85,6 +85,7 @@ from layer3d.gate import (
 )
 from plan_sessions_repo import (
     allocate_plan_version_row,
+    fill_rest_gaps,
     load_hitl_gate,
     load_plan_sessions_by_version,
     persist_layer4_sessions,
@@ -1101,27 +1102,12 @@ def _plan_lifecycle_label(plan_version: dict, today: date) -> str:
 
 def _plan_days_with_rest_gaps(sessions_by_date: dict) -> list:
     """Ordered `(date, day_of_week, sessions)` covering every calendar day from
-    the first to the last session date. Days with no persisted session surface
-    as explicit rest days (empty `sessions`) so the week reads continuously
-    rather than skipping straight past off days (#618).
+    the first to the last session date, with off days as explicit rest (#618).
 
-    Production keys are real `date`s (`PlanSession.date`) → they get the
-    gap-fill. A key that can't be coerced to a date (a render-harness fake)
-    degrades to a no-fill passthrough rather than erroring."""
-    if not sessions_by_date:
-        return []
-    ordered = sorted(sessions_by_date.items(), key=lambda kv: str(kv[0]))
-    coerced = [(_coerce_view_date(d), d, ss) for d, ss in ordered]
-    if any(cd is None for cd, _, _ in coerced):
-        # Non-date keys → list the dated days as-is, no synthetic rest gaps.
-        return [(d, (ss[0].day_of_week if ss else ''), ss) for _, d, ss in coerced]
-    by_date = {cd: ss for cd, _, ss in coerced}
-    days = []
-    d, last = coerced[0][0], coerced[-1][0]
-    while d <= last:
-        days.append((d, d.strftime('%a'), by_date.get(d, [])))
-        d += timedelta(days=1)
-    return days
+    Thin wrapper over the shared `plan_sessions_repo.fill_rest_gaps` rule so the
+    plan's daily view and the home Today/Tomorrow cards stay in lockstep — the
+    rest-day-as-absence convention lives in exactly one place (#888)."""
+    return fill_rest_gaps(sessions_by_date)
 
 
 @bp.route('/<int:plan_version_id>', methods=['GET'])

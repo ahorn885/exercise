@@ -277,8 +277,19 @@ def map_2e_items(payload: Layer2EPayload) -> list[GateItem]:
 
 def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
     """3B: `hitl_surface` — severity carried verbatim (`blocker` / `warning` /
-    `informational`). 3B already sets `acknowledge_option = None` for blockers,
-    so `can_acknowledge` follows that contract. §5.1."""
+    `informational`). `can_acknowledge` is a pure function of severity per §5.1
+    (`False` for blockers; `True` for warning/informational) — the SAME rule the
+    2A/2D/2E mappers apply.
+
+    It deliberately does NOT trust the upstream `acknowledge_option`. 3B's surface
+    is LLM-authored, and the model can emit a *warning* with
+    `acknowledge_option = None` (the contract intends null only for blockers).
+    Keying `can_acknowledge` off that null minted an unresolvable item: no
+    acknowledge path, and the `revise_target` may point at an onboarding
+    hypothesis (`h2.event_date` / `h3.plan_duration_weeks`) with no edit surface —
+    so the review screen shows only a non-actionable "Fix via:" hint and the plan
+    parks at `needs_review` forever (`3B.compressed_on_fatigued_athlete` did
+    exactly this). Severity is the reliable signal, so derive from it. §5.1."""
     items: list[GateItem] = []
     for hi in payload.hitl_surface:
         items.append(
@@ -291,7 +302,7 @@ def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
                 message=hi.description,
                 resolution_options=[hi.recommended_action],
                 revise_target=hi.revise_target,
-                can_acknowledge=hi.acknowledge_option is not None,
+                can_acknowledge=hi.severity != "blocker",
                 evidence={"revise_option": hi.revise_option},
             )
         )

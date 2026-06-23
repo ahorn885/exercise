@@ -100,13 +100,14 @@
   <div class="card col">
     {% if today_workouts %}
       {%- set primary = today_workouts[0] -%}
+      {%- set primary_is_rest = primary.sport_type == 'rest' -%}
       <div class="card-pad">
         <div class="hero-top">
           <div>
-            <p class="eyebrow accent">● Today · Primary</p>
+            <p class="eyebrow accent">● Today{% if not primary_is_rest %} · Primary{% endif %}</p>
             <a class="hero-title d-block" href="{{ wk_url(primary) }}">{{ primary.workout_name }}</a>
             <div class="hero-sub">
-              {{ primary.sport_type }}{% if primary.target_duration_min %} · {{ primary.target_duration_min|int }} min{% endif %}{% if primary.intensity %} · {{ primary.intensity }}{% endif %}
+              {% if primary_is_rest %}Recovery day — no training scheduled. Rest and adapt.{% else %}{{ primary.sport_type }}{% if primary.target_duration_min %} · {{ primary.target_duration_min|int }} min{% endif %}{% if primary.intensity %} · {{ primary.intensity }}{% endif %}{% endif %}
             </div>
           </div>
           {{ wk_actions(primary) }}

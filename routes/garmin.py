@@ -10,6 +10,7 @@ from werkzeug.utils import secure_filename
 from database import get_db
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
+from provider_cardio_resolve import DISCIPLINE_TO_PLAN_SPORT
 from routes.auth import current_user_id
 from plan_match import (
     find_best_match,
@@ -572,6 +573,155 @@ def _normalize_started_at(data: dict):
     return dt
 
 
+# ── #196 Phase 3 Slice 2 — cross-source activity clustering ───────────────────
+# One real-world activity reaching us via N connected providers lands as N
+# cardio_log rows (a Wahoo ride auto-forwarded to Strava → the repro rows 73+74).
+# Slice 1 laid the substrate (started_at + activity_clusters + cardio_log.
+# cluster_id); this slice is the matcher: right after each insert, fingerprint
+# the row and either attach it to an existing same-activity cluster or open a new
+# one. It sits ABOVE the per-source *_uidx idempotency (which already collapses a
+# provider's own re-deliveries) — it never weakens it.
+#
+# Tolerances (Andy 2026-06-23): start ±5 min, duration ±10%, distance ±10%.
+_CLUSTER_START_TOL = timedelta(minutes=5)
+_CLUSTER_DURATION_TOL = 0.10
+_CLUSTER_DISTANCE_TOL = 0.10
+# Advisory-lock namespace so two near-simultaneous webhooks for the same ride
+# (Wahoo + its Strava auto-forward) serialize through find-or-create and can't
+# both miss and open a cluster — the handoff's "must not fork" requirement. The
+# lock is txn-scoped (writes run in a transaction, autocommit off — database.py),
+# so it auto-releases at the caller's commit.
+_CLUSTER_LOCK_NS = 196
+
+# Coarse sport family for the fingerprint. The match is deliberately loose on
+# event type (Andy 2026-06-23: "some apps may not have categories which match
+# perfectly"): providers label the same ride differently — Strava 'cycling'/
+# 'ride', Polar/COROS 'cycle', Garmin a fine D-id. Resolve the canonical coarse
+# family from the layer0 discipline when the provider set one
+# (DISCIPLINE_TO_PLAN_SPORT — provider-independent: every resolver-backed source
+# collapses the same ride to the same family), else fold the resolver-less
+# provider vocab (Polar _SPORT_MAP / COROS _SPORT_MODE singulars) onto that same
+# namespace. Anything else stays as-is; '', 'other' and 'unknown' are wildcards.
+_SPORT_FAMILY_ALIASES = {
+    'cycle': 'cycling', 'bike': 'cycling', 'biking': 'cycling',
+    'run': 'running', 'jog': 'running', 'trail_run': 'running',
+    'swim': 'swimming',
+    'hike': 'hiking', 'trek': 'hiking',
+    'walk': 'walking',
+}
+_SPORT_WILDCARD = {'', 'other', 'unknown'}
+
+
+def _coarse_sport(data: dict) -> str:
+    """Resolve a cardio activity's coarse sport family for cross-source matching.
+
+    Canonical layer0 discipline → coarse family first (DISCIPLINE_TO_PLAN_SPORT;
+    Strava/Wahoo/RWGPS/Garmin all collapse the same ride to the same family
+    regardless of label), else the freetext `activity` folded through
+    _SPORT_FAMILY_ALIASES (Polar/COROS set no discipline_id). 'other' when
+    nothing classifies it — which then matches loosely (see _sport_matches)."""
+    fam = DISCIPLINE_TO_PLAN_SPORT.get(data.get('discipline_id') or '')
+    if fam:
+        return fam
+    activity = (data.get('activity') or '').strip().lower().replace(' ', '_')
+    return _SPORT_FAMILY_ALIASES.get(activity, activity) or 'other'
+
+
+def _sport_matches(a: str, b: str) -> bool:
+    """Loose coarse-sport equality: same family, or either side unclassified."""
+    return a == b or a in _SPORT_WILDCARD or b in _SPORT_WILDCARD
+
+
+def _metric_within(a, b, tol):
+    """Tri-state tolerance check for a fingerprint metric (duration / distance):
+    True = both present, non-zero, within ±tol (corroborates); False = both
+    present and outside ±tol (disqualifies); None = can't tell (missing on a
+    side, or both ~zero — e.g. an indoor ride's 0 distance)."""
+    if a is None or b is None:
+        return None
+    hi = max(abs(a), abs(b))
+    if hi == 0:
+        return None
+    return abs(a - b) <= tol * hi
+
+
+def _fingerprint_match(data: dict, started_at, family: str, cand) -> bool:
+    """Does the new row belong to candidate cluster `cand`? Requires the start
+    within tolerance, a loose sport match, no metric clearly disagreeing, and at
+    least one of duration/distance positively corroborating — so a bare start
+    coincidence (no distance, unknown duration) never merges on its own."""
+    c_start = cand['started_at']
+    if c_start is None or abs(started_at - c_start) > _CLUSTER_START_TOL:
+        return False
+    if not _sport_matches(family, cand['sport_class'] or 'other'):
+        return False
+    dur = _metric_within(data.get('duration_min'), cand['duration_min'], _CLUSTER_DURATION_TOL)
+    dist = _metric_within(data.get('distance_mi'), cand['distance_mi'], _CLUSTER_DISTANCE_TOL)
+    if dur is False or dist is False:
+        return False
+    return dur is True or dist is True
+
+
+def cluster_activity(db, uid: int, cardio_id: int, data: dict, started_at):
+    """Attach a freshly-inserted cardio_log row to its cross-source activity
+    cluster, opening a new one if nothing matches; returns the cluster id (or
+    None when the row can't be clustered). Called by _bulk_insert_cardio right
+    after insert, so every provider webhook and the manual uploader run through
+    one matcher.
+
+    Idempotent + re-entrant: late arrivals (RWGPS cron-deferred up to 24h; Strava
+    lags minutes) attach to the existing cluster, and a per-user advisory lock
+    keeps two near-simultaneous inserts of the same ride from forking it. A row
+    with no resolvable start can't be time-fingerprinted, so it's left
+    unclustered rather than risk a false merge (kickoff §6 NULL tolerance).
+    Rule #15: logs the fingerprint inputs + the match/no-match decision + id."""
+    family = _coarse_sport(data)
+    if started_at is None:
+        print(f"[cardio-cluster] id={cardio_id} user={uid} sport={family} "
+              f"started_at=None -> unclustered (no start instant)")
+        return None
+
+    # Serialize find-or-create per user (txn-scoped; released at commit) so
+    # concurrent same-ride webhooks can't both miss and open duplicate clusters.
+    db.execute('SELECT pg_advisory_xact_lock(?, ?)', (_CLUSTER_LOCK_NS, uid))
+
+    lo, hi = started_at - _CLUSTER_START_TOL, started_at + _CLUSTER_START_TOL
+    candidates = db.execute(
+        '''SELECT id, sport_class, started_at, duration_min, distance_mi
+           FROM activity_clusters
+           WHERE user_id = ? AND started_at BETWEEN ? AND ?
+           ORDER BY started_at''',
+        (uid, lo, hi),
+    ).fetchall()
+    match = next(
+        (c for c in candidates if _fingerprint_match(data, started_at, family, c)),
+        None,
+    )
+
+    if match is not None:
+        cluster_id = match['id']
+        db.execute('UPDATE cardio_log SET cluster_id = ? WHERE id = ?', (cluster_id, cardio_id))
+        db.execute('UPDATE activity_clusters SET updated_at = NOW() WHERE id = ?', (cluster_id,))
+        print(f"[cardio-cluster] id={cardio_id} user={uid} sport={family} "
+              f"started_at={started_at} dur={data.get('duration_min')} "
+              f"dist={data.get('distance_mi')} -> MATCH cluster={cluster_id} "
+              f"(of {len(candidates)} candidate(s))")
+        return cluster_id
+
+    cluster_id = db.execute(
+        '''INSERT INTO activity_clusters
+           (user_id, sport_class, started_at, duration_min, distance_mi)
+           VALUES (?,?,?,?,?) RETURNING id''',
+        (uid, family, started_at, data.get('duration_min'), data.get('distance_mi')),
+    ).lastrowid
+    db.execute('UPDATE cardio_log SET cluster_id = ? WHERE id = ?', (cluster_id, cardio_id))
+    print(f"[cardio-cluster] id={cardio_id} user={uid} sport={family} "
+          f"started_at={started_at} dur={data.get('duration_min')} "
+          f"dist={data.get('distance_mi')} -> NEW cluster={cluster_id} "
+          f"({len(candidates)} candidate(s), none matched)")
+    return cluster_id
+
+
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
                         plan_item_id=None, notes=None, source: str = 'garmin') -> int:
     """Insert one parsed cardio activity. Returns the new cardio_log id.
@@ -612,6 +762,7 @@ def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
         f"date={data.get('date')!r} sport={data.get('activity')!r} "
         f"started_at={started_at}"
     )
+    cluster_activity(db, uid, rec_id, data, started_at)  # #196 P3 Slice 2 — cross-source dedup
     _record_provider_raw_cardio(db, data.get('_provider_raw'), uid, gid, provider=source)
     return rec_id
 
