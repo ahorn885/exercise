@@ -117,6 +117,16 @@ class TestRecentWorkouts:
         assert out == []
         assert len(conn.calls) == 1
 
+    def test_reads_canonical_dedup_feed(self):
+        # #196 Slice 4: recent workouts read the deduped feed, not raw cardio_log,
+        # so a ride synced from N providers counts once toward athlete state
+        # (recent_workouts_count + the trajectory floors).
+        conn = _FakeConn()
+        q_layer3A_recent_workouts(conn, user_id=1, as_of=_AS_OF)
+        sql, _ = conn.calls[0]
+        assert "canonical_cardio_feed" in sql
+        assert "FROM cardio_log" not in sql
+
     def test_window_cutoff_param(self):
         conn = _FakeConn()
         q_layer3A_recent_workouts(conn, user_id=1, as_of=_AS_OF, since_days=14)
@@ -600,6 +610,18 @@ class TestCombinedLoad:
         assert out.polar_cross_ref is None
         assert out.units == "hours"
 
+    def test_reads_canonical_dedup_feed(self):
+        # #196 Slice 4: ACWR load sums each row's hours, so a ride synced from N
+        # providers would inflate acute/chronic load N-fold off raw cardio_log.
+        # The load query must read the deduped feed (one row per cluster).
+        conn = _FakeConn()
+        conn.queue()  # workouts
+        conn.queue()  # polar cross-ref
+        q_layer3A_combined_load(conn, 1, _AS_OF)
+        sql, _ = conn.calls[0]
+        assert "canonical_cardio_feed" in sql
+        assert "FROM cardio_log" not in sql
+
     def test_single_discipline_sweet_spot(self):
         # 7 days × 60min/day acute = 7 hours acute; 28 days × 60min/day = 28
         # hours chronic; ratio = 7 / (28/4) = 1.0 → sweet_spot.
@@ -699,6 +721,20 @@ class TestConnectedProviders:
             conn.queue()  # all 7 queries return nothing
         out = q_layer3A_connected_providers(conn, 1, as_of=_AS_OF)
         assert out == []
+
+    def test_coverage_count_stays_on_raw_cardio_log(self):
+        # #196 Slice 4: per-provider workout coverage DELIBERATELY counts raw
+        # cardio_log (un-merged) — the deduped feed carries only each cluster's
+        # primary copy's provider ids, which would under-count the secondary
+        # providers. Guard against an accidental repoint at the feed.
+        conn = _FakeConn()
+        for _ in range(7):
+            conn.queue()
+        q_layer3A_connected_providers(conn, 1, as_of=_AS_OF)
+        coverage = [s for s, _ in conn.calls if "garmin_n" in s]
+        assert len(coverage) == 1
+        assert "FROM cardio_log" in coverage[0]
+        assert "canonical_cardio_feed" not in coverage[0]
 
     def test_polar_full_coverage(self):
         conn = _FakeConn()
