@@ -369,11 +369,13 @@ def map_3c_items(
     for d in layer2a_payload.disciplines:
         if d.inclusion != "included" or d.discipline_id not in gated_everywhere:
             continue
-        logger.info(
-            "layer3d.map_3c_items: CN-1 — included discipline %s gated off at all "
-            "%d locale(s)",
-            d.discipline_id,
-            n_locales,
+        # print() (not logging) so the line reaches the Vercel drain →
+        # /admin/logs past the app login (Rule #14/#15). The app configures no
+        # logging handler, so logger.info() falls to lastResort (WARNING) and is
+        # silently dropped — invisible in prod.
+        print(
+            f"layer3d.map_3c_items: CN-1 — included discipline {d.discipline_id} "
+            f"gated off at all {n_locales} locale(s)"
         )
         items.append(
             GateItem(
@@ -420,12 +422,10 @@ def map_3c_items(
         ):
             continue
         gated_names = sorted({s.substitute_name for s in usable})
-        logger.info(
-            "layer3d.map_3c_items: CN-2 — %s substitute(s) %s gated off at all "
-            "%d locale(s)",
-            risk.discipline_id,
-            gated_names,
-            n_locales,
+        # print() — Rule #14/#15; logger.info is dropped in prod (see CN-1 note).
+        print(
+            f"layer3d.map_3c_items: CN-2 — {risk.discipline_id} substitute(s) "
+            f"{gated_names} gated off at all {n_locales} locale(s)"
         )
         items.append(
             GateItem(
@@ -633,9 +633,10 @@ def surface_orphaned_flags(
     if items:
         by_origin = {o: sum(1 for i in items if i.evidence["origin"] == o)
                      for o in ("2A", "2B", "2C", "2D", "2E")}
-        logger.info(
-            "layer3d.surface_orphaned_flags: surfaced %d advisory coaching_flag(s) "
-            "as informational %s", len(items), by_origin,
+        # print() — Rule #14/#15; logger.info is dropped in prod.
+        print(
+            f"layer3d.surface_orphaned_flags: surfaced {len(items)} advisory "
+            f"coaching_flag(s) as informational {by_origin}"
         )
     return items
 
@@ -713,14 +714,12 @@ def detect_injury_pool_empty(
             set(pool_before)
             & {er.exercise_id for er in layer2d_payload.excluded_exercises}
         )
-        logger.info(
+        # print() — Rule #14/#15; logger.info is dropped in prod.
+        print(
             "layer3d.detect_injury_pool_empty: strength pool emptied by 2D "
-            "(before=%d after=%d floor=%d phases=%s excluding=%s)",
-            len(pool_before),
-            len(pool_after),
-            _STRENGTH_POOL_MIN,
-            needs_strength_phases,
-            excluding_2d_ids,
+            f"(before={len(pool_before)} after={len(pool_after)} "
+            f"floor={_STRENGTH_POOL_MIN} phases={needs_strength_phases} "
+            f"excluding={excluding_2d_ids})"
         )
         items.append(
             GateItem(
@@ -772,11 +771,11 @@ def detect_injury_pool_empty(
             continue
         if any(not s.still_at_risk for s in risk.suggested_substitutes):
             continue  # a usable substitute exists → trainable → not a blocker
-        logger.info(
-            "layer3d.detect_injury_pool_empty: discipline %s banned "
-            "(risk=high, no usable substitute; substitutes=%s)",
-            risk.discipline_id,
-            [s.substitute_discipline_id for s in risk.suggested_substitutes],
+        # print() — Rule #14/#15; logger.info is dropped in prod.
+        print(
+            f"layer3d.detect_injury_pool_empty: discipline {risk.discipline_id} "
+            "banned (risk=high, no usable substitute; substitutes="
+            f"{[s.substitute_discipline_id for s in risk.suggested_substitutes]})"
         )
         items.append(
             GateItem(
@@ -844,14 +843,11 @@ def detect_schedule_volume_under_target(
     def _h(x: float) -> str:
         return f"{round(x, 1):g}"
 
-    logger.info(
-        "layer3d.detect_schedule_volume_under_target: avail=%.1f h/wk under target "
-        "on %s (headline=%s low=%.1f high=%.1f)",
-        avail,
-        [u[0] for u in under],
-        headline_phase,
-        low,
-        high,
+    # print() — Rule #14/#15; logger.info is dropped in prod.
+    print(
+        f"layer3d.detect_schedule_volume_under_target: avail={avail:.1f} h/wk under "
+        f"target on {[u[0] for u in under]} "
+        f"(headline={headline_phase} low={low:.1f} high={high:.1f})"
     )
     return GateItem(
         item_key=make_item_key(
@@ -963,38 +959,33 @@ def _log_gate_provenance(
     inputs) plus a roll-up of counts by source/severity/status. Without this the
     persisted gate only carried a total count, so a flood of N items (or a
     green→park flip across resumable passes) was undiagnosable from the runtime
-    log — you couldn't tell which layer emitted what, or why. Logged at INFO at
-    every evaluation, so the token-gated `/admin/logs` reader can attribute each
-    item even when synthesis later stalls (the gate runs first, pre-synthesis)."""
+    log — you couldn't tell which layer emitted what, or why. Emitted at every
+    evaluation, so the token-gated `/admin/logs` reader can attribute each item
+    even when synthesis later stalls (the gate runs first, pre-synthesis).
+
+    Emitted via print(), NOT logger.info() — the app configures no logging
+    handler, so logger.info() falls through to logging.lastResort (level
+    WARNING) and is silently dropped before it ever reaches stdout, making it
+    invisible in prod. print() is the established Rule #14/#15 path that reaches
+    the Vercel drain → /admin/logs past the app login wall."""
     from collections import Counter
 
     by_source = dict(Counter(it.source for it in items))
     by_severity = dict(Counter(it.severity for it in items))
     by_status = dict(Counter(it.status for it in items))
-    logger.info(
-        "layer3d.gate provenance: user=%s plan_version_id=%s status=%s total=%d "
-        "by_source=%s by_severity=%s by_status=%s",
-        user_id,
-        plan_version_id,
-        gate_status,
-        len(items),
-        by_source,
-        by_severity,
-        by_status,
+    print(
+        f"layer3d.gate provenance: user={user_id} "
+        f"plan_version_id={plan_version_id} status={gate_status} "
+        f"total={len(items)} by_source={by_source} "
+        f"by_severity={by_severity} by_status={by_status}"
     )
     for it in items:
-        logger.info(
-            "layer3d.gate item: plan_version_id=%s source=%s source_item_id=%s "
-            "item_key=%s severity=%s status=%s can_ack=%s title=%r evidence=%s",
-            plan_version_id,
-            it.source,
-            it.source_item_id,
-            it.item_key,
-            it.severity,
-            it.status,
-            it.can_acknowledge,
-            it.title,
-            it.evidence,
+        print(
+            f"layer3d.gate item: plan_version_id={plan_version_id} "
+            f"source={it.source} source_item_id={it.source_item_id} "
+            f"item_key={it.item_key} severity={it.severity} status={it.status} "
+            f"can_ack={it.can_acknowledge} title={it.title!r} "
+            f"evidence={it.evidence}"
         )
 
 
