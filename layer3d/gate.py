@@ -458,6 +458,17 @@ _FLAG_REVISE_TARGET = {
 }
 
 
+# Surfaced-flag severity policy (§5.4 / §7.1 table). Every upstream `coaching_flag`
+# is advisory by its own layer's design, so the default disposition is
+# `informational` (display-only — never parks a plan). This set is the *opt-in*
+# list of flag_types promoted to `warning` (gating, acknowledge-able): a flag_type
+# listed here parks the plan for an explicit acknowledgment. Empty at v1 (Andy
+# 2026-06-23 — keep them all informational, tune from prod signal); promoting a
+# flag_type is a one-line add here + a §7.1 table flip. Unknown/new flag_types fall
+# through to `informational` (safe default).
+_FLAG_WARNING: set[str] = set()
+
+
 def _msg_disc(message: str) -> str:
     """Stable per-message discriminator for a flag with no natural id (a race-wide
     advisory with `discipline_id=None`), so two distinct same-type advisories don't
@@ -472,17 +483,20 @@ def _surfaced_flag_item(
     message: str,
     evidence: dict[str, Any],
 ) -> GateItem:
-    """One surfaced upstream `coaching_flag` → an **informational** gate item
-    (§5.4 Slice 2). `source` is `3C` (the node doing the surfacing — keeps the
-    `GateSource` set closed); the originating layer rides in `source_item_id` +
-    `evidence['origin']`. Informational items are display-only —
-    `compute_gate_status` never parks a plan on them — so surfacing the whole
-    advisory backlog adds review-screen context without blocking anyone."""
+    """One surfaced upstream `coaching_flag` → a gate item (§5.4 Slice 2).
+    Severity per the §7.1 policy: `informational` (display-only) by default, or
+    `warning` (gating, acknowledge-able) for a flag_type opted into `_FLAG_WARNING`.
+    `source` is `3C` (the node doing the surfacing — keeps the `GateSource` set
+    closed); the originating layer rides in `source_item_id` + `evidence['origin']`.
+    Informational items are display-only — `compute_gate_status` never parks a plan
+    on them — so surfacing the whole advisory backlog adds review-screen context
+    without blocking anyone."""
+    severity: Severity = "warning" if flag_type in _FLAG_WARNING else "informational"
     return GateItem(
         item_key=make_item_key("3C", f"{origin}:flag:{flag_type}", discriminator),
         source="3C",
         source_item_id=f"{origin}:flag:{flag_type}",
-        severity="informational",
+        severity=severity,
         title=flag_type.replace("_", " ").capitalize(),
         message=message,
         resolution_options=[],

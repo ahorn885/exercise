@@ -237,6 +237,38 @@ A blocker is only ever cleared by a **revise that makes it disappear** — there
 
 The set is **closed** (Control_Spec §7). A new gate-item source requires a spec amendment here — the aggregator must not silently invent items.
 
+### 7.1 Surfaced `coaching_flag` severity policy (§5.4 Slice 2)
+
+The 24 advisory `coaching_flags` the upstream layers emit, each surfaced as a `3C` item (`{origin}:flag:{flag_type}`). Every one is **informational** (display-only — never parks a plan) at v1 (Andy 2026-06-23: keep them all informational, tune from prod signal). The **WC?** column marks *warning candidates* — flag_types Andy may opt to promote to `warning` (gating, acknowledge-able) by adding the `flag_type` to `_FLAG_WARNING` in `layer3d/gate.py` and flipping this row. **★** = my top promotion picks if any are promoted. The table lists the flag_types the 2A–2E **builders emit today**; a new or currently-stubbed flag_type (e.g. 2E `heat_acclim_gap`, spec'd in `Layer2E_Spec` §8.5 but not yet emitted by the §5.8 stub) **auto-surfaces as informational** via the `_FLAG_WARNING` fall-through with no 3D code change.
+
+| Origin | flag_type | What it means | Shipped | WC? |
+|---|---|---|---|---|
+| 2A | `training_gap` | no/low training history for an included discipline | informational | |
+| 2A | `weight_override_divergence` | athlete's manual load-weight override diverges from computed | informational | |
+| 2B | `race_terrain_unset` | race terrain not provided → no terrain analysis | informational | ✓ |
+| 2B | `undefined_gap` | a terrain gap that couldn't be classified bridgeable/un- | informational | |
+| 2B | `unbridgeable_terrain` | a race terrain demand untrainable in the runway | informational | ★ |
+| 2B | `requires_skill_capability` | terrain needs an athlete-skill capability that's off | informational | |
+| 2C | `low_coverage` | a discipline has low locale-equipment coverage | informational | |
+| 2C | `critical_dropped` | a critical exercise dropped for lack of equipment | informational | ✓ |
+| 2C | `toggle_off_for_discipline` | a discipline's gear toggled off at a locale (suppressed when CN-1 escalates) | informational | |
+| 2C | `requires_skill_capability` | discipline needs a skill capability that's off (suppressed when CN-1 escalates) | informational | |
+| 2C | `craft_substitution_via_group` | a same-group craft can substitute for a low-covered one | informational | |
+| 2D | `elevated_discipline_risk` | elevated (sub-high) injury risk for a discipline | informational | |
+| 2D | `discipline_substitution_suggested` | a lower-risk substitute is suggested | informational | |
+| 2D | `recurring_injury_pattern` | a recurring injury pattern across history | informational | |
+| 2D | `multi_body_part_load_concern` | multiple body parts under concurrent load | informational | |
+| 2D | `condition_history_informational` | health-condition-history FYI (suppressed when discipline has a 2D hitl_item) | informational | |
+| 2E | `supplement_contraindicated` | a supplement auto-removed for a medical contraindication ("clear with your physician") | informational | ✓† |
+| 2E | `race_day_caffeine_contraindicated_cardiac` | race-day caffeine flagged vs cardiac history | informational | ✓† |
+| 2E | `sleep_dep_data_missing` | sleep-deprivation overlay data missing | informational | |
+| 2E | `race_temp_unknown` | race-day temperature unknown → heat prep generic | informational | |
+| 2E | `pla_missing_for_sport_phase` | a per-phase nutrition input missing | informational | |
+| 2E | `hrt_bmr_limitation` | HRT limits BMR-estimate accuracy | informational | |
+| 2E | `low_calorie_target_relative_to_rmr` | computed calorie target below RMR (under-fueling) | informational | ★ |
+
+**†** The 2E contraindications carry 2E severity `high`, but Andy 2026-06-10 designed contraindications **non-blocking** ("resolution stays informational") — promoting them to gating `warning` would reverse that call. Listed as candidates only; recommend leaving informational unless that decision is revisited. **My recommendation:** ship all-informational (this table), and if prod shows any of these being missed, promote the two **★** (`unbridgeable_terrain`, `low_calorie_target_relative_to_rmr`) first — they represent genuine under-preparation / under-fueling the athlete should actively acknowledge.
+
 ---
 
 ## 8. Caching
@@ -326,7 +358,7 @@ Deterministic, no LLM, no network. Target **< 50 ms** per evaluation (a few list
 ## 13. Open items / forward references
 
 - **3C — Slice 1 net-new detectors (shipped, §5.4).** `map_3c_items()` with CN-1 / CN-2 lands as one more source feeding §5 step 3 — rules-only, no aggregator/signature contract change. Tracked under epic #211 (build #844, design ratified #216, Andy 2026-06-23).
-- **3C — Slice 2: surface the orphaned `coaching_flags` (shipped, §5.4 `surface_orphaned_flags`).** The upstream advisory flags (2A `training_gap`/`weight_override_divergence`; 2B `unbridgeable_terrain`/`undefined_gap`; 2C `low_coverage`/`critical_dropped`/`craft_substitution_via_group`; 2D `elevated_discipline_risk`/`recurring_injury_pattern`/…; 2E `heat_acclim_gap`/`low_calorie_target_relative_to_rmr`/…) now surface into the gate as **informational** items (`source='3C'`, `source_item_id='{origin}:flag:{flag_type}'`). `compute_gate_status` is informational-non-gating; 2B is threaded into `evaluate_layer3d_gate` + the orchestrator; cross-source suppression drops flags a CN-1/CN-2 item or a mapped 2D hitl_item already carries. **Severity resolved (Andy 2026-06-23): all-informational at v1, tune from prod signal** — no per-flag `warning` promotion yet. *(Future, if prod signal warrants: promote named flag_types to `warning`; surface informational flags on green plans as plan-page coaching notes — both out of this slice.)*
+- **3C — Slice 2: surface the orphaned `coaching_flags` (shipped, §5.4 `surface_orphaned_flags`).** The upstream advisory flags (2A `training_gap`/`weight_override_divergence`; 2B `unbridgeable_terrain`/`undefined_gap`; 2C `low_coverage`/`critical_dropped`/`craft_substitution_via_group`; 2D `elevated_discipline_risk`/`recurring_injury_pattern`/…; 2E `supplement_contraindicated`/`low_calorie_target_relative_to_rmr`/…) now surface into the gate as **informational** items (`source='3C'`, `source_item_id='{origin}:flag:{flag_type}'`). `compute_gate_status` is informational-non-gating; 2B is threaded into `evaluate_layer3d_gate` + the orchestrator; cross-source suppression drops flags a CN-1/CN-2 item or a mapped 2D hitl_item already carries. **Severity: all 24 builder-emitted flag_types enumerated + dispositioned in the §7.1 policy table; all-informational at v1 (Andy 2026-06-23), promotion = one-line `_FLAG_WARNING` add.** *(Future, if prod signal warrants: promote named flag_types to `warning`; surface informational flags on green plans as plan-page coaching notes — both out of this slice.)*
 - **Normalized `plan_hitl_items` table** — v2, if per-item querying/analytics is needed. v1 uses the JSONB column (§10).
 - **Revise-cascade wiring depth** — v1 routes the athlete to the Layer 1 edit surface and leans on the existing invalidation cascade; the exact re-run scope per item source is implementation-slice detail (named, not fully spec'd here).
 - **Layer 4 defensive raise.** With detection owned by 3D, the surviving `Layer4ShapeInfeasibleError` (injury-pool-empty) becomes a **defensive** raise in Layer 4 — fired only if synthesis is somehow reached on an infeasible shape the gate should have caught (mirrors Layer 4's §4 "caller pre-checks; Layer 4 raises defensively"). The schedule/frequency/skill classes are **removed** from Layer 4 entirely (see `Layer4_Spec.md` §10.2 revision, same change-set).

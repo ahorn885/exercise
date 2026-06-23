@@ -1099,7 +1099,7 @@ def _2d_flag(*, flag_type="elevated_discipline_risk", discipline_id="D-trail", m
     )
 
 
-def _2e_flag(*, flag_type="heat_acclim_gap", severity="moderate", message="2E advisory."):
+def _2e_flag(*, flag_type="race_temp_unknown", severity="moderate", message="2E advisory."):
     return Layer2ECoachingFlag(
         flag_type=flag_type,
         event_id=None,
@@ -1236,3 +1236,23 @@ def test_compute_gate_status_informational_is_non_gating():
         can_acknowledge=True,
     )
     assert compute_gate_status([info, warn]) == "needs_review"  # warning gates; info doesn't
+
+
+def test_surfaced_flag_promoted_to_warning_gates(monkeypatch):
+    # The §7.1 severity policy: a flag_type opted into _FLAG_WARNING surfaces as a
+    # gating warning; everything else stays informational (display-only).
+    import layer3d.gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "_FLAG_WARNING", {"low_calorie_target_relative_to_rmr"})
+    promoted = _2e_flag(flag_type="low_calorie_target_relative_to_rmr", severity="high")
+    other = _2e_flag(flag_type="race_temp_unknown")
+    gate = _evaluate(layer2e_payload=_layer2e(coaching_flags=[promoted, other]))
+    pit = next(
+        it for it in gate.items
+        if it.source_item_id == "2E:flag:low_calorie_target_relative_to_rmr"
+    )
+    oit = next(it for it in gate.items if it.source_item_id == "2E:flag:race_temp_unknown")
+    assert pit.severity == "warning"
+    assert pit.can_acknowledge is True
+    assert oit.severity == "informational"  # not promoted → stays informational
+    assert gate.gate_status == "needs_review"  # the promoted warning now gates
