@@ -1779,6 +1779,7 @@ def orchestrate_plan_create(
         plan_version_id=plan_version_id,
         layer1_payload=cone.layer1_payload.model_dump(mode="json"),
         layer2a_payload=cone.layer2a_payload,
+        layer2b_payload=cone.layer2b_payload,
         layer2c_payloads=layer2c_payloads,
         layer2d_payload=cone.layer2d_payload,
         layer2e_payload=cone.layer2e_payload,

@@ -16,6 +16,7 @@ from datetime import date, datetime
 import pytest
 
 from layer3d.gate import (
+    GateItem,
     GateResolution,
     Layer3DGateError,
     compute_gate_status,
@@ -25,6 +26,8 @@ from layer3d.gate import (
     map_2d_items,
     map_2e_items,
     map_3b_items,
+    map_3c_items,
+    surface_orphaned_flags,
 )
 from layer4.context import (
     DailyNutritionBaseline,
@@ -32,11 +35,18 @@ from layer4.context import (
     DisciplineRisk,
     ExerciseRisk,
     GoalViability,
+    Layer2ACoachingFlag,
     Layer2ADiscipline,
     Layer2APayload,
+    Layer2BCoachingFlag,
+    Layer2BPayload,
+    Layer2BSummaryBlock,
+    Layer2CCoachingFlag,
     Layer2CPayload,
+    Layer2DCoachingFlag,
     Layer2DHitlItem,
     Layer2DPayload,
+    Layer2ECoachingFlag,
     Layer2EHitlItem,
     Layer2EPayload,
     Layer3BHITLItem,
@@ -66,6 +76,7 @@ def _layer2a(
     *,
     disciplines: list[Layer2ADiscipline] | None = None,
     unresolved_flags: list[UnresolvedFlag] | None = None,
+    coaching_flags: list[Layer2ACoachingFlag] | None = None,
     hitl_required: bool = False,
     weekly_total_hours_by_phase: dict[str, tuple[float, float]] | None = None,
     etl_version_set: dict[str, str] | None = None,
@@ -81,7 +92,7 @@ def _layer2a(
         ),
         hitl_required=hitl_required,
         unresolved_flags=unresolved_flags or [],
-        coaching_flags=[],
+        coaching_flags=coaching_flags or [],
         rationale_metadata=RationaleMetadata(
             template_version="v1", generated_at="2026-06-01T10:00:00Z"
         ),
@@ -120,16 +131,32 @@ def _discipline(
 
 def _layer2c(
     *,
+    locale_id: str = "home",
     exercises_resolved: list[ResolvedExercise] | None = None,
+    coaching_flags: list[Layer2CCoachingFlag] | None = None,
     etl_version_set: dict[str, str] | None = None,
 ) -> Layer2CPayload:
     return Layer2CPayload(
-        locale_id="home",
+        locale_id=locale_id,
         etl_version_set=etl_version_set or dict(_EVS),
         effective_pool=[rx.exercise_id for rx in (exercises_resolved or [])],
         discipline_coverage=[],
         exercises_resolved=exercises_resolved or [],
-        coaching_flags=[],
+        coaching_flags=coaching_flags or [],
+    )
+
+
+def _2c_flag(
+    *,
+    flag_type: str = "toggle_off_for_discipline",
+    discipline_id: str = "D-trail",
+) -> Layer2CCoachingFlag:
+    return Layer2CCoachingFlag(
+        flag_type=flag_type,  # type: ignore[arg-type]
+        discipline_id=discipline_id,
+        affected_exercise_ids=[],
+        message=f"{discipline_id} is switched off at this location.",
+        metadata={},
     )
 
 
@@ -189,6 +216,7 @@ def _layer2d(
     hitl_items: list[Layer2DHitlItem] | None = None,
     excluded_exercises: list[ExerciseRisk] | None = None,
     discipline_risk_profiles: list[DisciplineRisk] | None = None,
+    coaching_flags: list[Layer2DCoachingFlag] | None = None,
     hitl_required: bool = False,
     etl_version_set: dict[str, str] | None = None,
 ) -> Layer2DPayload:
@@ -198,7 +226,7 @@ def _layer2d(
         accommodated_exercises=[],
         clean_exercise_ids=[],
         discipline_risk_profiles=discipline_risk_profiles or [],
-        coaching_flags=[],
+        coaching_flags=coaching_flags or [],
         hitl_required=hitl_required,
         hitl_items=hitl_items or [],
     )
@@ -208,6 +236,7 @@ def _layer2e(
     *,
     hitl_items: list[Layer2EHitlItem] | None = None,
     contraindication_hitl_items: list[Layer2EHitlItem] | None = None,
+    coaching_flags: list[Layer2ECoachingFlag] | None = None,
     hitl_required: bool = False,
     etl_version_set: dict[str, str] | None = None,
 ) -> Layer2EPayload:
@@ -246,7 +275,7 @@ def _layer2e(
         dietary_pattern_adjustments=[],
         sleep_dep_overlay=None,
         heat_acclim_adjustments=[],
-        coaching_flags=[],
+        coaching_flags=coaching_flags or [],
         hitl_items=hitl_items or [],
         hitl_required=hitl_required,
     )
@@ -896,3 +925,375 @@ def test_schedule_no_warning_when_capacity_meets_target():
     )
     assert gate.gate_status == "green"
     assert [it for it in gate.items if it.source == "3D_feasibility"] == []
+
+
+# ─── TS-3C: cross-locale / cross-source conflict detectors (§5.4) ────────────
+
+
+def _two_locales(*, home_flags=None, gym_flags=None):
+    return {
+        "home": _layer2c(locale_id="home", coaching_flags=home_flags or []),
+        "gym": _layer2c(locale_id="gym", coaching_flags=gym_flags or []),
+    }
+
+
+def _gated_sub(*, sub_id="D-bike", name="cycling", still_at_risk=False):
+    return SubstituteRecommendation(
+        substitute_discipline_id=sub_id,
+        substitute_name=name,
+        fidelity=0.7,
+        still_at_risk=still_at_risk,
+        still_at_risk_body_parts=[],
+    )
+
+
+# CN-1 — included discipline gated off at every location.
+
+
+def test_cn1_included_discipline_gated_at_every_locale_warns():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),  # D-trail, included
+        layer2c_payloads=_two_locales(home_flags=[_2c_flag()], gym_flags=[_2c_flag()]),
+    )
+    cn1 = [it for it in gate.items if it.source_item_id == "discipline_gated_all_locales"]
+    assert len(cn1) == 1
+    it = cn1[0]
+    assert it.source == "3C"
+    assert it.severity == "warning"
+    assert it.can_acknowledge is True
+    assert it.revise_target == "profile.locales"
+    assert it.evidence["discipline_id"] == "D-trail"
+    assert it.evidence["locale_count"] == 2
+    assert "trail_running" in it.title
+    assert gate.gate_status == "needs_review"
+
+
+def test_cn1_does_not_fire_when_trainable_at_one_locale():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(home_flags=[_2c_flag()], gym_flags=[]),
+    )
+    assert not any(
+        it.source_item_id in ("discipline_gated_all_locales", "substitute_gated_all_locales")
+        for it in gate.items
+    )
+    assert gate.gate_status == "green"
+
+
+def test_cn1_does_not_fire_for_non_included_discipline():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline(inclusion="excluded")]),
+        layer2c_payloads=_two_locales(home_flags=[_2c_flag()], gym_flags=[_2c_flag()]),
+    )
+    assert not any(
+        it.source_item_id in ("discipline_gated_all_locales", "substitute_gated_all_locales")
+        for it in gate.items
+    )
+
+
+def test_cn1_fires_on_skill_capability_gate():
+    flag = _2c_flag(flag_type="requires_skill_capability")
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(home_flags=[flag], gym_flags=[flag]),
+    )
+    assert any(it.source_item_id == "discipline_gated_all_locales" for it in gate.items)
+
+
+# CN-2 — injury substitute gated off at every location.
+
+
+def test_cn2_injury_substitute_gated_everywhere_warns():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(
+            home_flags=[_2c_flag(discipline_id="D-bike")],
+            gym_flags=[_2c_flag(discipline_id="D-bike")],
+        ),
+        layer2d_payload=_layer2d(discipline_risk_profiles=[_disc_risk(substitutes=[_gated_sub()])]),
+    )
+    cn2 = [it for it in gate.items if it.source_item_id == "substitute_gated_all_locales"]
+    assert len(cn2) == 1
+    it = cn2[0]
+    assert it.source == "3C"
+    assert it.severity == "warning"
+    assert it.can_acknowledge is True
+    assert it.revise_target == "profile.locales"
+    assert it.evidence["gated_substitutes"] == ["D-bike"]
+    assert "cycling" in it.message
+    assert gate.gate_status == "needs_review"
+
+
+def test_cn2_suppressed_when_2d_already_flagged_no_substitute():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(
+            home_flags=[_2c_flag(discipline_id="D-bike")],
+            gym_flags=[_2c_flag(discipline_id="D-bike")],
+        ),
+        layer2d_payload=_layer2d(
+            discipline_risk_profiles=[_disc_risk(substitutes=[_gated_sub()])],
+            hitl_items=[
+                _2d_item(
+                    hitl_type="no_substitute_for_high_risk",
+                    severity="warn",
+                    discipline_id="D-trail",
+                )
+            ],
+        ),
+    )
+    assert not any(
+        it.source_item_id in ("discipline_gated_all_locales", "substitute_gated_all_locales")
+        for it in gate.items
+    )
+
+
+def test_cn2_does_not_fire_when_substitute_trainable_somewhere():
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(
+            home_flags=[_2c_flag(discipline_id="D-bike")],
+            gym_flags=[],  # bike trainable at the gym
+        ),
+        layer2d_payload=_layer2d(discipline_risk_profiles=[_disc_risk(substitutes=[_gated_sub()])]),
+    )
+    assert not any(
+        it.source_item_id in ("discipline_gated_all_locales", "substitute_gated_all_locales")
+        for it in gate.items
+    )
+
+
+def test_cn2_does_not_fire_when_no_usable_substitute():
+    # Every substitute still_at_risk → 2D's own no-substitute territory (§5.2
+    # blocker), not CN-2.
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(
+            home_flags=[_2c_flag(discipline_id="D-bike")],
+            gym_flags=[_2c_flag(discipline_id="D-bike")],
+        ),
+        layer2d_payload=_layer2d(
+            discipline_risk_profiles=[_disc_risk(substitutes=[_gated_sub(still_at_risk=True)])]
+        ),
+    )
+    assert [it for it in gate.items if it.source_item_id == "substitute_gated_all_locales"] == []
+
+
+def test_map_3c_items_empty_locales_is_safe():
+    assert map_3c_items(_layer2a(disciplines=[_discipline()]), {}, _layer2d()) == []
+
+
+def test_map_3c_items_clean_returns_empty():
+    assert (
+        map_3c_items(
+            _layer2a(disciplines=[_discipline()]),
+            {"home": _layer2c(), "gym": _layer2c(locale_id="gym")},
+            _layer2d(),
+        )
+        == []
+    )
+
+
+# ─── TS-3C Slice 2: surface the orphaned coaching_flags (informational) ──────
+
+
+def _2a_flag(*, flag_type="training_gap", discipline_id="D-trail", message="2A advisory."):
+    return Layer2ACoachingFlag(
+        flag_type=flag_type, discipline_id=discipline_id, message=message, metadata={}
+    )
+
+
+def _2b_flag(*, flag_type="unbridgeable_terrain", target_terrain_id="T-scramble", message="2B advisory."):
+    return Layer2BCoachingFlag(
+        flag_type=flag_type, target_terrain_id=target_terrain_id, message=message, metadata={}
+    )
+
+
+def _2b_payload(*, coaching_flags=None):
+    return Layer2BPayload(
+        race_terrain=[],
+        terrain_gaps=[],
+        coaching_flags=coaching_flags or [],
+        summary=Layer2BSummaryBlock(
+            total_race_terrain_count=0,
+            covered_count=0,
+            gap_count=0,
+            bridgeable_count=0,
+            unbridgeable_count=0,
+            min_adaptation_weeks_needed=0,
+            worst_fidelity=0.0,
+            pct_of_race_uncovered=0.0,
+            any_unbridgeable=False,
+            any_undefined=False,
+        ),
+        etl_version_set=dict(_EVS),
+    )
+
+
+def _2d_flag(*, flag_type="elevated_discipline_risk", discipline_id="D-trail", message="2D advisory."):
+    return Layer2DCoachingFlag(
+        flag_type=flag_type,
+        discipline_id=discipline_id,
+        discipline_name="trail_running",
+        message=message,
+        metadata={},
+    )
+
+
+def _2e_flag(*, flag_type="race_temp_unknown", severity="moderate", message="2E advisory."):
+    return Layer2ECoachingFlag(
+        flag_type=flag_type,
+        event_id=None,
+        supplement_id=None,
+        message=message,
+        severity=severity,
+        metadata={},
+    )
+
+
+def test_surface_2a_flag_as_informational():
+    gate = _evaluate(layer2a_payload=_layer2a(coaching_flags=[_2a_flag()]))
+    fl = [it for it in gate.items if it.source_item_id == "2A:flag:training_gap"]
+    assert len(fl) == 1
+    it = fl[0]
+    assert it.source == "3C"
+    assert it.severity == "informational"
+    assert it.can_acknowledge is True
+    assert it.revise_target == "profile.disciplines"
+    assert it.evidence["origin"] == "2A"
+    assert it.evidence["discipline_id"] == "D-trail"
+    assert gate.gate_status == "green"  # informational never parks a plan
+
+
+def test_informational_flag_alone_stays_green():
+    gate = _evaluate(layer2e_payload=_layer2e(coaching_flags=[_2e_flag()]))
+    assert any(it.severity == "informational" for it in gate.items)
+    assert gate.gate_status == "green"
+
+
+def test_surface_2e_flag_carries_source_severity():
+    gate = _evaluate(layer2e_payload=_layer2e(coaching_flags=[_2e_flag(severity="high")]))
+    it = next(it for it in gate.items if it.evidence.get("origin") == "2E")
+    assert it.severity == "informational"  # gate severity, not 2E's own
+    assert it.evidence["flag_severity"] == "high"  # 2E's severity preserved in evidence
+    assert it.revise_target == "profile.nutrition"
+
+
+def test_surface_2c_flag_suppressed_when_escalated_to_cn1():
+    # toggle_off at every locale for an included discipline → CN-1 warning; the raw
+    # 2C flag for that discipline is NOT also surfaced as informational noise.
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads=_two_locales(home_flags=[_2c_flag()], gym_flags=[_2c_flag()]),
+    )
+    assert any(it.source_item_id == "discipline_gated_all_locales" for it in gate.items)
+    assert not any(
+        it.source_item_id == "2C:flag:toggle_off_for_discipline" for it in gate.items
+    )
+
+
+def test_surface_2c_flag_kept_when_not_escalated():
+    # low_coverage isn't a gate flag type → no CN-1 → surfaces as informational.
+    flag = _2c_flag(flag_type="low_coverage", discipline_id="D-trail")
+    gate = _evaluate(
+        layer2a_payload=_layer2a(disciplines=[_discipline()]),
+        layer2c_payloads={"home": _layer2c(coaching_flags=[flag])},
+    )
+    surfaced = [it for it in gate.items if it.source_item_id == "2C:flag:low_coverage"]
+    assert len(surfaced) == 1
+    assert surfaced[0].severity == "informational"
+    assert surfaced[0].evidence["locale_id"] == "home"
+    assert surfaced[0].revise_target == "profile.locales"
+    assert gate.gate_status == "green"
+
+
+def test_surface_2d_flag_suppressed_by_hitl_item():
+    gate = _evaluate(
+        layer2d_payload=_layer2d(
+            coaching_flags=[_2d_flag(discipline_id="D-trail")],
+            hitl_items=[
+                _2d_item(
+                    hitl_type="post_surgical_clearance",
+                    severity="block",
+                    discipline_id="D-trail",
+                )
+            ],
+        ),
+    )
+    assert not any(it.evidence.get("origin") == "2D" for it in gate.items)
+
+
+def test_surface_2d_flag_kept_without_matching_hitl():
+    gate = _evaluate(layer2d_payload=_layer2d(coaching_flags=[_2d_flag(discipline_id="D-mtb")]))
+    surfaced = [it for it in gate.items if it.evidence.get("origin") == "2D"]
+    assert len(surfaced) == 1
+    assert surfaced[0].revise_target == "profile.injuries"
+    assert gate.gate_status == "green"
+
+
+def test_surface_2b_flag_via_payload():
+    items = surface_orphaned_flags(
+        _layer2a(),
+        _2b_payload(coaching_flags=[_2b_flag()]),
+        {"home": _layer2c()},
+        _layer2d(),
+        _layer2e(),
+        cn_items=[],
+    )
+    assert len(items) == 1
+    it = items[0]
+    assert it.source == "3C"
+    assert it.source_item_id == "2B:flag:unbridgeable_terrain"
+    assert it.severity == "informational"
+    assert it.revise_target == "h2.race_terrain"
+    assert it.evidence["target_terrain_id"] == "T-scramble"
+
+
+def test_2b_flags_skipped_when_payload_none():
+    items = surface_orphaned_flags(
+        _layer2a(), None, {"home": _layer2c()}, _layer2d(), _layer2e(), cn_items=[]
+    )
+    assert items == []
+
+
+def test_compute_gate_status_informational_is_non_gating():
+    info = GateItem(
+        item_key="k1",
+        source="3C",
+        source_item_id="2A:flag:x",
+        severity="informational",
+        title="t",
+        message="m",
+        can_acknowledge=True,
+    )
+    assert compute_gate_status([info]) == "green"  # pending informational → still green
+    warn = GateItem(
+        item_key="k2",
+        source="2A",
+        source_item_id="y",
+        severity="warning",
+        title="t",
+        message="m",
+        can_acknowledge=True,
+    )
+    assert compute_gate_status([info, warn]) == "needs_review"  # warning gates; info doesn't
+
+
+def test_surfaced_flag_promoted_to_warning_gates(monkeypatch):
+    # The §7.1 severity policy: a flag_type opted into _FLAG_WARNING surfaces as a
+    # gating warning; everything else stays informational (display-only).
+    import layer3d.gate as gate_mod
+
+    monkeypatch.setattr(gate_mod, "_FLAG_WARNING", {"low_calorie_target_relative_to_rmr"})
+    promoted = _2e_flag(flag_type="low_calorie_target_relative_to_rmr", severity="high")
+    other = _2e_flag(flag_type="race_temp_unknown")
+    gate = _evaluate(layer2e_payload=_layer2e(coaching_flags=[promoted, other]))
+    pit = next(
+        it for it in gate.items
+        if it.source_item_id == "2E:flag:low_calorie_target_relative_to_rmr"
+    )
+    oit = next(it for it in gate.items if it.source_item_id == "2E:flag:race_temp_unknown")
+    assert pit.severity == "warning"
+    assert pit.can_acknowledge is True
+    assert oit.severity == "informational"  # not promoted → stays informational
+    assert gate.gate_status == "needs_review"  # the promoted warning now gates
