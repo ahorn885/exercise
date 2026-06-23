@@ -1,6 +1,7 @@
 """Initialize the PostgreSQL database — schema + idempotent migrations + seeds."""
 import os
 
+from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
 from provider_value_map_seed import STRENGTH_NAME_TO_EX_ID, provider_value_map_rows
 
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -642,6 +643,16 @@ def _retire_outdoor_terrain_equipment_tags(cur):
         WHERE tag = ANY(%s)
     """, (retired_tags,))
 
+
+# #884 slice 3 — craft-slug allowlists for the athlete_gear backfill (in the
+# migration tail below). Only known craft slugs migrate from the discipline-
+# baseline CSVs into the unified gear store, so a stale/pruned slug (e.g. the
+# legacy 'surfski', athlete.py §D.4) can't leak in as an unknown gear_id. Source:
+# the closed craft enums = the bike/paddle half of the §5.5 gear_id keyspace
+# (athlete_gear_repo.GEAR_REGISTRY).
+_GEAR_BACKFILL_BIKE_IN = ", ".join(f"'{s}'" for s in BIKE_TYPES)
+_GEAR_BACKFILL_PADDLE_IN = ", ".join(f"'{s}'" for s in PADDLE_CRAFT_TYPES)
+_GEAR_BACKFILL_CRAFT_IN = ", ".join(f"'{s}'" for s in (*BIKE_TYPES, *PADDLE_CRAFT_TYPES))
 
 _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS stride_length_m REAL",
@@ -2962,6 +2973,56 @@ _PG_MIGRATIONS = [
             cl.coros_label_id, cl.strava_activity_id, cl.rwgps_trip_id
         FROM cardio_log cl
         WHERE cl.cluster_id IS NULL""",
+    # ── #884 slice 3 — unified athlete gear/craft store ──────────────────────
+    # The public-schema store for owned gear/craft (design v3 §5.1/§5.2). Merges
+    # the two craft families (bikes/boats, the discipline_baseline CSV columns)
+    # with the owned gear toggles (ski/climbing/etc., previously storeless).
+    # Read/written by athlete_gear_repo. STAGING: created + backfilled here, but
+    # nothing reads it yet — the cascade cuts over in slice 4, capture is slice 6
+    # (so the old craft path stays authoritative until then). `group_kind` is
+    # stored denormalized so reads route without a catalog join; `access` ∈
+    # {own, access}. created_at mirrors the sibling athlete_* audit convention.
+    "CREATE TABLE IF NOT EXISTS athlete_gear ("
+    "user_id INTEGER NOT NULL REFERENCES users(id), gear_id TEXT NOT NULL, "
+    "group_kind TEXT NOT NULL, access TEXT NOT NULL DEFAULT 'own', "
+    "created_at TIMESTAMP DEFAULT NOW(), PRIMARY KEY (user_id, gear_id))",
+    "CREATE INDEX IF NOT EXISTS idx_athlete_gear_user ON athlete_gear(user_id)",
+    # Per-locale availability — the gear analogue of athlete_craft_locale (a
+    # standing "this gear is kept at this locale"). gear_id replaces craft_slug.
+    "CREATE TABLE IF NOT EXISTS athlete_gear_locale ("
+    "user_id INTEGER NOT NULL REFERENCES users(id), gear_id TEXT NOT NULL, "
+    "locale TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW(), "
+    "PRIMARY KEY (user_id, gear_id, locale))",
+    "CREATE INDEX IF NOT EXISTS idx_agl_user ON athlete_gear_locale(user_id)",
+    # The brought-gear set on an away window — the gear analogue of brought_craft
+    # (CSV of gear_id slugs; written by the away capture in slice 5).
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS brought_gear TEXT",
+    # Backfill (design v3 §11). Idempotent — ON CONFLICT DO NOTHING re-seeds
+    # nothing on re-deploy and self-heals craft additions; removals don't
+    # propagate, which is harmless while the new store is unread (slices 3→4).
+    # Each owned bike/paddle craft CSV token explodes into one athlete_gear row,
+    # filtered to the known craft slugs (no stale-slug leak), group_kind by family.
+    f"INSERT INTO athlete_gear (user_id, gear_id, group_kind, access) "
+    f"SELECT dbc.user_id, btrim(g.slug), 'bike', 'own' "
+    f"FROM discipline_baseline_cycling dbc "
+    f"CROSS JOIN LATERAL unnest(string_to_array(dbc.bike_types_available, ',')) AS g(slug) "
+    f"WHERE btrim(g.slug) IN ({_GEAR_BACKFILL_BIKE_IN}) "
+    f"ON CONFLICT (user_id, gear_id) DO NOTHING",
+    f"INSERT INTO athlete_gear (user_id, gear_id, group_kind, access) "
+    f"SELECT dbp.user_id, btrim(g.slug), 'paddle', 'own' "
+    f"FROM discipline_baseline_paddling dbp "
+    f"CROSS JOIN LATERAL unnest(string_to_array(dbp.paddle_craft_types, ',')) AS g(slug) "
+    f"WHERE btrim(g.slug) IN ({_GEAR_BACKFILL_PADDLE_IN}) "
+    f"ON CONFLICT (user_id, gear_id) DO NOTHING",
+    # craft↔locale rows migrate 1:1 (craft_slug IS a gear_id), filtered to known slugs.
+    f"INSERT INTO athlete_gear_locale (user_id, gear_id, locale) "
+    f"SELECT user_id, craft_slug, locale FROM athlete_craft_locale "
+    f"WHERE craft_slug IN ({_GEAR_BACKFILL_CRAFT_IN}) "
+    f"ON CONFLICT (user_id, gear_id, locale) DO NOTHING",
+    # brought_craft → brought_gear is a verbatim CSV copy (same slug format);
+    # NULL-guarded so a re-deploy never clobbers a later away-capture edit.
+    "UPDATE athlete_event_windows SET brought_gear = brought_craft "
+    "WHERE brought_gear IS NULL AND brought_craft IS NOT NULL AND btrim(brought_craft) <> ''",
 ]
 
 _CLOTHING_SEEDS = [
