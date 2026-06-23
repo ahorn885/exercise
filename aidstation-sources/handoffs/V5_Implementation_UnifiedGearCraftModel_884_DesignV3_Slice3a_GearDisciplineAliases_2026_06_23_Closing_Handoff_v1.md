@@ -29,7 +29,7 @@ The session began as "plan the gear store" and Andy opened two design decisions 
 
 **Design v3** — `designs/Unified_GearCraft_Model_And_Feasibility_884_Design_v3.md` (v2 → `archive/superseded-specs/` per Rule #12). Records D1/D2 (Decisions 8 revised + 10/11/12), the **pinned `gear_id` keyspace** (§5.5 — unspecified in v2), the gear-gated-drill mechanism (§6a), and a **re-sequenced slice list** (§15): 1 catalog (done 0022), 2 boundary (done #919), **3 public store**, **3a L0 aliases (this)**, **3b swim-drill gate**, 4 cascade cutover, 5 away, 6 UX+registry.
 
-**Slice 3a** — `etl/migrations/layer0/0023_gear_discipline_aliases.sql`. Creates `layer0.gear_discipline_aliases (id, gear_id, discipline_id, group_kind, fidelity_rank INTEGER NOT NULL DEFAULT 0, etl_version, etl_run_at, superseded_at)` and seeds **22 active rows** at `etl_version='0A-v1.9.1'`:
+**Slice 3a** — `etl/migrations/layer0/0024_gear_discipline_aliases.sql`. Creates `layer0.gear_discipline_aliases (id, gear_id, discipline_id, group_kind, fidelity_rank INTEGER NOT NULL DEFAULT 0, etl_version, etl_run_at, superseded_at)` and seeds **22 active rows** at `etl_version='0A-v1.9.1'`:
 - 12 craft aliases migrated 1:1 from `craft_discipline_aliases` (rank 0): kayak/canoe/packraft/raft/sup (paddle), road/gravel×3/mountain×2/tt (bike).
 - 10 gear-toggle rows: climbing_gear→D-012/013/014 (climbing); snowshoes→D-017 (snow); mountaineering→D-018 (alpine); skimo_at→D-021/022 (alpine); **classic_xc_ski→D-028 rank 0 / skate_xc_ski→D-028 rank 1 / rollerskis→D-028 rank 2 (ski)**.
 
@@ -37,17 +37,17 @@ Idempotent (`CREATE TABLE IF NOT EXISTS` + `DELETE WHERE etl_version='0A-v1.9.1'
 
 ## 2. Staging — why nothing reads it yet (READ before slice 4)
 
-Design v3 §5.3 stages the alias table **alongside** the live `craft_discipline_aliases` rather than renaming it. The orchestrator read paths (`_q_craft_discipline_aliases`/`_q_craft_group_kind`/`_q_craft_terrain_compatibility`, `orchestrator.py:335/362/374`; `_collect_athlete_crafts:215`) still read the **craft** table. The cutover to `gear_discipline_aliases` is **slice 4**, which then retires `craft_discipline_aliases` (the v2 "forced redump finding B"). Temporary craft-row duplication across the two tables during 3a→4 is expected and harmless — nothing serves from the new table, so `0023` changes **no** served output and needs no cache-version coordination (`_q_current_etl_version_set` doesn't yet enumerate the new table).
+Design v3 §5.3 stages the alias table **alongside** the live `craft_discipline_aliases` rather than renaming it. The orchestrator read paths (`_q_craft_discipline_aliases`/`_q_craft_group_kind`/`_q_craft_terrain_compatibility`, `orchestrator.py:335/362/374`; `_collect_athlete_crafts:215`) still read the **craft** table. The cutover to `gear_discipline_aliases` is **slice 4**, which then retires `craft_discipline_aliases` (the v2 "forced redump finding B"). Temporary craft-row duplication across the two tables during 3a→4 is expected and harmless — nothing serves from the new table, so `0024` changes **no** served output and needs no cache-version coordination (`_q_current_etl_version_set` doesn't yet enumerate the new table).
 
 ## 3. Verification
 
-- **Full CI gate path replicated locally** (container PG16 in `/tmp/pgtest`, started as the `postgres` user): loaded the v1.9.0 baseline (stripping the PG17-only `\restrict`/`\unrestrict` meta-commands + the `transaction_timeout` GUC — local-PG16-only; CI runs PG17), applied `0023`, ran `python -m etl.layer0.validate_layer0` → **PASS** (all 11 checks clean/waived). D-028 ladder prints 0/1/2. Idempotent re-apply holds at 22 active rows.
+- **Full CI gate path replicated locally** (container PG16 in `/tmp/pgtest`, started as the `postgres` user): loaded the v1.9.0 baseline (stripping the PG17-only `\restrict`/`\unrestrict` meta-commands + the `transaction_timeout` GUC — local-PG16-only; CI runs PG17), applied `0024`, ran `python -m etl.layer0.validate_layer0` → **PASS** (all 11 checks clean/waived). D-028 ladder prints 0/1/2. Idempotent re-apply holds at 22 active rows.
 - The v2-baseline `transaction_timeout` strip is a **local-only** workaround; the real CI gate uses PG17 where the GUC is valid — no migration change needed.
 
 ## 4. Owed / next
 
 ### 4.1 Owed
-- **`layer0-apply`** of `0023` to prod Neon (Andy one-tap) — owed once the PR opens. Idempotent; safe to re-run.
+- **`layer0-apply`** of `0024` to prod Neon (Andy one-tap) — owed once the PR opens. Idempotent; safe to re-run.
 - **`Provider_Inbound_Matrix_v2` §12 footnote** — note the rollerski ownership/feasibility promotion (Decision 10) so the two docs don't drift. (Doc nit; logged in CARRY_FORWARD.)
 
 ### 4.2 Next (the store proper)
@@ -69,10 +69,10 @@ Design v3 §5.3 stages the alias table **alongside** the live `craft_discipline_
 
 | Claim | File | Check |
 |---|---|---|
-| Migration `0023` exists, creates `gear_discipline_aliases` + 22 rows | `etl/migrations/layer0/0023_gear_discipline_aliases.sql` | grep `CREATE TABLE IF NOT EXISTS layer0.gear_discipline_aliases` + the 22 VALUES rows + the verify `DO $$` |
+| Migration `0024` exists, creates `gear_discipline_aliases` + 22 rows | `etl/migrations/layer0/0024_gear_discipline_aliases.sql` | grep `CREATE TABLE IF NOT EXISTS layer0.gear_discipline_aliases` + the 22 VALUES rows + the verify `DO $$` |
 | D-028 ordinal ladder 0/1/2 | same | grep `classic_xc_ski`…`0`, `skate_xc_ski`…`1`, `rollerskis`…`2` |
 | Design v3 present; v2 archived | `designs/…_v3.md` + `archive/superseded-specs/…_v2.md` | both files exist; v3 §5.3 has `fidelity_rank INTEGER`, §5.5 keyspace table, §15 re-sliced |
-| Gate passes on baseline+0023 | (local, not committed) | `validate_layer0` PASS — re-runnable per §3 recipe |
+| Gate passes on baseline+0024 | (local, not committed) | `validate_layer0` PASS — re-runnable per §3 recipe |
 | Pointer updated | `CURRENT_STATE.md` | "Last shipped session" names design v3 + slice 3a; slice-1 demoted to predecessor |
 
-**Substantive files (2):** `designs/…_v3.md`, `etl/migrations/layer0/0023_gear_discipline_aliases.sql`. (Bookkeeping: `CURRENT_STATE.md`, `CARRY_FORWARD.md`, this handoff, v2 archive move.)
+**Substantive files (2):** `designs/…_v3.md`, `etl/migrations/layer0/0024_gear_discipline_aliases.sql`. (Bookkeeping: `CURRENT_STATE.md`, `CARRY_FORWARD.md`, this handoff, v2 archive move.)

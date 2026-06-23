@@ -1,4 +1,12 @@
--- 0023_gear_discipline_aliases.sql
+-- 0024_gear_discipline_aliases.sql
+--
+-- Renumbered 0023 → 0024 (PR #923 collided with the slice-2 #919 migration
+-- 0023_retire_inert_sport_gear.sql, which had already claimed 0023). This file
+-- was first applied to prod under the name 0023_gear_discipline_aliases.sql; the
+-- ledger keys by filename, so the apply loop re-runs it once under 0024 — which
+-- is harmless because it is idempotent (CREATE IF NOT EXISTS + delete-this-
+-- version-then-insert re-seeds the same 22 rows). The stale 0023 ledger entry is
+-- inert.
 --
 -- #884 slice 3a — build the unified gear→discipline alias relation with an
 -- ORDINAL fidelity rank (design v3 §5.3 / Decision 8 + 10 + 12).
@@ -82,13 +90,13 @@ BEGIN
     SELECT count(*) INTO n_rows
       FROM layer0.gear_discipline_aliases WHERE superseded_at IS NULL;
     IF n_rows <> 22 THEN
-        RAISE EXCEPTION '0023 verify: expected 22 active alias rows, found %', n_rows;
+        RAISE EXCEPTION '0024 verify: expected 22 active alias rows, found %', n_rows;
     END IF;
     SELECT count(DISTINCT fidelity_rank) INTO n_d028
       FROM layer0.gear_discipline_aliases
      WHERE superseded_at IS NULL AND discipline_id = 'D-028';
     IF n_d028 <> 3 THEN
-        RAISE EXCEPTION '0023 verify: D-028 ladder expected 3 fidelity ranks, found %', n_d028;
+        RAISE EXCEPTION '0024 verify: D-028 ladder expected 3 fidelity ranks, found %', n_d028;
     END IF;
 END $$;
 
