@@ -100,10 +100,13 @@ jobs:
           sed -E '/^\\restrict /d; /^\\unrestrict /d; /^SET transaction_timeout/d' "$snapshot" \
             | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
       - name: Apply Layer 0 migrations
-        # Post-baseline DB-native edits stack on the v1.7.0 baseline in sort -V
-        # order, starting at 0006 (0001-0005 are folded into the baseline and
-        # archived). Empty until the next migration lands; the gate then guards
-        # baseline + migrations as the would-be-applied state before Neon.
+        # Post-baseline DB-native edits stack on the newest baseline
+        # (sort -V | tail -1) in order. 0001-0022 are folded into the baseline
+        # and archived (etl/_archive/pre_v1.7.0_baseline + pre_v1.9.0_baseline);
+        # this dir is empty until the next migration lands. The gate then guards
+        # baseline + migrations as the would-be-applied state before Neon. NOTE:
+        # a live re-dump MUST be paired with archiving the baked migrations —
+        # re-applying a verify-bearing migration on a converged baseline fails.
         run: |
           # Iterate the glob directly: with nullglob an empty dir yields zero
           # iterations. (Do NOT `ls $glob` — under nullglob an empty glob makes

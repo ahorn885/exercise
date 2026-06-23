@@ -6,14 +6,26 @@ data, replacing the xlsx → `etl.layer0.run` re-import loop. See
 (epic [#488](https://github.com/ahorn885/exercise/issues/488)) for the why; this
 README is the how.
 
-The genesis baseline (`etl/output/layer0_etl_v1.7.0.sql`) is a full `pg_dump` of
-live `layer0` (schema + data, self-contained) — refreshed from live and collapsed
-with the pre-existing `schema.sql` + migrations `0001`–`0005` (now in
-`etl/_archive/pre_v1.7.0_baseline/`, issue
-[#604](https://github.com/ahorn885/exercise/issues/604)). Migrations stack on top
-of it in order, **starting at `0006`**. Periodically the baseline is re-dumped
-from live and the intervening migrations fold into it — the consolidation that
-closed the v1.6.7 genesis lag.
+The genesis baseline (the newest `etl/output/layer0_etl_v*.sql`, currently
+`v1.9.0`) is a full `pg_dump` of live `layer0` (schema + data, self-contained) —
+refreshed from live and collapsed with the pre-existing `schema.sql` + migrations
+`0001`–`0005` (in `etl/_archive/pre_v1.7.0_baseline/`, issue
+[#604](https://github.com/ahorn885/exercise/issues/604)) and migrations
+`0006`–`0022` (in `etl/_archive/pre_v1.9.0_baseline/`, folded after the `0022`
+prod-apply — #884 slice 1). Migrations stack on top of it in order; this
+directory is **empty until the next migration lands** (the next is `0023`).
+Periodically the baseline is re-dumped from live and the intervening migrations
+fold into it — the consolidation that closes the genesis lag.
+
+**A re-dump that captures current-live state MUST be paired with folding the
+now-baked migrations out of this directory** (archive them, as above). The gate
+re-applies every migration here on top of the baseline; a verify-bearing
+migration re-applied on a converged (live-current) baseline fails — the
+intermediate state its verify asserts is already gone (e.g. `0008` expects 4
+survivor tokens that `0009` later culls). A stale (behind-live) baseline masks
+this because the chain still does real forward work; a fresh live dump does not.
+So: `layer0-apply` → `layer0-redump` → **archive the baked migrations** → the gate
+validates the raw new baseline.
 
 ## Edit flow (§5.1 of the design spec)
 
