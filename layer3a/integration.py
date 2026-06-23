@@ -115,14 +115,19 @@ def q_layer3A_recent_workouts(
     *,
     since_days: int = _DEFAULT_WORKOUT_WINDOW_DAYS,
 ) -> list[WorkoutRecord]:
-    """Recent workouts from `cardio_log` over the past `since_days`. Returns
-    chronological-descending (newest first). Source-tagged per row via the
-    provider foreign-id columns (`garmin_activity_id` / `polar_exercise_id`
-    / `wahoo_workout_id` / `coros_label_id`). Manual entries (no foreign ID)
-    surface as `source='manual'`.
+    """Recent workouts over the past `since_days`. Returns chronological-
+    descending (newest first). Reads `canonical_cardio_feed` (#196 Slice 4),
+    NOT raw `cardio_log`, so a single ride synced from N providers counts once
+    — otherwise the recent_workouts_count + the trajectory floors that gate
+    athlete state would over-read the cross-source duplicates. Source-tagged per
+    row via the provider foreign-id columns (`garmin_activity_id` /
+    `polar_exercise_id` / `wahoo_workout_id` / `coros_label_id`); for a merged
+    activity these carry the cluster's richest (primary) copy's device, so the
+    tag names the best source. Manual entries (no foreign ID) surface as
+    `source='manual'`.
 
-    The deployed `cardio_log.date` column is TEXT; comparison via lexicographic
-    string ordering on ISO-format dates works correctly."""
+    The `date` column is TEXT; comparison via lexicographic string ordering on
+    ISO-format dates works correctly."""
     cutoff = _window_cutoff(as_of, since_days)
     cur = db.execute(
         """
@@ -130,7 +135,7 @@ def q_layer3A_recent_workouts(
                avg_hr, max_hr, avg_power, elev_gain_ft,
                garmin_activity_id, polar_exercise_id, wahoo_workout_id,
                coros_label_id, strava_activity_id
-          FROM cardio_log
+          FROM canonical_cardio_feed
          WHERE user_id = %s AND date >= %s
          ORDER BY date DESC, id DESC
         """,
@@ -488,10 +493,14 @@ def q_layer3A_combined_load(
     chronic_iso = chronic_cutoff.isoformat()
     acute_iso = acute_cutoff.isoformat()
 
+    # Reads `canonical_cardio_feed` (#196 Slice 4), not raw cardio_log: ACWR sums
+    # each row's hours into the acute/chronic load, so a ride synced from N
+    # providers would otherwise inflate training load N-fold. The feed collapses
+    # each cluster to its one best-of row (and still surfaces unclustered rows).
     cur = db.execute(
         """
         SELECT date, activity, duration_min, moving_time_min
-          FROM cardio_log
+          FROM canonical_cardio_feed
          WHERE user_id = %s AND date >= %s AND activity IS NOT NULL
         """,
         (user_id, chronic_iso),
@@ -631,7 +640,11 @@ def q_layer3A_connected_providers(
         last_sync_by_provider[row["provider"]] = row["last_received"]
 
     # Workout coverage: which provider IDs are populated on recent cardio_log
-    # rows? Single query, bucketed via CASE.
+    # rows? Single query, bucketed via FILTER. DELIBERATELY reads raw cardio_log,
+    # NOT canonical_cardio_feed (#196 Slice 4): this counts per-provider coverage,
+    # so it needs the un-merged rows — the feed collapses a cross-source ride to
+    # one row carrying only its primary copy's ids, which would under-count the
+    # secondary providers' coverage. Do not repoint this at the feed.
     cur = db.execute(
         """
         SELECT

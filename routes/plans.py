@@ -168,7 +168,13 @@ def _plan_health(db, plan_id):
         (plan_id, uid)
     ).fetchall()
 
-    # Compliance data for recently completed items linked to cardio_log
+    # Compliance data for recently completed items linked to a logged activity.
+    # Joins canonical_cardio_feed (#196 Slice 4), not raw cardio_log: when a ride
+    # synced from N providers all match the same plan item, every copy carries
+    # that plan_item_id — joining the raw table would surface the item N times and
+    # double-count compliance. The feed collapses each cluster to one row (and
+    # carries plan_item_id from whichever member is plan-matched), so a completed
+    # item resolves to exactly one actual-vs-target comparison.
     compliance_rows = db.execute(
         '''SELECT pi.item_date, pi.workout_name,
                   pi.target_duration_min, pi.target_distance_mi,
@@ -177,7 +183,7 @@ def _plan_health(db, plan_id):
                   cl.activity_name as garmin_activity_name,
                   cl.avg_hr, cl.garmin_activity_id
            FROM plan_items pi
-           JOIN cardio_log cl ON cl.plan_item_id = pi.id
+           JOIN canonical_cardio_feed cl ON cl.plan_item_id = pi.id
            WHERE pi.plan_id = ? AND pi.user_id = ? AND pi.status = 'completed'
            ORDER BY pi.item_date DESC LIMIT 10''',
         (plan_id, uid)

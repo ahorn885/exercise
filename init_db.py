@@ -2901,6 +2901,67 @@ _PG_MIGRATIONS = [
         UNIQUE (cluster_id, field_name)
     )""",
     "CREATE INDEX IF NOT EXISTS cafp_cluster_idx ON canonical_activity_field_provenance (cluster_id)",
+    # ── #196 Phase 3 Slice 4 — the shared deduplicated activity feed ──────────
+    # One real-world activity reaching us via N connected providers lands as N
+    # cardio_log rows (Slice 1/2 group them into a cluster; Slice 3 merges each
+    # cluster into one best-of canonical_activity row). This view is the single
+    # read surface the "count the ride once" consumers select from instead of
+    # cardio_log (Andy 2026-06-23: "build it once, shared"). It returns each real
+    # activity EXACTLY once:
+    #   • clustered rows  → one row per cluster = canonical_activity's merged
+    #     metrics, carrying the cluster's PRIMARY cardio_log row's identity/notes/
+    #     created_at + per-provider ids (so source-tagging still resolves to the
+    #     richest copy's device), and plan_item_id from whichever member is
+    #     plan-matched (robust to which copy the matcher linked).
+    #   • unclustered rows → raw cardio_log rows with cluster_id IS NULL
+    #     (pre-Slice-2 rows + NULL-started_at rows that are never clustered).
+    # The two branches partition cleanly: a cardio_log row is either in a cluster
+    # (and represented by its canonical row) or has cluster_id IS NULL, and
+    # canonical_activity holds exactly one row per cluster — so UNION ALL counts
+    # every activity once with no overlap. Column order is identical across both
+    # branches (UNION ALL is positional); keep them in lockstep on any edit.
+    # Invariant: materialize_canonical_activity always sets primary_cardio_log_id
+    # to a live member id, so the clustered branch's INNER JOIN never drops a row.
+    # Additive / idempotent (CREATE OR REPLACE) / public-schema → auto-applies on
+    # each Vercel deploy; no Neon apply owed. Raw cardio_log stays the read for
+    # the literal activity-LOG/CRUD pages and the per-provider coverage/HRmax
+    # counts (which intentionally need the un-merged rows).
+    """CREATE OR REPLACE VIEW canonical_cardio_feed AS
+        SELECT
+            cl.id,
+            ca.user_id,
+            ca.cluster_id,
+            ca.date, ca.activity, ca.activity_name, ca.discipline_id, ca.started_at,
+            ca.duration_min, ca.moving_time_min, ca.distance_mi, ca.avg_pace, ca.avg_speed,
+            ca.avg_hr, ca.max_hr, ca.calories, ca.elev_gain_ft, ca.elev_loss_ft,
+            ca.avg_cadence, ca.max_cadence, ca.avg_power, ca.max_power, ca.norm_power,
+            ca.aerobic_te, ca.anaerobic_te, ca.swolf, ca.active_lengths,
+            ca.stride_length_m, ca.vert_oscillation_cm, ca.vert_ratio_pct, ca.gct_ms, ca.gct_balance,
+            (SELECT m.plan_item_id FROM cardio_log m
+              WHERE m.cluster_id = ca.cluster_id AND m.plan_item_id IS NOT NULL
+              ORDER BY m.id LIMIT 1) AS plan_item_id,
+            cl.notes, cl.created_at,
+            cl.garmin_activity_id, cl.polar_exercise_id, cl.wahoo_workout_id,
+            cl.coros_label_id, cl.strava_activity_id, cl.rwgps_trip_id
+        FROM canonical_activity ca
+        JOIN cardio_log cl ON cl.id = ca.primary_cardio_log_id
+        UNION ALL
+        SELECT
+            cl.id,
+            cl.user_id,
+            cl.cluster_id,
+            cl.date, cl.activity, cl.activity_name, cl.discipline_id, cl.started_at,
+            cl.duration_min, cl.moving_time_min, cl.distance_mi, cl.avg_pace, cl.avg_speed,
+            cl.avg_hr, cl.max_hr, cl.calories, cl.elev_gain_ft, cl.elev_loss_ft,
+            cl.avg_cadence, cl.max_cadence, cl.avg_power, cl.max_power, cl.norm_power,
+            cl.aerobic_te, cl.anaerobic_te, cl.swolf, cl.active_lengths,
+            cl.stride_length_m, cl.vert_oscillation_cm, cl.vert_ratio_pct, cl.gct_ms, cl.gct_balance,
+            cl.plan_item_id,
+            cl.notes, cl.created_at,
+            cl.garmin_activity_id, cl.polar_exercise_id, cl.wahoo_workout_id,
+            cl.coros_label_id, cl.strava_activity_id, cl.rwgps_trip_id
+        FROM cardio_log cl
+        WHERE cl.cluster_id IS NULL""",
 ]
 
 _CLOTHING_SEEDS = [
