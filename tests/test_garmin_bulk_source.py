@@ -26,10 +26,12 @@ from routes.garmin import (
     _already_imported,
     _bulk_insert_cardio,
     _bulk_insert_strength,
+    _coarse_sport,
     _fit_dedup_id,
     _normalize_started_at,
     _source_column,
     _source_prefix,
+    cluster_activity,
 )
 
 
@@ -38,6 +40,9 @@ class _FakeCursor:
 
     def fetchone(self):
         return None
+
+    def fetchall(self):
+        return []
 
 
 class _FakeConn:
@@ -259,3 +264,170 @@ class TestCardioInsertStartedAt:
         sql, _ = _insert(conn, "cardio_log")
         assert "started_at" in sql
         assert rec_id == 1  # inserted cleanly despite no resolvable start
+
+
+# ─── cross-source clustering (#196 P3 Slice 2) ───────────────────────────────
+
+
+class _ClusterConn:
+    """Fake DB for cluster_activity: queued rows feed the activity_clusters
+    candidate SELECT; INSERT ... RETURNING yields `new_cluster_id` via lastrowid.
+    Records every (sql, params) so a test can assert which writes happened."""
+
+    def __init__(self, candidates=None, new_cluster_id=99):
+        self.calls = []
+        self._candidates = list(candidates or [])
+        self._new_id = new_cluster_id
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        cur = _FakeCursor()
+        if "FROM activity_clusters" in sql:
+            rows = self._candidates
+            cur.fetchall = lambda: rows  # noqa: B023
+        if "INTO activity_clusters" in sql:
+            cur.lastrowid = self._new_id
+        return cur
+
+    def did(self, fragment):
+        return any(fragment in c[0] for c in self.calls)
+
+    def params_for(self, fragment):
+        return next((p for s, p in self.calls if fragment in s), None)
+
+
+def _cluster_row(**over):
+    row = {"id": 7, "sport_class": "cycling",
+           "started_at": datetime(2026, 6, 22, 6, 28, 50),
+           "duration_min": 30.0, "distance_mi": 0.0}
+    row.update(over)
+    return row
+
+
+class TestCoarseSport:
+    """The loose coarse-sport family resolver — Andy: "some apps may not have
+    categories which match perfectly." Canonical discipline → family first, then
+    the resolver-less provider vocab folded onto that same namespace."""
+
+    def test_canonical_discipline_wins(self):
+        assert _coarse_sport({"discipline_id": "D-006"}) == "cycling"   # any cycling D-id
+        assert _coarse_sport({"discipline_id": "D-001"}) == "running"   # Trail Running
+        assert _coarse_sport({"discipline_id": "D-004"}) == "swimming"
+        assert _coarse_sport({"discipline_id": "D-003"}) == "hiking"
+
+    def test_provider_freetext_folds_to_family(self):
+        # Polar/COROS singular vocab (no discipline_id) maps onto the same family
+        # the resolver-backed providers produce, so 'cycle' clusters with 'cycling'.
+        assert _coarse_sport({"activity": "cycle"}) == "cycling"
+        assert _coarse_sport({"activity": "run"}) == "running"
+        assert _coarse_sport({"activity": "Trail Run"}) == "running"
+        assert _coarse_sport({"activity": "swim"}) == "swimming"
+        assert _coarse_sport({"activity": "hike"}) == "hiking"
+
+    def test_discipline_takes_priority_over_activity(self):
+        assert _coarse_sport({"discipline_id": "D-006", "activity": "run"}) == "cycling"
+
+    def test_unmapped_passes_through_and_empty_is_other(self):
+        assert _coarse_sport({"activity": "pickleball"}) == "pickleball"
+        assert _coarse_sport({}) == "other"
+        # A fine-only discipline with no coarse home (climbing) collapses to the
+        # 'other' wildcard rather than blocking a match.
+        assert _coarse_sport({"discipline_id": "D-012"}) == "other"
+
+
+class TestClusterActivity:
+    REPRO_START = datetime(2026, 6, 22, 6, 28, 56)
+
+    def test_no_candidates_opens_new_cluster(self):
+        conn = _ClusterConn(candidates=[], new_cluster_id=42)
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=73,
+            data={"activity": "cycling", "discipline_id": "D-006",
+                  "duration_min": 30.0, "distance_mi": 0.0},
+            started_at=self.REPRO_START)
+        assert cid == 42
+        assert conn.did("SELECT pg_advisory_xact_lock")
+        assert conn.did("INTO activity_clusters")
+        assert conn.params_for("INTO activity_clusters")[1] == "cycling"  # sport_class
+        assert conn.params_for("UPDATE cardio_log SET cluster_id") == (42, 73)
+
+    def test_indoor_dup_attaches_to_existing_cluster(self):
+        # The repro: row 74 (Strava) lands ~6s after row 73 (Wahoo), same indoor
+        # ride — duration corroborates, distance is 0 on both (skipped).
+        conn = _ClusterConn(candidates=[_cluster_row(id=7, duration_min=30.0)])
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=74,
+            data={"activity": "cycling", "discipline_id": "D-006",
+                  "duration_min": 30.2, "distance_mi": 0.0},
+            started_at=self.REPRO_START)
+        assert cid == 7
+        assert not conn.did("INTO activity_clusters")          # attached, not forked
+        assert conn.params_for("UPDATE cardio_log SET cluster_id") == (7, 74)
+        assert conn.did("UPDATE activity_clusters SET updated_at")
+
+    def test_cross_provider_label_mismatch_still_clusters(self):
+        # COROS 'cycle' (no discipline_id) must attach to a Strava-opened
+        # 'cycling' cluster — the whole point of the loose sport match.
+        conn = _ClusterConn(candidates=[_cluster_row(distance_mi=12.0, duration_min=45.0)])
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=80,
+            data={"activity": "cycle", "duration_min": 45.0, "distance_mi": 12.1},
+            started_at=self.REPRO_START)
+        assert cid == 7
+        assert not conn.did("INTO activity_clusters")
+
+    def test_duration_disagreement_opens_new(self):
+        # Same time + sport, but 60 min vs the cluster's 30 → distinct activities.
+        conn = _ClusterConn(candidates=[_cluster_row(duration_min=30.0)], new_cluster_id=88)
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=81,
+            data={"activity": "cycling", "discipline_id": "D-006",
+                  "duration_min": 60.0, "distance_mi": 0.0},
+            started_at=self.REPRO_START)
+        assert cid == 88
+        assert conn.did("INTO activity_clusters")
+
+    def test_known_sport_mismatch_opens_new(self):
+        # A run and a ride that share start + duration + distance must NOT merge.
+        conn = _ClusterConn(candidates=[_cluster_row(distance_mi=3.0, duration_min=25.0)],
+                            new_cluster_id=77)
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=82,
+            data={"activity": "running", "discipline_id": "D-001",
+                  "duration_min": 25.0, "distance_mi": 3.0},
+            started_at=self.REPRO_START)
+        assert cid == 77
+        assert conn.did("INTO activity_clusters")
+
+    def test_start_outside_window_opens_new(self):
+        # 9 min apart (> ±5 min) → not the same activity even if everything else
+        # lines up. (The candidate SQL would also exclude it; belt and suspenders.)
+        conn = _ClusterConn(candidates=[_cluster_row(duration_min=30.0)], new_cluster_id=55)
+        cid = cluster_activity(
+            conn, uid=1, cardio_id=83,
+            data={"activity": "cycling", "discipline_id": "D-006",
+                  "duration_min": 30.0, "distance_mi": 0.0},
+            started_at=datetime(2026, 6, 22, 6, 38, 0))
+        assert cid == 55
+        assert conn.did("INTO activity_clusters")
+
+    def test_null_start_is_left_unclustered(self):
+        conn = _ClusterConn()
+        cid = cluster_activity(conn, uid=1, cardio_id=84,
+                               data={"activity": "cycling"}, started_at=None)
+        assert cid is None
+        assert not conn.did("SELECT pg_advisory_xact_lock")  # bails before any write
+        assert not conn.did("INTO activity_clusters")
+
+    def test_bulk_insert_cardio_invokes_clusterer(self):
+        # End-to-end: a resolvable start drives _bulk_insert_cardio through the
+        # clusterer (lock + cluster write), every provider path included.
+        conn = _FakeConn()
+        _bulk_insert_cardio(
+            conn,
+            {"date": "2026-06-22", "activity": "cycling", "discipline_id": "D-006",
+             "duration_min": 30.0, "distance_mi": 0.0,
+             "_provider_raw": {"observed_at": "2026-06-22T06:28:56Z"}},
+            uid=1, gid="wahoo:x", source="wahoo")
+        assert any("pg_advisory_xact_lock" in c[0] for c in conn.calls)
+        assert any("INTO activity_clusters" in c[0] for c in conn.calls)
