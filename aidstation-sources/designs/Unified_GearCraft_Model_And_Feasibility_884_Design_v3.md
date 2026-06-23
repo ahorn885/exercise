@@ -96,7 +96,7 @@ Target: **`gear_discipline_aliases (gear_id, discipline_id, group_kind, fidelity
 - gear toggles become rows here (the §4 mapping);
 - **`fidelity_rank INTEGER NOT NULL DEFAULT 0`** (REVISED v3): an **ordinal** rank, `0` = best/primary, higher = more degraded. Exercised today by **D-028 (Classic 0 / Skate 1 / Rollerskis 2)**; every other gear/craft defaults `0`. Integer, not a `{primary,degraded}` enum, so a discipline can carry >2 substitute fidelities without a schema change (the rollerski case forces this; the table is unbuilt so the column type is free to choose now).
 
-**Migration staging (v3):** `gear_discipline_aliases` is **created and populated alongside** the live `craft_discipline_aliases` (slice 3a / migration `0023`); the orchestrator read paths cut over in slice 4 and `craft_discipline_aliases` retires then. Temporary craft-row duplication across the two tables during 3a→4 is expected and harmless (nothing reads the new table until the cutover).
+**Migration staging (v3):** `gear_discipline_aliases` is **created and populated alongside** the live `craft_discipline_aliases` (slice 3a / migration `0024`); the orchestrator read paths cut over in slice 4 and `craft_discipline_aliases` retires then. Temporary craft-row duplication across the two tables during 3a→4 is expected and harmless (nothing reads the new table until the cutover).
 
 Other Layer-0 changes:
 - `craft_terrain_compatibility` stays (craft-only; gear has none — Decision 6).
@@ -163,7 +163,7 @@ One **"Your gear"** surface (crafts + gear together, grouped by `group_kind`), e
 
 ## 11. Migration
 - **Public (auto):** create `athlete_gear`, `athlete_gear_locale`; add `brought_gear`; backfill from the craft CSVs + `athlete_craft_locale` + `brought_craft`; drop the old columns after verify.
-- **Layer 0 (`layer0-apply`):** `0023` builds `gear_discipline_aliases` (+`fidelity_rank`; craft rows rank 0; gear toggles; D-028 ladder incl. rollerskis); later, drop `paired_equipment_categories`; `cardio_drill_gear_requirements` + swim seeds (3b).
+- **Layer 0 (`layer0-apply`):** `0024` builds `gear_discipline_aliases` (+`fidelity_rank`; craft rows rank 0; gear toggles; D-028 ladder incl. rollerskis); later, drop `paired_equipment_categories`; `cardio_drill_gear_requirements` + swim seeds (3b).
 
 ## 12. Coaching flags
 - `toggle_off_for_discipline` (#298) becomes real and moves from flag-only to feasibility.
@@ -182,7 +182,7 @@ Two indexed `athlete_gear` reads per cone (replacing the CSV parse). Away path a
 1. **L0 catalog + aliases (toggle fold)** — **DONE** (`0022`).
 2. **Equipment boundary de-drift** — **DONE** (#919).
 3. **Public athlete store + repo + backfill** — `athlete_gear`/`athlete_gear_locale`/`brought_gear`; backfill from the craft CSVs/locale/brought; new unified `athlete_gear_repo` (collapses `athlete_crafts_repo` + `athlete_craft_locale_repo`); eviction (§9). *(Old craft path stays live; cutover is slice 4.)*
-3a. **L0 `gear_discipline_aliases` + ordinal fidelity + rollerski ladder** — migration `0023` (this PR): create the table with integer `fidelity_rank`; migrate craft aliases (rank 0); seed gear-toggle rows + the D-028 ladder (Classic 0 / Skate 1 / Rollerskis 2) per §5.5.
+3a. **L0 `gear_discipline_aliases` + ordinal fidelity + rollerski ladder** — migration `0024` (this PR): create the table with integer `fidelity_rank`; migrate craft aliases (rank 0); seed gear-toggle rows + the D-028 ladder (Classic 0 / Skate 1 / Rollerskis 2) per §5.5.
 3b. **Swim-gear cardio-drill gate** — `cardio_drill_gear_requirements` + the `compute_cardio_drill_pool_ids` gear gate (§6a); swim-gear vocab seed.
 4. **Cascade wiring** — re-home `_collect_athlete_crafts`/`_q_craft_*` onto `athlete_gear`/`gear_discipline_aliases`; feed gear into both 2C sites; ascending-`fidelity_rank` walk + skill composition (§6); retire `craft_discipline_aliases`.
 5. **Away overlay** — generalize `_build_event_window_overlay` + away re-resolve (§7).
