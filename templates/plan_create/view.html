@@ -43,6 +43,22 @@
   {# #826 — always-visible "science behind your plan" panel. #}
   {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
 
+  {# Item B (§5.4 Slice 2) — surfaced informational coaching_flags as plan-page
+     notes. On the review screen these FYI items appear only when something else
+     parks the plan; a green plan never showed them. List them here so the athlete
+     sees the cross-node context (e.g. a discipline gear-gated at every locale)
+     even on a clean plan. Display-only — none of these gated this plan. #}
+  {% if coaching_notes %}
+  <div class="card card-pad sec">
+    <p class="eyebrow accent">● Coaching notes</p>
+    <p class="rail-note">Context we flagged while building this plan — none of it blocked it.
+      Worth knowing as you train so you can see where the edges are.</p>
+    {% for note in coaching_notes %}
+    <p class="sess-notes">{{ note.message }}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   <div class="card card-pad sec nutri-card">
     <div class="nutri-head">
       <p class="eyebrow accent">● Nutrition</p>
