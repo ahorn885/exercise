@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-22
 **Issue:** #884 (go-live blocker — user-facing). Closes the live part of #298 (starved gear-toggle subsystem).
-**Status:** DESIGN — model ratified by Andy across the 2026-06-22 review; remaining sign-offs are the **Trigger #2** catalog wording (skimo toggle text + the deletions) and **Trigger #3** schema/invalidation, called out in §16. No code until those clear.
+**Status:** RATIFIED (Andy, 2026-06-22 → 2026-06-23) — all Trigger #2/#3 sign-offs cleared (§16). Build-ready; six slices in §15, slice 1 (L0 catalog + aliases) first.
 **Supersedes:** `Unified_Gear_Model_BringingItWithMe_884_Design_v1` (archived). v1's premise (gear toggles expand an *equipment pool*) was wrong — the live data shows all 12 toggles carry `paired_equipment_categories = {}`; gear unlocks *disciplines*, not equipment. v2 is built on that correction.
 
 ## Ratified decisions (Andy, 2026-06-22)
@@ -160,10 +160,10 @@ Two indexed `athlete_gear` reads per cone (replacing the CSV parse). Away path a
 5. **Away overlay** — generalize `_build_event_window_overlay` + away re-resolve (§7).
 6. **Capture UX** — the "Your gear" surface + onboarding parity (§10).
 
-## 16. Open items — final sign-off before build
-- **Trigger #2 (vocab):** ratify the §4 table — exact **skimo/AT setup** toggle name + gear description, and confirm the deletions (bouldering, fencing, shooting, whitewater) extend to *all* app mentions (disciplines already gone; toggles + any template/test strings remain).
-- **Trigger #3 (cross-layer):** the §5/§9 schema + invalidation (re-homing crafts off the Layer-1 baseline; `gear_discipline_aliases` rename/extend; `brought_gear` hash).
-- **Proxy map (examined 2026-06-22 — already exists, mature):** `session_feasibility._DISCIPLINE_INDOOR_MACHINES` already maps every discipline to its indoor machine(s) — running/trekking/mtn-running→Treadmill(+Stair climber); snowshoe/mountaineering→Stair climber+Treadmill; ski D-021/022/028→Ski erg(+Stair climber); cycling→Cycling trainer/Assault bike; paddling→Paddle/Rowing erg; climbing→none (strength sub, by design). "Stairmaster" = `Stair climber`, already mapped. The **only unused** `Machines - Cardio` item is **`Elliptical`** — proposed addition (Trigger #2): a low-impact stride proxy for D-001/D-002 (after Treadmill), D-003/D-017/D-024 (after Stair climber), and optionally D-028 (after Ski erg). **No new machines** — `Stair climber` covers the vert stimulus (no-padding). *Andy to ratify the elliptical placement.*
+## 16. Sign-offs — ALL RESOLVED (Andy, 2026-06-22 → 2026-06-23); design is build-ready
+- **Trigger #2 (vocab) — ✅ ratified:** §4 table approved. Skimo toggle = **"Skimo / AT setup"** (alpine-touring skis, climbing skins, AT bindings, AT boots) → D-021/D-022. Deletions (bouldering, fencing, shooting, whitewater) confirmed to extend to **all** app mentions (disciplines already removed May 2026; toggles + any remaining template/test strings to purge).
+- **Trigger #3 (cross-layer) — ✅ approved:** the §5/§9 schema + invalidation (re-home crafts off the Layer-1 baseline; `craft_discipline_aliases` → `gear_discipline_aliases (+fidelity_rank)`; `brought_gear` hash; drop `paired_equipment_categories`).
+- **Proxy map — ✅ examined + ratified:** `session_feasibility._DISCIPLINE_INDOOR_MACHINES` already covers every discipline incl. the gear ones (running/trekking/mtn-running→Treadmill+Stair climber; snowshoe/mountaineering→Stair climber+Treadmill; ski→Ski erg+Stair climber; cycling→trainer/Assault; paddling→Paddle/Rowing erg; climbing→none by design). "Stairmaster" = `Stair climber` (already mapped). **Elliptical** (the only unused cardio machine) added as a stride proxy: D-001/002 (after Treadmill), D-003/017/024 (after Stair climber), D-028 (after Ski erg). No new machines (no-padding).
 
 ## 17. Test scenarios
 - Athlete owns road bike only → D-006 EXACT, D-008 (no MTB) → strength (or trainer INDOOR if present).
