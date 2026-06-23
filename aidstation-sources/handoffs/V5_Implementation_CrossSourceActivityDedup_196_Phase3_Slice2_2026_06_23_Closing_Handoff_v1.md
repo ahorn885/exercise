@@ -1,6 +1,6 @@
 # V5 Implementation — Cross-Source Activity Dedup + Merge (#196 Phase 3) — Slice 2 — Closing Handoff (2026-06-23)
 
-**Branch:** `claude/stoic-albattani-n771ef` · **Suite:** 3491 passed / 30 skipped · **PR:** pending Andy's go (PR-gated operating flow).
+**Branch:** `claude/stoic-albattani-n771ef` · **Suite:** 3491 passed / 30 skipped · **PR:** [#910](https://github.com/ahorn885/exercise/pull/910) — **MERGED 2026-06-23** (squash `0054ea9`).
 **Predecessors:** the kickoff `handoffs/V5_CrossSourceActivityDedup_196_Phase3_Kickoff_2026_06_22_v1.md` (problem, design defaults, slice sequence, Trigger-#3 gate) and **Slice 1** `handoffs/V5_Implementation_CrossSourceActivityDedup_196_Phase3_Slice1_2026_06_22_Closing_Handoff_v1.md` (the schema substrate + `started_at` ingest). This handoff is **Slice 2** of that plan — the clusterer.
 
 ---
