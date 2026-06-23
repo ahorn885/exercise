@@ -3,6 +3,8 @@
 **Branch:** `claude/cross-source-activity-dedup-7q7a3u` · **Suite:** 3543 passed / 30 skipped · **PR:** not yet opened — awaiting Andy's go (PR-gated flow).
 **Design:** `designs/CanonicalDailyWellness_196_Phase2_Design_v1.md` (ratified). **Epic:** #196 unified health-data layer. Phase 3 (activity dedup) shipped (Slices 1–4b, PRs #906/#910/#916/#921/#924). This session Andy **redirected off the #884 gear/craft thread** to **#196 Phase 4** (recovery-aware planning); scoping showed the substrate (Phase 2) was owed first, so this is **Phase 2 Slice 2.1** — the canonical daily-wellness substrate + writer.
 
+> **▶ IMMEDIATE NEXT STEP: Slice 2.2 — hook `materialize_canonical_wellness` into the ~6 wellness ingest paths + one-time backfill (full detail in §6).** Slice 2.1 is substrate only; nothing writes the table until 2.2 lands. Then Slice 2.3 (repoint the 3A reader), then Phase 4 proper.
+
 ---
 
 ## 1. The problem (one line)
