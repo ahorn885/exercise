@@ -167,11 +167,20 @@ _STALL_WALLCLOCK_S = 900
 # the next cron reclaims (`_ADVANCE_LOCK_TTL_S` is derived below, off the budget).
 
 # D-77 per-invocation budget. Sized off the Vercel function Max Duration
-# (PLAN_GEN_FUNCTION_CAP_S, a dashboard setting: 300s default, up to 800s on
-# Pro). Once a pass has spent (cap - reserve) seconds it stops STARTING a new
-# week-block synthesis and returns 'generating', so it never 504s mid-synthesis
-# and burns that block's in-flight Anthropic call. Bump PLAN_GEN_FUNCTION_CAP_S
-# the moment you raise the dashboard Max Duration.
+# (PLAN_GEN_FUNCTION_CAP_S, mirroring the deployed cap: 800s on Pro + Fluid
+# Compute, confirmed 2026-06-23). Once a pass has spent (cap - reserve) seconds it
+# stops STARTING a new week-block synthesis and returns 'generating', so it never
+# 504s mid-synthesis and burns that block's in-flight Anthropic call.
+#
+# The default is 800 to MATCH the deployed function, not the old 300 placeholder:
+# the reserve below (330s) was already sized for an 800s cap, so a 300 default
+# made `cap - reserve` negative and floored the budget to 30s — too short to
+# cache a single ~250s dense week-block, so every resumable pass 504s and the plan
+# stalls at the backstop with zero progress (the pv=80 "3 blocks then stalled at
+# index 3" failure). vercel.json can't pin maxDuration here (its `functions` key
+# is mutually exclusive with the legacy `builds` config this project uses), so the
+# dashboard remains the source of truth and this default tracks it; keep the env
+# override in sync if the dashboard cap ever changes.
 #
 # RESERVE must exceed the worst-case single-block wall time + cleanup, because a
 # block STARTED just before the deadline runs to completion AFTER it. Prod pv=39
@@ -180,9 +189,34 @@ _STALL_WALLCLOCK_S = 900
 # block started near the deadline ran into the 800s wall and 504'd, losing its
 # work. Raised to 330s (≈250s worst block + ~80s for persist/seam/overhead) so a
 # started block always finishes and caches before the cap. Env-overridable.
-_FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "300"))
+_FUNCTION_CAP_S = float(os.environ.get("PLAN_GEN_FUNCTION_CAP_S", "800"))
 _INVOCATION_RESERVE_S = float(os.environ.get("PLAN_GEN_INVOCATION_RESERVE_S", "330"))
 _INVOCATION_BUDGET_S = max(_FUNCTION_CAP_S - _INVOCATION_RESERVE_S, 30.0)
+
+# D-77 misconfiguration guard (#213). The reserve (330s ≈ worst ~250s block +
+# persist) is sized for the 800s cap; if the deployed cap is overridden lower
+# (PLAN_GEN_FUNCTION_CAP_S set below the reserve), `cap - reserve` goes negative
+# and the budget SILENTLY floors to 30s. 30s can't cache a single dense week-block
+# (a Build/Peak week runs ~250s), so every resumable pass 504s mid-synthesis,
+# caches nothing, and the plan stalls at the wall-clock backstop with ZERO
+# progress — exactly the pv=80 "3 blocks then stalled at index 3" failure. This is
+# purely a config error (reserve must sit below the real Vercel Max Duration), so
+# surface it LOUDLY at import instead of letting it present as a mysterious
+# generation hang. Log-only: the budget value is unchanged (raising it blindly
+# would 504 a block started near a too-low real cap — the cap itself must match).
+if _FUNCTION_CAP_S - _INVOCATION_RESERVE_S < 30.0:
+    import logging as _logging
+
+    _logging.getLogger(__name__).error(
+        "PLAN_GEN per-pass budget floored to %.0fs: reserve (%.0fs) >= function "
+        "cap (%.0fs). Dense week-blocks (~250s) cannot cache within the budget — "
+        "plan generation will STALL at the backstop with no progress. Set "
+        "PLAN_GEN_FUNCTION_CAP_S to the deployed Vercel maxDuration (with "
+        "PLAN_GEN_INVOCATION_RESERVE_S kept below it).",
+        _INVOCATION_BUDGET_S,
+        _INVOCATION_RESERVE_S,
+        _FUNCTION_CAP_S,
+    )
 
 # D-77 advance-claim TTL (see the concurrency-guard note above). Must EXCEED the
 # longest a LIVE pass can hold the claim -- the per-invocation budget plus the
