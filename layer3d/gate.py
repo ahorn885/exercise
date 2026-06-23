@@ -18,8 +18,16 @@ exclusions empty the strength pool below the 3-exercise floor, or ban an
 included discipline with no usable substitute) and §5.3
 `detect_schedule_volume_under_target` (warning — available weekly hours fall
 below a phase's whole-sport target band). They append `GateItem`s at the marked
-call site with no `Layer3DGate` / `GateItem` contract change. The 3C source is
-still deferred (§13); it drops in at the same aggregation point.
+call site with no `Layer3DGate` / `GateItem` contract change.
+
+**3C — cross-locale / cross-source conflict detectors (§5.4, `map_3c_items`).**
+Two net-new findings over the 2A/2C/2D payloads already in hand — conflicts that
+live only in the intersection of several nodes' outputs, so no single upstream
+node can emit them: CN-1 (an included discipline gated off at *every* locale) and
+CN-2 (an injury substitute gated off at *every* locale). Warnings, acknowledge-
+able, revise → the locations list. Surfacing the upstream advisory `coaching_flags`
+themselves (the orphaned 2A/2B/2C/2D/2E flags) is the next slice; it threads 2B in
+and adds the informational tier (§5.4).
 
 The node is a **pure function of its inputs** (no clock, no RNG, no DB access)
 per the Control_Spec §5/§6 query-node contract. `evaluated_at` is stamped by the
@@ -284,6 +292,154 @@ def map_3b_items(payload: Layer3BPayload) -> list[GateItem]:
                 evidence={"revise_option": hi.revise_option},
             )
         )
+    return items
+
+
+# ─── 3C: cross-locale / cross-source conflict detectors (§5.4) ───────────────
+
+
+def map_3c_items(
+    layer2a_payload: Layer2APayload,
+    layer2c_payloads: dict[str, Layer2CPayload],
+    layer2d_payload: Layer2DPayload,
+) -> list[GateItem]:
+    """3C — conflicts no single upstream node can see, because they only exist in
+    the *intersection* of several already-built payloads (§5.4). Two net-new
+    detectors over 2A × 2C(all locales) × 2D:
+
+    * **CN-1 — included discipline gated off at every location.** An included
+      (race-relevant) discipline that *every* locale's 2C surface gates via
+      `toggle_off_for_discipline` (gear toggle off) or `requires_skill_capability`
+      (athlete-skill capability off). Each per-locale 2C payload only knows its own
+      locale — none can tell "off here" from "off everywhere" — so the cross-locale
+      AND is genuinely new signal. Warning + acknowledge-able: the athlete can
+      enable the toggle at a location, add a location where the discipline is
+      trainable, or accept training it off-plan. Revise → the locations list.
+    * **CN-2 — injury substitute gated off at every location.** A high/elevated-risk
+      discipline whose 2D `suggested_substitutes` are *all* (counting only the
+      usable, not-`still_at_risk` ones) gated off across every locale: 2D, looking
+      only at injury risk, recommends a fallback that 2C, looking only at locale
+      gear/skill, has made un-trainable. Suppressed when 2D already surfaced a
+      `no_substitute_for_high_risk` / `gap_x_high_risk_concurrent` hitl_item for the
+      discipline (that item already carries the gap; §9 de-dup can't merge it across
+      sources). Mutually exclusive with the §5.2 `cardio_modality_banned` blocker,
+      which fires only when *no* usable substitute exists. Warning + acknowledge-able;
+      revise → the locations list (enable the substitute's gear) or relax the injury.
+
+    Both are deliberately conservative: they fire only on an *every-locale*
+    intersection, so a discipline trainable at even one location never trips. They
+    under-fire rather than false-fire — the safe bias for a gate the athlete sees.
+    3C adds no signature/contract change: it reads payloads already in
+    `evaluate_layer3d_gate`'s hand and appends to the same item list (§5 step 3)."""
+    items: list[GateItem] = []
+    if not layer2c_payloads:
+        return items  # no locales → "gated everywhere" is vacuous
+
+    # Disciplines each locale gates off (gear toggle OFF or skill capability OFF).
+    gated_per_locale: list[set[str]] = [
+        {
+            f.discipline_id
+            for f in p.coaching_flags
+            if f.flag_type in ("toggle_off_for_discipline", "requires_skill_capability")
+            and f.discipline_id is not None
+        }
+        for p in layer2c_payloads.values()
+    ]
+    # Gated *everywhere* = present in every locale's gated set (the intersection).
+    gated_everywhere = set.intersection(*gated_per_locale)
+    if not gated_everywhere:
+        return items
+    n_locales = len(layer2c_payloads)
+
+    # CN-1 — included discipline gated off at every location.
+    for d in layer2a_payload.disciplines:
+        if d.inclusion != "included" or d.discipline_id not in gated_everywhere:
+            continue
+        logger.info(
+            "layer3d.map_3c_items: CN-1 — included discipline %s gated off at all "
+            "%d locale(s)",
+            d.discipline_id,
+            n_locales,
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3C", "discipline_gated_all_locales", d.discipline_id
+                ),
+                source="3C",
+                source_item_id="discipline_gated_all_locales",
+                severity="warning",
+                title=f"{d.discipline_name} isn't trainable at any of your locations",
+                message=(
+                    f"{d.discipline_name} is part of your race, but it's switched off at "
+                    f"every one of your {n_locales} location(s) — the gear isn't enabled "
+                    "or it needs a skill you haven't turned on. Enable it at a location, "
+                    "add a location where you can train it, or acknowledge that you'll "
+                    "train it on your own."
+                ),
+                resolution_options=[],
+                revise_target="profile.locales",
+                can_acknowledge=True,
+                evidence={
+                    "discipline_id": d.discipline_id,
+                    "locale_count": n_locales,
+                    "role": d.role,
+                },
+            )
+        )
+
+    # CN-2 — injury substitute gated off at every location.
+    covered_by_2d = {
+        hi.discipline_id
+        for hi in layer2d_payload.hitl_items
+        if hi.hitl_type in ("no_substitute_for_high_risk", "gap_x_high_risk_concurrent")
+        and hi.discipline_id is not None
+    }
+    for risk in layer2d_payload.discipline_risk_profiles:
+        if risk.risk_level not in ("high", "elevated") or risk.discipline_id in covered_by_2d:
+            continue
+        usable = [s for s in risk.suggested_substitutes if not s.still_at_risk]
+        # No usable substitute is 2D's own no-substitute case (→ §5.2 blocker), not
+        # CN-2; CN-2 is "a usable substitute was recommended but it's un-trainable".
+        if not usable or not all(
+            s.substitute_discipline_id in gated_everywhere for s in usable
+        ):
+            continue
+        gated_names = sorted({s.substitute_name for s in usable})
+        logger.info(
+            "layer3d.map_3c_items: CN-2 — %s substitute(s) %s gated off at all "
+            "%d locale(s)",
+            risk.discipline_id,
+            gated_names,
+            n_locales,
+        )
+        items.append(
+            GateItem(
+                item_key=make_item_key(
+                    "3C", "substitute_gated_all_locales", risk.discipline_id
+                ),
+                source="3C",
+                source_item_id="substitute_gated_all_locales",
+                severity="warning",
+                title=f"The fallback for {risk.discipline_name} isn't trainable anywhere",
+                message=(
+                    f"To work around your injury we'd swap {risk.discipline_name} for "
+                    f"{', '.join(gated_names)}, but that's switched off at every one of "
+                    f"your {n_locales} location(s). Enable it at a location, or relax the "
+                    f"injury limit on {risk.discipline_name}."
+                ),
+                resolution_options=[],
+                revise_target="profile.locales",
+                can_acknowledge=True,
+                evidence={
+                    "discipline_id": risk.discipline_id,
+                    "risk_level": risk.risk_level,
+                    "gated_substitutes": [s.substitute_discipline_id for s in usable],
+                    "locale_count": n_locales,
+                },
+            )
+        )
+
     return items
 
 
@@ -657,7 +813,9 @@ def evaluate_layer3d_gate(
     items += map_2d_items(layer2d_payload)
     items += map_2e_items(layer2e_payload)
     items += map_3b_items(layer3b_payload)
-    # 3C deferred (§13). When built: items += map_3c_items(layer3c_payload)
+    # 3C: cross-locale / cross-source conflicts over payloads already in hand
+    # (§5.4). No signature change — reads 2A × 2C(all locales) × 2D.
+    items += map_3c_items(layer2a_payload, layer2c_payloads, layer2d_payload)
 
     # 4. Feasibility detectors (§5.2/§5.3) — need 3B's periodization shape ×
     #    2A bands × 2C pool × 2D exclusions × §K availability. They run only when

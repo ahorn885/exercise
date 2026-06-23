@@ -1517,6 +1517,10 @@ _PROFILE_REVISE_SURFACES = {
     "profile.disciplines": ("profile.edit", {}),
     "profile.nutrition": ("profile.edit", {"tab": "health"}),
     "profile.availability": ("profile.schedule", {}),
+    # 3C (§5.4) CN-1/CN-2 fixes live across the locale equipment editors; the
+    # finding spans every locale, so we link to the locations list (the entry to
+    # each per-locale editor) rather than one deep `locales.edit_profile` link.
+    "profile.locales": ("locales.list_profiles", {}),
 }
 
 
@@ -1540,6 +1544,7 @@ def _build_revise_urls(db, uid: int, gate) -> dict[str, str]:
       * `profile.disciplines`          -> the Athlete tab
       * `profile.nutrition`            -> the Fuel & health tab
       * `profile.availability`         -> the standalone Schedule page
+      * `profile.locales`              -> the locations list (3C §5.4 CN-1/CN-2)
       * 3B `h2.*` (target-race inputs) -> the target race editor
 
     A target with no edit surface (e.g. 3B `h3.plan_duration_weeks` on an
