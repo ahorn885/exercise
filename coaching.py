@@ -393,12 +393,15 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     ).fetchall()
     ctx['recent_training'] = [dict(t) for t in training]
 
-    # Recent cardio — 90 days, including Garmin performance fields
+    # Recent cardio — 90 days, including Garmin performance fields. Reads
+    # canonical_cardio_feed (#196 Slice 4) so a ride synced from N providers
+    # appears once in the coaching context (best-of metrics + the primary copy's
+    # notes), not N near-duplicate rows; unclustered rows still surface raw.
     cardio = db.execute(
         '''SELECT date, activity, activity_name, duration_min, distance_mi,
                   avg_hr, avg_pace, avg_power, norm_power,
                   aerobic_te, anaerobic_te, max_hr, elev_gain_ft, notes
-           FROM cardio_log
+           FROM canonical_cardio_feed
            WHERE user_id = ? AND date >= ?
            ORDER BY date DESC
            LIMIT 75''',

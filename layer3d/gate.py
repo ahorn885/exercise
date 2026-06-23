@@ -951,6 +951,53 @@ def _coherent_etl_version_set(
 # ─── Entry point (§3 / §5) ───────────────────────────────────────────────────
 
 
+def _log_gate_provenance(
+    *,
+    user_id: int,
+    plan_version_id: int,
+    items: list[GateItem],
+    gate_status: GateStatus,
+) -> None:
+    """#213 provenance — emit one structured line per gate item recording WHY it
+    fired (source layer + source_item_id + severity + the `evidence` trigger
+    inputs) plus a roll-up of counts by source/severity/status. Without this the
+    persisted gate only carried a total count, so a flood of N items (or a
+    green→park flip across resumable passes) was undiagnosable from the runtime
+    log — you couldn't tell which layer emitted what, or why. Logged at INFO at
+    every evaluation, so the token-gated `/admin/logs` reader can attribute each
+    item even when synthesis later stalls (the gate runs first, pre-synthesis)."""
+    from collections import Counter
+
+    by_source = dict(Counter(it.source for it in items))
+    by_severity = dict(Counter(it.severity for it in items))
+    by_status = dict(Counter(it.status for it in items))
+    logger.info(
+        "layer3d.gate provenance: user=%s plan_version_id=%s status=%s total=%d "
+        "by_source=%s by_severity=%s by_status=%s",
+        user_id,
+        plan_version_id,
+        gate_status,
+        len(items),
+        by_source,
+        by_severity,
+        by_status,
+    )
+    for it in items:
+        logger.info(
+            "layer3d.gate item: plan_version_id=%s source=%s source_item_id=%s "
+            "item_key=%s severity=%s status=%s can_ack=%s title=%r evidence=%s",
+            plan_version_id,
+            it.source,
+            it.source_item_id,
+            it.item_key,
+            it.severity,
+            it.status,
+            it.can_acknowledge,
+            it.title,
+            it.evidence,
+        )
+
+
 def evaluate_layer3d_gate(
     *,
     user_id: int,
@@ -1096,6 +1143,14 @@ def evaluate_layer3d_gate(
 
     # 6. Gate status (§5 step 6).
     gate_status = compute_gate_status(items)
+
+    # 7. Provenance (#213) — attribute every item + the verdict to the runtime log.
+    _log_gate_provenance(
+        user_id=user_id,
+        plan_version_id=plan_version_id,
+        items=items,
+        gate_status=gate_status,
+    )
 
     return Layer3DGate(
         user_id=user_id,

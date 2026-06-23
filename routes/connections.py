@@ -41,10 +41,16 @@ STUB_PROVIDERS = (
 
 VALID_TABS = ('sources', 'files')
 
+# Reads canonical_cardio_feed (#196 Slice 4b), not raw cardio_log: a ride synced
+# from N providers collapses to one best-of row in the Files list instead of N
+# near-duplicates; unclustered/legacy rows still surface via the feed's
+# NULL-cluster_id branch. (The literal cardio-LOG/edit pages stay on raw
+# cardio_log — decision 2 — so a stray copy stays visible and deletable.)
 _ACTIVITY_SQL = (
     'SELECT id, date, activity, activity_name, duration_min, distance_mi, '
     'avg_hr, max_hr, calories, garmin_activity_id, created_at '
-    'FROM cardio_log WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 25'
+    'FROM canonical_cardio_feed WHERE user_id = ? '
+    'ORDER BY date DESC, id DESC LIMIT 25'
 )
 
 # Strength sessions don't live in cardio_log — they're one training_sessions
@@ -106,7 +112,9 @@ def _hub_context(db, uid, tab, **extra):
             key=lambda r: (r['date'], r['created_at']), reverse=True,
         )[:25]
         cardio_n = db.execute(
-            'SELECT COUNT(*) AS n FROM cardio_log WHERE user_id = ?', (uid,)
+            # canonical_cardio_feed (#196 Slice 4b): count each ride once.
+            'SELECT COUNT(*) AS n FROM canonical_cardio_feed WHERE user_id = ?',
+            (uid,)
         ).fetchone()
         strength_n = db.execute(
             'SELECT COUNT(*) AS n FROM training_sessions ts '

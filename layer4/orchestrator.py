@@ -1772,7 +1772,11 @@ def orchestrate_plan_create(
     # keep the layer4 package import graph acyclic (plan_sessions_repo imports
     # layer4.payload). See Layer3D_Spec §5/§11.
     from layer3d.gate import Layer3DGateBlocked, evaluate_layer3d_gate
-    from plan_sessions_repo import load_prior_resolutions, save_hitl_gate
+    from plan_sessions_repo import (
+        load_prior_resolutions,
+        load_progress_blocks,
+        save_hitl_gate,
+    )
 
     gate = evaluate_layer3d_gate(
         user_id=user_id,
@@ -1789,7 +1793,20 @@ def orchestrate_plan_create(
         race_event_payload=race_event,
         prior_resolutions=load_prior_resolutions(db, user_id, plan_version_id),
     )
-    if gate.gate_status != "green":
+    # #213 gate-verdict stability. The gate is a *pre-synthesis* stop (§11): it
+    # gates the FIRST entry into the dollar-cost, minutes-long synthesis below.
+    # But this orchestrator runs once per resumable advance pass, re-evaluating
+    # the gate every pass — so once synthesis has cached ≥1 durable progress block
+    # for this plan version, the gate was already green when that work started.
+    # A later pass that re-derives the gate as non-green (a transient upstream
+    # re-derivation, or an item whose deterministic re-aggregation flips status)
+    # must NOT silently re-park `needs_review` and strand the blocks already paid
+    # for — that is exactly the "3 blocks cached, then parked at 52 items" loop we
+    # saw. Past the first green, the plan is committed and finishes. A brand-new
+    # plan has zero cached blocks, so it still parks normally on pass 1.
+    synthesis_started = bool(load_progress_blocks(db, plan_version_id))
+    park_for_review = gate.gate_status != "green" and not synthesis_started
+    if park_for_review:
         # Parking for review — stamp the Reading-B input fingerprint so the review
         # routes can detect an athlete edit (or new training data) since now and
         # re-evaluate this verdict against current reality. Only non-green gates
@@ -1808,8 +1825,18 @@ def orchestrate_plan_create(
                 )
             }
         )
+    elif gate.gate_status != "green" and synthesis_started:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "layer3d: gate re-evaluated %s on plan_version_id=%s but synthesis "
+            "already cached progress block(s) — continuing, not re-parking "
+            "(gate-verdict stability, #213)",
+            gate.gate_status,
+            plan_version_id,
+        )
     save_hitl_gate(db, user_id, plan_version_id, gate)
-    if gate.gate_status != "green":
+    if park_for_review:
         raise Layer3DGateBlocked(gate)
     payload = llm_layer4_plan_create_cached(
         user_id=user_id,
