@@ -74,6 +74,29 @@ _GEAR_IDS: tuple[str, ...] = tuple(GEAR_REGISTRY)
 # §5.1 / §8 — `access` closed set.
 _ACCESS_VALUES: tuple[str, ...] = ("own", "access")
 
+# Discipline-unlocking GEAR-TOGGLE kinds — the slice-4b capture surface owns this
+# slice of the store. Crafts (bike/paddle) have their own owned-craft picker; swim
+# gear is drill-gating (slice 6) — neither is captured here. These four kinds are
+# the owned-gear toggles that alias to a discipline in `gear_discipline_aliases`
+# (ski/snow/climbing/alpine), so capturing them un-starves the cascade's gear gate
+# (#298). The capture writes `athlete_gear`; nothing READS the toggle kinds until
+# the slice-4b cascade extension lands (staged, like the slice-3 store itself).
+_GEAR_TOGGLE_KINDS: frozenset[str] = frozenset({"ski", "snow", "climbing", "alpine"})
+
+# Presentation labels for the gear-toggle picker — the analogue of `athlete.
+# CRAFT_LABELS` for the bike/paddle picker. Slugs are the stored + aliased
+# `gear_id` keys (GEAR_REGISTRY); labels are presentation-only. Covers exactly the
+# `_GEAR_TOGGLE_KINDS` slugs (guarded in lockstep by the repo test).
+GEAR_TOGGLE_LABELS: dict[str, str] = {
+    "classic_xc_ski": "Classic XC skis",
+    "skate_xc_ski": "Skate XC skis",
+    "rollerskis": "Rollerskis",
+    "snowshoes": "Snowshoes",
+    "climbing_gear": "Climbing gear (rope, harness, protection)",
+    "mountaineering": "Mountaineering kit (ice axe, crampons)",
+    "skimo_at": "Skimo / AT setup",
+}
+
 
 class GearSelectionError(ValueError):
     """A submitted gear_id / access / gear↔locale value failed an app-layer
@@ -158,6 +181,51 @@ def replace_owned_gear_for_kinds(
             "VALUES (?, ?, ?, ?)",
             (user_id, gid, GEAR_REGISTRY[gid], validated[gid]),
         )
+
+
+# ─── gear-toggle capture surface (slice 4b) ──────────────────────────────────
+# The profile gear-tab picker for the discipline-unlocking owned-gear toggles
+# (ski/snow/climbing/alpine). Mirrors the owned-craft picker
+# (`athlete_crafts_repo.load_craft_catalog` + `parse`-style helpers): catalog →
+# checkboxes, parse → `{gear_id: 'own'}`, write via `replace_owned_gear_for_kinds`
+# scoped to `_GEAR_TOGGLE_KINDS`. Replace-all within those kinds — an unchecked
+# box means "not owned", same as the craft picker (no explicit-False rows).
+
+def load_gear_toggle_catalog() -> list[dict]:
+    """The gear-toggle picker catalog — `[{'slug', 'label'}, …]` in `_GEAR_IDS`
+    order, filtered to the discipline-unlocking `_GEAR_TOGGLE_KINDS`. Static (the
+    closed §5.5 keyspace + `GEAR_TOGGLE_LABELS`), mirroring `load_craft_catalog`."""
+    return [
+        {"slug": gid, "label": GEAR_TOGGLE_LABELS[gid]}
+        for gid in _GEAR_IDS
+        if GEAR_REGISTRY[gid] in _GEAR_TOGGLE_KINDS
+    ]
+
+
+def get_owned_gear_toggles(db, user_id: int) -> list[str]:
+    """The athlete's currently-owned gear-toggle slugs (the `_GEAR_TOGGLE_KINDS`
+    slice of `athlete_gear`), in `_GEAR_IDS` order — the checked-state source for
+    the picker. Empty list when none."""
+    return [
+        g["gear_id"]
+        for g in get_athlete_gear(db, user_id)
+        if g["group_kind"] in _GEAR_TOGGLE_KINDS
+    ]
+
+
+def parse_gear_toggle_form(form) -> dict[str, str]:
+    """Coerce a POST form into `{gear_id: 'own'}` for the checked gear toggles.
+
+    Checkboxes use `gear__<gear_id>`; presence means owned, absence means not
+    owned (replace-all within `_GEAR_TOGGLE_KINDS`, so unchecked rows are simply
+    omitted — no explicit-False persistence, unlike the skill toggles). Only
+    catalog slugs are considered, so a malformed POST can't inject an unknown or
+    off-surface gear_id."""
+    return {
+        item["slug"]: "own"
+        for item in load_gear_toggle_catalog()
+        if form.get(f"gear__{item['slug']}")
+    }
 
 
 def evict_layer1_on_gear_change(db, user_id: int) -> None:

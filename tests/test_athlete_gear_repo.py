@@ -11,10 +11,15 @@ import pytest
 import athlete_gear_repo as agr
 from athlete_gear_repo import (
     GEAR_REGISTRY,
+    GEAR_TOGGLE_LABELS,
     GearSelectionError,
+    _GEAR_TOGGLE_KINDS,
     delete_gear_locale,
     get_athlete_gear,
+    get_owned_gear_toggles,
     load_gear_locales,
+    load_gear_toggle_catalog,
+    parse_gear_toggle_form,
     replace_athlete_gear,
     replace_gear_locale,
     replace_owned_gear_for_kinds,
@@ -186,6 +191,66 @@ class TestReplaceForKinds:
         with pytest.raises(GearSelectionError):
             replace_owned_gear_for_kinds(conn, 1, {"jetski": "own"}, {"bike"})
         assert conn.calls == []
+
+
+# ─── gear-toggle capture surface (slice 4b) ──────────────────────────────────
+
+class TestGearToggleCapture:
+    def test_labels_cover_exactly_the_toggle_kinds(self):
+        # Lockstep guard: GEAR_TOGGLE_LABELS keys == the discipline-unlocking
+        # toggle slugs (group_kind ∈ _GEAR_TOGGLE_KINDS). No craft, no swim gear.
+        toggle_slugs = {g for g, k in GEAR_REGISTRY.items() if k in _GEAR_TOGGLE_KINDS}
+        assert set(GEAR_TOGGLE_LABELS) == toggle_slugs
+        assert _GEAR_TOGGLE_KINDS == {"ski", "snow", "climbing", "alpine"}
+
+    def test_catalog_is_toggle_slugs_in_keyspace_order(self):
+        catalog = load_gear_toggle_catalog()
+        slugs = [item["slug"] for item in catalog]
+        # GEAR_REGISTRY (== _GEAR_IDS) order; crafts + swim excluded.
+        assert slugs == [
+            "classic_xc_ski", "skate_xc_ski", "rollerskis", "snowshoes",
+            "climbing_gear", "mountaineering", "skimo_at",
+        ]
+        assert all(GEAR_REGISTRY[s] in _GEAR_TOGGLE_KINDS for s in slugs)
+        assert catalog[0]["label"] == GEAR_TOGGLE_LABELS["classic_xc_ski"]
+
+    def test_parse_checked_become_own_unchecked_omitted(self):
+        form = {
+            "gear__rollerskis": "1",
+            "gear__climbing_gear": "1",
+            # snowshoes unchecked → omitted; a non-gear field is ignored
+            "bike_types": "road_bike",
+        }
+        assert parse_gear_toggle_form(form) == {
+            "rollerskis": "own",
+            "climbing_gear": "own",
+        }
+
+    def test_parse_ignores_unknown_and_off_surface_keys(self):
+        # Only catalog slugs are considered — a bike (off-surface) or bogus slug
+        # in a malformed POST can't be injected.
+        form = {"gear__road_bike": "1", "gear__jetski": "1", "gear__pull_buoy": "1"}
+        assert parse_gear_toggle_form(form) == {}
+
+    def test_parse_empty_form_clears(self):
+        assert parse_gear_toggle_form({}) == {}
+
+    def test_owned_toggles_filtered_to_toggle_kinds_in_order(self):
+        conn = _FakeConn()
+        # athlete_gear holds crafts + toggles + swim; only toggles surface here.
+        conn.queue_response(rows=[
+            {"gear_id": "road_bike", "group_kind": "bike", "access": "own"},
+            {"gear_id": "rollerskis", "group_kind": "ski", "access": "own"},
+            {"gear_id": "climbing_gear", "group_kind": "climbing", "access": "own"},
+            {"gear_id": "pull_buoy", "group_kind": "swim", "access": "own"},
+        ])
+        # _GEAR_IDS order: rollerskis precedes climbing_gear.
+        assert get_owned_gear_toggles(conn, 1) == ["rollerskis", "climbing_gear"]
+
+    def test_owned_toggles_empty_when_none(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[])
+        assert get_owned_gear_toggles(conn, 1) == []
 
 
 # ─── load_gear_locales ───────────────────────────────────────────────────────

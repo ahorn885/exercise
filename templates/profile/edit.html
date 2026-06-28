@@ -329,6 +329,36 @@
   </div>
 </form>
 
+{# ── Owned gear toggles (#884 slice 4b) — discipline-unlocking ski/snow/climbing
+   /alpine gear the athlete owns. Writes athlete_gear (un-starves the cascade's
+   gear gate, #298). Separate replace-all form, scoped to those kinds; crafts +
+   swim gear in the shared store are preserved. #}
+<form method="post" action="{{ url_for('profile.save_gear_toggles') }}" class="pf-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad stack">
+    <div>
+      <p class="eyebrow">● Sport-specific gear you own</p>
+      <p class="pf-hint">Check the ski, snow, and climbing gear you have access to. The coach trains
+        each discipline on the closest gear you own — so a ski leg can be trained on rollerskis when
+        there's no snow. Leave blank where it doesn't apply.</p>
+    </div>
+    <fieldset class="field field-wide">
+      {% for g in gear_toggle_catalog %}
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="gear_{{ g.slug }}"
+               name="gear__{{ g.slug }}" value="1"
+               {% if g.slug in owned_gear_toggles %}checked{% endif %}>
+        <label class="form-check-label" for="gear_{{ g.slug }}">{{ g.label }}</label>
+      </div>
+      {% endfor %}
+    </fieldset>
+  </div>
+  <div class="pf-save">
+    <span></span>
+    <button type="submit" class="btn btn-primary">Save gear</button>
+  </div>
+</form>
+
 {# Race-day skills — shared _skills_form partial (also used by onboarding). #}
 <form method="post" action="{{ url_for('profile.save_skills') }}" class="pf-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
