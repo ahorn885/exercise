@@ -51,6 +51,7 @@ from layer4.context import (
     Layer3APayload,
 )
 from layer4.errors import Layer4InputError, Layer4OutputError
+from layer4.recovery_guidance import format_recovery_guidance
 from layer4.per_phase import (
     CARDIO_PROGRAMMING_PROMPT_SECTION,
     VARIETY_CARVEOUT_PROMPT_SECTION,
@@ -723,6 +724,12 @@ def _render_user_prompt(
         )
     parts.append(f"- Data density: {layer3a_payload.data_density.recent_workouts_count} recent workouts, "
                  f"{layer3a_payload.data_density.integration_data_days} days of integration data")
+    parts.append("")
+
+    # === Recovery state (3A wellness) — #196 Phase 4 recovery-aware planning ===
+    # Freshness-gated, LLM-soft strong-lean guidance surfaced from the already-
+    # hashed 3A digest (no new cache-key input). See layer4/recovery_guidance.py.
+    parts.extend(format_recovery_guidance(layer3a_payload))
     parts.append("")
 
     # § Retry context
