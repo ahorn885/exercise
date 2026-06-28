@@ -3,7 +3,7 @@
 **Date:** 2026-06-23
 **Branch:** `claude/vigilant-rubin-xhicao`
 **Issue:** #884 (go-live blocker). Predecessors: slice 1 (`0022`, PR #914/#915 — merged + prod-applied), slice 2 (#919), slice 3a (`0024` `gear_discipline_aliases`, PR #923 — merged + prod-applied).
-**PR:** [#932](https://github.com/ahorn885/exercise/pull/932) (opened 2026-06-28; bundled with the CLAUDE.md fix + slice 3b on the pinned branch; auto-merge SQUASH armed).
+**PR:** [#932](https://github.com/ahorn885/exercise/pull/932) (bundled with the CLAUDE.md fix + slice 3b on the pinned branch; **MERGED 2026-06-28 as `42216e1`** — slice 3's public-schema backfill auto-applied on deploy; slice 3b's `0025` applied to prod via `layer0-apply` run #17).
 
 ## 0. Thread continuity — STAY ON THIS THREAD (READ FIRST)
 
