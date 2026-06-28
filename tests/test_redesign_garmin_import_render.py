@@ -130,6 +130,66 @@ def test_wellness_preview_relabels_recovery(monkeypatch):
     _csp_clean(html)
 
 
+# ── import-wellness/bulk (zip extraction regression) ───────────────────
+
+
+def test_wellness_bulk_extracts_every_fit_in_zip(monkeypatch):
+    """Regression: import_wellness_bulk called `_iter_fit_blobs`, which #767
+    Slice 2 (2026-06-19) renamed to `_iter_activity_blobs` — the wellness call
+    site was missed, so every upload 500'd on a NameError and no wellness data
+    landed. Assert the endpoint extracts each .fit inside a zip and routes it to
+    ingest (would be a 500 before the fix)."""
+    import zipfile
+    monkeypatch.setattr('garmin_fit_parser.fit_file_meta',
+                        lambda raw: ('metrics', 0), raising=False)
+    calls = []
+
+    def _fake_ingest(db, uid, name, raw, kind, results, summary):
+        calls.append((name, kind))
+        results.append({'name': name, 'status': 'imported', 'detail': kind})
+        summary['files'] += 1
+        summary['metrics_days'] += 1
+
+    monkeypatch.setattr(_garmin, '_ingest_wellness_fit', _fake_ingest,
+                        raising=False)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as zf:
+        zf.writestr('2026-02-22_METRICS.fit', b'fake-metrics')
+        zf.writestr('2026-02-22_SLEEP_DATA.fit', b'fake-sleep')
+        zf.writestr('2026-02-22_WELLNESS.fit', b'fake-wellness')
+    buf.seek(0)
+
+    client = _client(monkeypatch)
+    resp = client.post('/garmin/import-wellness/bulk',
+                       data={'files': (buf, 'wellness.zip')},
+                       content_type='multipart/form-data')
+    assert resp.status_code == 200          # 500 (NameError) before the fix
+    body = resp.get_json()
+    assert body['ok'] is True
+    # All three FITs inside the zip were extracted and routed to ingest.
+    assert len(calls) == 3
+    assert body['summary']['files'] == 3
+
+
+def test_wellness_bulk_skips_non_fit_entries(monkeypatch):
+    """The wellness-FIT endpoint skips a stray non-FIT upload (e.g. a .csv)
+    rather than ingesting it — the `ext == 'fit'` gate added with the fix."""
+    monkeypatch.setattr('garmin_fit_parser.fit_file_meta',
+                        lambda raw: ('metrics', 0), raising=False)
+    calls = []
+    monkeypatch.setattr(_garmin, '_ingest_wellness_fit',
+                        lambda *a: calls.append(a), raising=False)
+    client = _client(monkeypatch)
+    resp = client.post('/garmin/import-wellness/bulk',
+                       data={'files': (io.BytesIO(b'a,b\n1,2\n'), 'whoop.csv')},
+                       content_type='multipart/form-data')
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert calls == []                       # csv not ingested by the wellness path
+    assert body['summary']['skipped'] == 1
+
+
 # ── import_preview.html (cardio + strength branches) ───────────────────
 
 

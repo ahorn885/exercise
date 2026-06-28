@@ -218,32 +218,42 @@ class TestRecentWorkouts:
 # ─── q_layer3A_recent_wellness ───────────────────────────────────────────────
 
 
-def _garmin_wellness_row(
+def _canon_well_row(
     *,
     date_str: str,
-    sleep_start_ms: int | None = None,
-    sleep_end_ms: int | None = None,
-    hrv_overnight_avg_ms: float | None = None,
+    total_sleep_hours: float | None = None,
+    total_sleep_hours_source: str | None = None,
+    hrv_rmssd_ms: float | None = None,
+    hrv_rmssd_ms_source: str | None = None,
     resting_hr: int | None = None,
-    updated_at: datetime | None = None,
+    resting_hr_source: str | None = None,
 ) -> dict[str, Any]:
+    """One canonical_daily_wellness row as the reader's SELECT yields it."""
     return {
         "date": date_str,
-        "sleep_start_ms": sleep_start_ms,
-        "sleep_end_ms": sleep_end_ms,
-        "hrv_overnight_avg_ms": hrv_overnight_avg_ms,
+        "total_sleep_hours": total_sleep_hours,
+        "total_sleep_hours_source": total_sleep_hours_source,
+        "hrv_rmssd_ms": hrv_rmssd_ms,
+        "hrv_rmssd_ms_source": hrv_rmssd_ms_source,
         "resting_hr": resting_hr,
-        "updated_at": updated_at,
+        "resting_hr_source": resting_hr_source,
     }
 
 
 class TestRecentWellness:
-    def test_empty_all_sources(self):
+    """Slice 2.3: the reader is now a thin SELECT of the materialized
+    `canonical_daily_wellness` row. The freshest-non-null coalesce it used to run
+    inline now lives in `canonical_wellness.py` (its `TestCoalesce`); the
+    behaviour-preservation of the repoint is locked by
+    `tests/test_wellness_reader_equality.py`."""
+
+    def test_empty(self):
         conn = _FakeConn()
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
         assert out == []
-        # Six SELECTs: garmin, polar sleep, polar hrv, coros, whoop, oura daily.
-        assert len(conn.calls) == 6
+        # A single SELECT against the canonical table — no per-source fan-out.
+        assert len(conn.calls) == 1
+        assert "canonical_daily_wellness" in conn.calls[0][0]
 
     def test_default_window_14d(self):
         conn = _FakeConn()
@@ -251,277 +261,65 @@ class TestRecentWellness:
         # 14d inclusive window on 2026-05-20 → cutoff 2026-05-07.
         assert conn.calls[0][1] == (1, "2026-05-07")
 
-    def test_garmin_all_three_metrics(self):
+    def test_maps_all_fields(self):
+        # Values chosen to be NOT single-precision-exact (7.833, 54.7): the reader
+        # copies them through unchanged — no re-round — so the bundle hash matches
+        # the canonical writer's DOUBLE PRECISION storage.
         conn = _FakeConn()
         conn.queue(
-            _garmin_wellness_row(
+            _canon_well_row(
                 date_str="2026-05-19",
-                sleep_start_ms=0,
-                sleep_end_ms=8 * 3_600_000,
-                hrv_overnight_avg_ms=55.0,
+                total_sleep_hours=7.833,
+                total_sleep_hours_source="polar",
+                hrv_rmssd_ms=54.7,
+                hrv_rmssd_ms_source="whoop",
                 resting_hr=48,
-                updated_at=datetime(2026, 5, 19, 9, 0),
+                resting_hr_source="garmin",
             )
         )
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
         assert len(out) == 1
         r = out[0]
         assert isinstance(r, DailyWellnessRecord)
-        assert r.date == date(2026, 5, 19)
-        assert r.total_sleep_hours == pytest.approx(8.0)
-        assert r.total_sleep_hours_source == "garmin"
-        assert r.hrv_rmssd_ms == 55.0
-        assert r.hrv_rmssd_ms_source == "garmin"
+        assert r.date == date(2026, 5, 19)            # TEXT date → date object
+        assert r.total_sleep_hours == 7.833
+        assert r.total_sleep_hours_source == "polar"
+        assert r.hrv_rmssd_ms == 54.7                  # full double, not re-rounded
+        assert r.hrv_rmssd_ms_source == "whoop"
         assert r.resting_hr == 48
         assert r.resting_hr_source == "garmin"
 
-    def test_freshest_non_null_coalesce_across_providers(self):
-        # Same day: Garmin sleep ingested earlier, Polar sleep ingested later →
-        # Polar wins sleep_hours by freshness. HRV is garmin-only (no fresher
-        # non-null to clobber it) so Garmin keeps HRV.
+    def test_partial_fields_pass_through(self):
+        # A canonical row with only HRV populated → the other two fields stay None
+        # (the writer already coalesced; the reader just copies the columns).
         conn = _FakeConn()
-        conn.queue(
-            _garmin_wellness_row(
-                date_str="2026-05-19",
-                sleep_start_ms=0,
-                sleep_end_ms=7 * 3_600_000,
-                hrv_overnight_avg_ms=60.0,
-                resting_hr=50,
-                updated_at=datetime(2026, 5, 19, 6, 0),
-            )
-        )
-        conn.queue(
-            {
-                "date": "2026-05-19",
-                "total_sleep_min": 480,  # 8.0h
-                "fetched_at": datetime(2026, 5, 19, 12, 0),  # fresher than garmin
-            }
-        )
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
+        conn.queue(_canon_well_row(
+            date_str="2026-05-16", hrv_rmssd_ms=47.0, hrv_rmssd_ms_source="coros"))
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
         assert len(out) == 1
         r = out[0]
-        assert r.total_sleep_hours == pytest.approx(8.0)
-        assert r.total_sleep_hours_source == "polar"  # fresher ingest wins
-        assert r.hrv_rmssd_ms == 60.0
-        assert r.hrv_rmssd_ms_source == "garmin"  # only source
-        assert r.resting_hr == 50
-        assert r.resting_hr_source == "garmin"
+        assert r.hrv_rmssd_ms == 47.0 and r.hrv_rmssd_ms_source == "coros"
+        assert r.total_sleep_hours is None and r.total_sleep_hours_source is None
+        assert r.resting_hr is None and r.resting_hr_source is None
 
-    def test_null_field_never_clobbers_populated(self):
-        # Polar sleep row is fresher but carries NULL minutes → it must not
-        # overwrite the older but populated Garmin sleep value.
+    def test_context_only_row_skipped(self):
+        # A canonical row carrying only Garmin context (training_readiness/vo2max —
+        # all three coalesced device fields NULL) must NOT surface: the retired
+        # inline coalesce only emitted days with at least one device value.
         conn = _FakeConn()
-        conn.queue(
-            _garmin_wellness_row(
-                date_str="2026-05-18",
-                sleep_start_ms=0,
-                sleep_end_ms=6 * 3_600_000,
-                updated_at=datetime(2026, 5, 18, 6, 0),
-            )
-        )
-        conn.queue(
-            {
-                "date": "2026-05-18",
-                "total_sleep_min": None,
-                "fetched_at": datetime(2026, 5, 18, 20, 0),
-            }
-        )
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
+        conn.queue(_canon_well_row(date_str="2026-05-15"))
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert len(out) == 1
-        assert out[0].total_sleep_hours == pytest.approx(6.0)
-        assert out[0].total_sleep_hours_source == "garmin"
+        assert out == []
 
-    def test_priority_tiebreak_on_equal_timestamp(self):
-        # Garmin + COROS report sleep for the same day with identical ingest
-        # timestamps → garmin wins on the deterministic priority tiebreak.
-        ts = datetime(2026, 5, 17, 7, 0)
+    def test_rows_returned_in_query_order(self):
+        # The reader preserves the SQL's `ORDER BY date DESC` (no client re-sort).
         conn = _FakeConn()
         conn.queue(
-            _garmin_wellness_row(
-                date_str="2026-05-17",
-                sleep_start_ms=0,
-                sleep_end_ms=7 * 3_600_000,
-                updated_at=ts,
-            )
+            _canon_well_row(date_str="2026-05-19", total_sleep_hours=8.0,
+                            total_sleep_hours_source="garmin"),
+            _canon_well_row(date_str="2026-05-17", total_sleep_hours=7.0,
+                            total_sleep_hours_source="garmin"),
         )
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue(
-            {
-                "date": "2026-05-17",
-                "sleep_start_ms": 0,
-                "sleep_end_ms": 9 * 3_600_000,
-                "ppg_hrv": None,
-                "fetched_at": ts,
-            }
-        )
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert out[0].total_sleep_hours == pytest.approx(7.0)
-        assert out[0].total_sleep_hours_source == "garmin"
-
-    def test_coros_contributes_sleep_and_hrv(self):
-        conn = _FakeConn()
-        conn.queue()  # garmin
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue(
-            {
-                "date": "2026-05-16",
-                "sleep_start_ms": 0,
-                "sleep_end_ms": 8 * 3_600_000,
-                "ppg_hrv": 47.0,
-                "fetched_at": datetime(2026, 5, 16, 8, 0),
-            }
-        )
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert len(out) == 1
-        r = out[0]
-        assert r.total_sleep_hours == pytest.approx(8.0)
-        assert r.total_sleep_hours_source == "coros"
-        assert r.hrv_rmssd_ms == 47.0
-        assert r.hrv_rmssd_ms_source == "coros"
-        # No device reports resting HR here → stays None.
-        assert r.resting_hr is None
-        assert r.resting_hr_source is None
-
-    def test_whoop_contributes_sleep_hrv_and_resting_hr(self):
-        # #767 slice 4: a Whoop daily_summary row feeds all three metrics —
-        # and resting_hr from a non-Garmin source for the first time.
-        conn = _FakeConn()
-        conn.queue()  # garmin
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
-        conn.queue(
-            {
-                "date": "2026-05-18",
-                "total_sleep_min": 450.0,  # 7.5h
-                "hrv_rmssd_ms": 72.0,
-                "resting_hr": 44.0,
-                "fetched_at": datetime(2026, 5, 18, 7, 0),
-            }
-        )
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert len(out) == 1
-        r = out[0]
-        assert r.total_sleep_hours == pytest.approx(7.5)
-        assert r.total_sleep_hours_source == "whoop"
-        assert r.hrv_rmssd_ms == 72.0
-        assert r.hrv_rmssd_ms_source == "whoop"
-        assert r.resting_hr == 44
-        assert r.resting_hr_source == "whoop"
-
-    def test_whoop_priority_below_garmin_above_polar_on_tie(self):
-        # Equal ingest timestamps: garmin beats whoop (sleep); whoop beats polar
-        # (HRV). Confirms the garmin>whoop>polar>coros tiebreak order.
-        ts = datetime(2026, 5, 17, 7, 0)
-        conn = _FakeConn()
-        conn.queue(
-            _garmin_wellness_row(
-                date_str="2026-05-17",
-                sleep_start_ms=0,
-                sleep_end_ms=7 * 3_600_000,
-                updated_at=ts,
-            )
-        )
-        conn.queue()  # polar sleep
-        conn.queue(
-            {"date": "2026-05-17", "hrv_rmssd_ms": 50.0, "fetched_at": ts}
-        )  # polar hrv
-        conn.queue()  # coros
-        conn.queue(
-            {
-                "date": "2026-05-17",
-                "total_sleep_min": 540.0,  # 9.0h — loses to garmin on tie
-                "hrv_rmssd_ms": 65.0,      # beats polar on tie
-                "resting_hr": None,
-                "fetched_at": ts,
-            }
-        )
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert len(out) == 1
-        r = out[0]
-        assert r.total_sleep_hours == pytest.approx(7.0)
-        assert r.total_sleep_hours_source == "garmin"  # garmin > whoop
-        assert r.hrv_rmssd_ms == 65.0
-        assert r.hrv_rmssd_ms_source == "whoop"  # whoop > polar
-
-    def test_oura_contributes_sleep_hrv_and_resting_hr(self):
-        # #681 (B): an Oura daily_summary row feeds all three metrics, same shape
-        # as Whoop (the Layer-3A oura reader branch).
-        conn = _FakeConn()
-        conn.queue()  # garmin
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
-        conn.queue()  # whoop
-        conn.queue(
-            {
-                "date": "2026-05-19",
-                "total_sleep_min": 420.0,  # 7.0h
-                "hrv_rmssd_ms": 60.0,
-                "resting_hr": 47.0,
-                "fetched_at": datetime(2026, 5, 19, 7, 0),
-            }
-        )
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        assert len(out) == 1
-        r = out[0]
-        assert r.total_sleep_hours == pytest.approx(7.0)
-        assert r.total_sleep_hours_source == "oura"
-        assert r.hrv_rmssd_ms == 60.0
-        assert r.hrv_rmssd_ms_source == "oura"
-        assert r.resting_hr == 47
-        assert r.resting_hr_source == "oura"
-
-    def test_oura_priority_below_whoop_above_polar_on_tie(self):
-        # Equal ingest timestamps: whoop beats oura, oura beats polar (HRV).
-        # Confirms garmin>whoop>oura>polar>coros.
-        ts = datetime(2026, 5, 17, 7, 0)
-        conn = _FakeConn()
-        conn.queue()  # garmin
-        conn.queue()  # polar sleep
-        conn.queue(
-            {"date": "2026-05-17", "hrv_rmssd_ms": 50.0, "fetched_at": ts}
-        )  # polar hrv — loses to oura
-        conn.queue()  # coros
-        conn.queue(
-            {"date": "2026-05-17", "total_sleep_min": 540.0, "hrv_rmssd_ms": 65.0,
-             "resting_hr": None, "fetched_at": ts}
-        )  # whoop — beats oura on HRV tie
-        conn.queue(
-            {"date": "2026-05-17", "total_sleep_min": 480.0, "hrv_rmssd_ms": 60.0,
-             "resting_hr": 48.0, "fetched_at": ts}
-        )  # oura — beats polar, loses to whoop
-        out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
-        r = out[0]
-        assert r.hrv_rmssd_ms == 65.0
-        assert r.hrv_rmssd_ms_source == "whoop"   # whoop > oura on tie
-        assert r.total_sleep_hours == pytest.approx(9.0)
-        assert r.total_sleep_hours_source == "whoop"  # whoop > oura
-        assert r.resting_hr == 48                  # only oura reports it
-        assert r.resting_hr_source == "oura"
-
-    def test_multi_day_sorted_desc(self):
-        conn = _FakeConn()
-        conn.queue(
-            _garmin_wellness_row(
-                date_str="2026-05-17", sleep_start_ms=0, sleep_end_ms=7 * 3_600_000
-            ),
-            _garmin_wellness_row(
-                date_str="2026-05-19", sleep_start_ms=0, sleep_end_ms=8 * 3_600_000
-            ),
-        )
-        conn.queue()  # polar sleep
-        conn.queue()  # polar hrv
-        conn.queue()  # coros
         out = q_layer3A_recent_wellness(conn, 1, _AS_OF)
         assert [r.date for r in out] == [date(2026, 5, 19), date(2026, 5, 17)]
 
@@ -828,22 +626,18 @@ class TestAssembleBundle:
         conn = _FakeConn()
         # q_layer3A_recent_workouts: 1 query
         conn.queue(_workout_row(date_str="2026-05-19", activity="Run"))
-        # q_layer3A_recent_wellness: 6 queries (garmin, polar sleep, polar hrv,
-        # coros, whoop, oura)
+        # q_layer3A_recent_wellness: 1 query (canonical_daily_wellness)
         conn.queue(
-            _garmin_wellness_row(
+            _canon_well_row(
                 date_str="2026-05-19",
-                sleep_start_ms=0,
-                sleep_end_ms=8 * 3_600_000,
-                hrv_overnight_avg_ms=55.0,
+                total_sleep_hours=8.0,
+                total_sleep_hours_source="garmin",
+                hrv_rmssd_ms=55.0,
+                hrv_rmssd_ms_source="garmin",
                 resting_hr=48,
+                resting_hr_source="garmin",
             )
         )
-        conn.queue()
-        conn.queue()
-        conn.queue()
-        conn.queue()
-        conn.queue()
         # q_layer3A_recent_self_report_sleep: 1 query
         conn.queue({"date": "2026-05-19", "sleep_hours": 7.5, "sleep_quality": 8})
         # q_layer3A_combined_load: 2 queries
@@ -877,7 +671,7 @@ class TestAssembleBundle:
         the bundle still constructs (the §10.2 "no providers connected" + the
         §10.1 "just-onboarded athlete" path)."""
         conn = _FakeConn()
-        for _ in range(17):  # 1 + 6 + 1 + 2 + 7
+        for _ in range(12):  # 1 + 1 + 1 + 2 + 7
             conn.queue()
         bundle = assemble_layer3a_integration_bundle(conn, 1, _AS_OF)
         assert bundle.recent_workouts == []
@@ -897,7 +691,7 @@ class TestAssembleBundle:
         DB responses must hash identically."""
         def _assemble() -> Layer3AIntegrationBundle:
             conn = _FakeConn()
-            for _ in range(17):  # 1 + 6 + 1 + 2 + 7
+            for _ in range(12):  # 1 + 1 + 1 + 2 + 7
                 conn.queue()
             return assemble_layer3a_integration_bundle(conn, 1, _AS_OF)
 

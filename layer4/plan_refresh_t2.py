@@ -36,6 +36,7 @@ from layer4.per_phase import (
     _format_training_substitution_per_phase,
 )
 from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
+from layer4.recovery_guidance import format_recovery_guidance
 from layer4.plan_refresh_t1 import (
     _format_active_injuries,
     _format_prior_window_summary,
@@ -257,6 +258,12 @@ def render_user_prompt(
         f"{layer3a_payload.data_density.integration_data_days} days of "
         f"integration data"
     )
+    parts.append("")
+
+    # === Recovery state (3A wellness) — #196 Phase 4 recovery-aware planning ===
+    # Freshness-gated, LLM-soft strong-lean guidance surfaced from the already-
+    # hashed 3A digest (no new cache-key input). See layer4/recovery_guidance.py.
+    parts.extend(format_recovery_guidance(layer3a_payload))
     parts.append("")
 
     # === Recent training (last 7 days — summary) ===

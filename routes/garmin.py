@@ -2086,9 +2086,19 @@ def import_wellness_bulk():
     # latest value of acute_training_load / RMR / etc. — Andy's Jun 2 upload
     # had ATL = 95 → 107 → 126 across the morning/midday/evening syncs.
     pending = []
-    for name, raw, err in _iter_fit_blobs(files):
+    # _iter_activity_blobs expands .zip → its entries and yields a 4-tuple
+    # (name, bytes, ext, err). This endpoint is Garmin wellness-FIT only, so we
+    # gate on ext == 'fit' and skip any stray .tcx/.gpx/.csv. (It was renamed
+    # from _iter_fit_blobs in #767 Slice 2; the wellness call site was missed,
+    # so every upload here 500'd on a NameError from 2026-06-19 until this fix.)
+    for name, raw, ext, err in _iter_activity_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
+            summary['skipped'] += 1
+            continue
+        if ext != 'fit':
+            results.append({'name': name, 'status': 'skipped',
+                            'detail': 'not a Garmin wellness .fit file'})
             summary['skipped'] += 1
             continue
         try:
@@ -2110,6 +2120,17 @@ def import_wellness_bulk():
     for _time_ms, name, raw, kind in pending:
         _ingest_wellness_fit(db, uid, name, raw, kind, results, summary)
 
+    # Rule #15 — this path was print-silent, which is exactly why a dead call
+    # site (the NameError above) couldn't be spotted from /admin/logs. Log the
+    # per-file disposition for skips/errors + a summary so it's diagnosable.
+    for r in results:
+        if r['status'] in ('skipped', 'error'):
+            print(f"[wellness-import] user={uid} {r['status']}: "
+                  f"{r['name']} — {r.get('detail', '')}")
+    print(f"[wellness-import] user={uid} files={summary['files']} "
+          f"metrics_days={summary['metrics_days']} imported={summary['imported']} "
+          f"dup={summary['duplicates']} skipped={summary['skipped']} "
+          f"errors={summary['errors']}")
     return jsonify({'ok': True, 'summary': summary, 'results': results})
 
 
