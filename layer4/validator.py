@@ -117,6 +117,11 @@ class ValidatorContext:
     # scalar the per-discipline percentage bands are multiplied against to get
     # HOUR targets (rule 1, `volume_band`). None → that rule no-ops (open-ended).
     capacity_hours: float | None = None
+    # #884 slice 3b — the athlete's owned gear_id set (Layer1Payload.owned_gear),
+    # so `_rule_cardio_drill_pool_membership` re-runs the drill pool with the SAME
+    # gear gate the synthesizer used (else it would flag a correctly-gated drill).
+    # Empty default = no owned gear → gear-gated drills excluded (pre-capture).
+    owned_gear: frozenset[str] = frozenset()
 
 
 # ─── Constants + classifiers ────────────────────────────────────────────────
@@ -924,6 +929,7 @@ def _rule_cardio_drill_pool_membership(
                     ctx.layer2d_payload,
                     disciplines=disciplines,
                     phase=phase,
+                    owned_gear=ctx.owned_gear,
                 )
             )
         pool = pools[phase]

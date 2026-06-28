@@ -1949,6 +1949,14 @@ class Layer1Payload(_Base):
     travel_constraint: str | None = None
     sleep_baseline: float | None = Field(default=None, ge=0)
     daily_availability_windows: list[DailyAvailabilityWindow] = Field(default_factory=list)
+    # #884 slice 3b — the athlete's owned gear/craft (athlete_gear gear_ids,
+    # sorted for a stable hash). Surfaced top-level so it rides into layer1_hash
+    # (a gear change invalidates plan-gen, paired with
+    # athlete_gear_repo.evict_layer1_on_gear_change) and is readable as
+    # `.get("owned_gear")` by the cardio-drill gear gate (per_phase). Empty until
+    # the athlete captures gear (slice 6); the slice-3 backfill seeds owned crafts.
+    # Slice 4 reads this for the full feasibility cascade cutover.
+    owned_gear: list[str] = Field(default_factory=list)
 
     # Full §A-§L mirror.
     identity: Layer1Identity

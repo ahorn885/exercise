@@ -14,6 +14,7 @@ from types import SimpleNamespace as NS
 
 from layer4.per_phase import (
     SYSTEM_PROMPT,
+    _CARDIO_DRILL_GEAR_REQUIREMENTS,
     _CARDIO_DRILL_POOL_CAP,
     build_record_phase_sessions_tool,
     compute_cardio_drill_pool_ids,
@@ -131,6 +132,73 @@ def test_constituent_sport_gate_requires_cycling_and_running():
         pool, None, disciplines={"D-006"}, phase="Base"
     )
     assert cyc_only == []
+
+
+# ─── gear gate (#884 slice 3b) ───────────────────────────────────────────────
+# EX126/EX128 are the gear-gated swim drills (pull_buoy / kickboard); they drop
+# from the pool + the rendered menu unless the athlete OWNS the gear.
+
+def _swim_pool():
+    return {"loc": _l2c("loc", [
+        _rx("EX126", "Freestyle Pull (With Buoy)", ["D-004"],
+            exercise_type="Aerobic / Endurance"),
+        _rx("EX291", "Swim CSS", ["D-004"], exercise_type="Interval / Tempo"),
+    ])}
+
+
+def test_gear_gate_drops_drill_when_gear_not_owned():
+    # No owned gear → the buoy drill drops; the ungated swim drill stays.
+    ids = compute_cardio_drill_pool_ids(
+        _swim_pool(), None, disciplines={"D-004"}, phase="Base",
+        owned_gear=frozenset(),
+    )
+    assert ids == ["EX291"]
+
+
+def test_gear_gate_keeps_drill_when_gear_owned():
+    ids = compute_cardio_drill_pool_ids(
+        _swim_pool(), None, disciplines={"D-004"}, phase="Base",
+        owned_gear=frozenset({"pull_buoy"}),
+    )
+    assert ids == ["EX126", "EX291"]
+
+
+def test_gear_gate_default_empty_owned_drops_gated_drill():
+    # owned_gear defaults to empty → the buoy drill is excluded (pre-capture).
+    ids = compute_cardio_drill_pool_ids(
+        _swim_pool(), None, disciplines={"D-004"}, phase="Base",
+    )
+    assert ids == ["EX291"]
+
+
+def test_render_applies_gear_gate_in_lockstep():
+    # The rendered menu must match the enum: buoy drill hidden without gear,
+    # shown with it.
+    without = "\n".join(_format_cardio_drill_pool(
+        _swim_pool(), _l2a({"D-004": 1.0}), None,
+        disciplines={"D-004"}, phase="Base", owned_gear=frozenset(),
+    ))
+    assert "EX126" not in without and "EX291" in without
+    withg = "\n".join(_format_cardio_drill_pool(
+        _swim_pool(), _l2a({"D-004": 1.0}), None,
+        disciplines={"D-004"}, phase="Base", owned_gear=frozenset({"pull_buoy"}),
+    ))
+    assert "EX126" in withg
+
+
+def test_gear_requirement_map_matches_migration_seed():
+    """The hard-coded runtime gate map must stay in lockstep with the canonical
+    layer0.cardio_drill_gear_requirements seed (migration 0025)."""
+    import pathlib
+    import re
+
+    sql = pathlib.Path("etl/migrations/layer0/0025_cardio_drill_gear_requirements.sql").read_text()
+    # VALUES rows: (id, 'EX###', 'gear_id', '0B-v…', now())
+    seeded: dict[str, set[str]] = {}
+    for ex_id, gear_id in re.findall(r"\(\s*\d+,\s*'(EX\d+)',\s*'(\w+)'", sql):
+        seeded.setdefault(ex_id, set()).add(gear_id)
+    runtime = {ex: set(req) for ex, req in _CARDIO_DRILL_GEAR_REQUIREMENTS.items()}
+    assert runtime == seeded
 
 
 def test_constituent_gate_filters_paddle_climb_ar_athlete():

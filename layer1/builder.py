@@ -110,6 +110,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
     disclosures = _load_disclosures(db, user_id)
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
+    owned_gear = _load_owned_gear(db, user_id)
     supplements = _load_supplements(db, user_id)
     travel_constraint = _summarize_travel_constraint(db, user_id)
     coaching_preferences = _load_coaching_preferences(db, user_id)
@@ -164,6 +165,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         travel_constraint=travel_constraint,
         sleep_baseline=sleep_baseline_hours,
         daily_availability_windows=daily_windows,
+        owned_gear=owned_gear,
         # §G per-week capacity scalars (promoted from the retired
         # Layer1Availability wrapper) — read top-level by the session grid.
         doubles_feasible=availability_scalars["doubles_feasible"],
@@ -401,6 +403,19 @@ def _load_skill_toggle_states(db, user_id: int) -> dict[str, bool]:
         (user_id,),
     )
     return {r["toggle_name"]: bool(r["enabled"]) for r in cur.fetchall()}
+
+
+def _load_owned_gear(db, user_id: int) -> list[str]:
+    """#884 slice 3b — the athlete's owned gear/craft as a sorted gear_id list,
+    read from `athlete_gear` (the unified store, slice 3). Sorted for a stable
+    `layer1_hash`. Consumed by the cardio-drill gear gate (per_phase); slice 4
+    reads it for the full feasibility cascade. Empty on athletes with no gear
+    (athlete_gear is backfilled with owned crafts; swim gear arrives via capture,
+    slice 6). Lazy import keeps the Layer-0/4 cache deps out of the builder's
+    import surface (the repo pulls in layer4.cache)."""
+    from athlete_gear_repo import get_athlete_gear
+
+    return sorted(g["gear_id"] for g in get_athlete_gear(db, user_id))
 
 
 # ─── athlete_supplements — structured §I.1 protocol ──────────────────────────

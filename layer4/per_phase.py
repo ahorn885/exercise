@@ -818,22 +818,52 @@ def _constituent_sport_gate_ok(exercise_id: str, disciplines: set[str]) -> bool:
     )
 
 
+# The cardio-drill GEAR gate (#884 slice 3b / design v3 §6a, Decision 11): a swim
+# drill that needs owned gear drops from the pool unless the athlete OWNS the gear
+# (`athlete_gear` group_kind 'swim', surfaced as Layer1Payload.owned_gear). NOT a
+# discipline-feasibility gate (D-004 Swimming stays feasible on water), NOT an
+# equipment_required gate. Canonical source: layer0.cardio_drill_gear_requirements
+# (migration 0025); hard-coded here by stable EX-id exactly like the
+# constituent-sport gate above (re-derive if a row is added), kept in lockstep by
+# test_layer4_cardio_drill_pool.test_gear_requirement_map_matches_seed.
+_CARDIO_DRILL_GEAR_REQUIREMENTS: dict[str, frozenset[str]] = {
+    "EX126": frozenset({"pull_buoy"}),  # Freestyle Pull (With Buoy)
+    "EX128": frozenset({"kickboard"}),  # Kicking Drill (Flutter / Frog)
+}
+
+
+def _gear_gate_ok(exercise_id: str, owned_gear: frozenset[str]) -> bool:
+    """A gear-gated drill requires ALL its gear owned; every other drill passes.
+    `owned_gear` is the athlete's owned gear_id set (Layer1Payload.owned_gear).
+    Empty owned set → every gear-gated drill drops (the pre-capture default;
+    slice 6 populates owned swim gear)."""
+    required = _CARDIO_DRILL_GEAR_REQUIREMENTS.get(exercise_id)
+    if not required:
+        return True
+    return required <= owned_gear
+
+
 def compute_cardio_drill_pool_ids(
     layer2c_payloads: dict[str, Layer2CPayload],
     layer2d_payload: Layer2DPayload | None,
     *,
     disciplines: set[str],
     phase: str,
+    owned_gear: frozenset[str] = frozenset(),
 ) -> list[str]:
     """#698 Track 2 (A2) — the cardio drill pool: the union of resolved drill-type
     `exercise_id`s across every locale whose `discipline_ids` intersect the
     athlete's included disciplines, minus 2D-excluded ids, minus the
     constituent-sport-gated transition drills (EX175/EX176) when the athlete lacks
-    both a cycling and a running discipline, minus skill/transition drills in
-    Peak/Taper. Mirrors `compute_recovery_pool_ids` (reads the SAME
-    `exercises_resolved` surface). Sorted+deduped for deterministic enum ordering
-    (cache-key stability). Empty → caller passes no enum (the schema falls back to
-    a free string) and the prompt block is suppressed."""
+    both a cycling and a running discipline, minus the gear-gated swim drills
+    (#884 slice 3b — EX126/EX128) when the athlete lacks the owned gear, minus
+    skill/transition drills in Peak/Taper. Mirrors `compute_recovery_pool_ids`
+    (reads the SAME `exercises_resolved` surface). Sorted+deduped for deterministic
+    enum ordering (cache-key stability). Empty → caller passes no enum (the schema
+    falls back to a free string) and the prompt block is suppressed.
+
+    `owned_gear` is the athlete's owned gear_id set (Layer1Payload.owned_gear);
+    default empty drops every gear-gated drill (the pre-capture default)."""
     if not layer2c_payloads:
         return []
     excluded: set[str] = (
@@ -842,7 +872,7 @@ def compute_cardio_drill_pool_ids(
         else set()
     )
     pool: set[str] = set()
-    dropped = {"tier0": 0, "excluded": 0, "discipline": 0, "gate": 0, "phase": 0}
+    dropped = {"tier0": 0, "excluded": 0, "discipline": 0, "gate": 0, "gear": 0, "phase": 0}
     for l2c in layer2c_payloads.values():
         for rx in l2c.exercises_resolved:
             if not _is_cardio_drill_pool_type(rx.exercise_type):
@@ -861,6 +891,9 @@ def compute_cardio_drill_pool_ids(
             if not _constituent_sport_gate_ok(rx.exercise_id, disciplines):
                 dropped["gate"] += 1
                 continue
+            if not _gear_gate_ok(rx.exercise_id, owned_gear):
+                dropped["gear"] += 1
+                continue
             if not _cardio_drill_phase_allows(rx.exercise_type, phase):
                 dropped["phase"] += 1
                 continue
@@ -869,10 +902,11 @@ def compute_cardio_drill_pool_ids(
     # so a missing/surprising cardio drill is a one-read /admin/logs diagnosis.
     print(
         f"compute_cardio_drill_pool_ids: phase={phase} "
-        f"athlete_disciplines={sorted(disciplines)} pool={sorted(pool)} "
+        f"athlete_disciplines={sorted(disciplines)} owned_gear={sorted(owned_gear)} "
+        f"pool={sorted(pool)} "
         f"dropped(tier0={dropped['tier0']},excluded={dropped['excluded']},"
         f"discipline={dropped['discipline']},"
-        f"gate={dropped['gate']},phase={dropped['phase']})"
+        f"gate={dropped['gate']},gear={dropped['gear']},phase={dropped['phase']})"
     )
     return sorted(pool)
 
@@ -1392,6 +1426,7 @@ def _format_cardio_drill_pool(
     *,
     disciplines: set[str],
     phase: str,
+    owned_gear: frozenset[str] = frozenset(),
 ) -> list[str]:
     """#698 Track 2 (A2) — render the cardio drill pool grouped under the
     athlete's discipline headers, each row carrying its catalog `coaching_cue`
@@ -1399,7 +1434,8 @@ def _format_cardio_drill_pool(
     the synthesizer matches a drill to today's discipline by reading, not guessing
     (the `_format_recovery_exercise_pool` analog, bound to the same enum via
     `compute_cardio_drill_pool_ids`). Same filters as the compute fn (type / 2D /
-    discipline / constituent-sport gate / phase-by-character). Deduped across
+    discipline / constituent-sport gate / gear gate / phase-by-character) — MUST
+    stay in lockstep so the rendered menu matches the enum. Deduped across
     disciplines (under the highest-load-weight discipline that surfaces it),
     highest-SEM-priority first, capped at `_CARDIO_DRILL_POOL_CAP` rows total.
     Empty when nothing resolves → the caller suppresses the block."""
@@ -1433,6 +1469,7 @@ def _format_cardio_drill_pool(
                 and rx.tier > 0
                 and (set(rx.discipline_ids) & disciplines)
                 and _constituent_sport_gate_ok(rx.exercise_id, disciplines)
+                and _gear_gate_ok(rx.exercise_id, owned_gear)
                 and _cardio_drill_phase_allows(rx.exercise_type, phase)
             ):
                 by_id.setdefault(rx.exercise_id, rx)
@@ -2828,6 +2865,7 @@ def render_user_prompt(
         layer2d_payload,
         disciplines=cardio_drill_disciplines,
         phase=phase_spec.phase_name,
+        owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
     )
     if cardio_drill_pool_lines:
         parts.append("=== Cardio drill pool (consider these) ===")
@@ -3684,6 +3722,7 @@ def synthesize_phase(
         layer2d_payload,
         disciplines=cardio_drill_disciplines,
         phase=phase_spec.phase_name,
+        owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
     )
     tool_schema = build_record_phase_sessions_tool(
         max_sessions_this_unit,
@@ -4052,6 +4091,7 @@ def synthesize_phase(
             race_event=race_event_payload,
             capacity_hours=weekly_capacity_hours(layer1_payload),
             daily_availability_windows=daily_windows_from_layer1(layer1_payload),
+            owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=current_pass
