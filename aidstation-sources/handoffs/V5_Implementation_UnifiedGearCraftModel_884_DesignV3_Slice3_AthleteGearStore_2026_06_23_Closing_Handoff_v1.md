@@ -3,7 +3,7 @@
 **Date:** 2026-06-23
 **Branch:** `claude/vigilant-rubin-xhicao`
 **Issue:** #884 (go-live blocker). Predecessors: slice 1 (`0022`, PR #914/#915 — merged + prod-applied), slice 2 (#919), slice 3a (`0024` `gear_discipline_aliases`, PR #923 — merged + prod-applied).
-**PR:** none yet — **awaiting Andy's go** (design v3 §18 stages this as its OWN PR because the `init_db` backfill auto-applies to prod). Work is committed + pushed to the branch.
+**PR:** [#932](https://github.com/ahorn885/exercise/pull/932) (opened 2026-06-28; bundled with the CLAUDE.md fix + slice 3b on the pinned branch; auto-merge SQUASH armed).
 
 ## 0. Thread continuity — STAY ON THIS THREAD (READ FIRST)
 

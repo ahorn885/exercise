@@ -3,7 +3,7 @@
 **Date:** 2026-06-23
 **Branch:** `claude/vigilant-rubin-xhicao` (shared with slice 3 — see §4.1)
 **Issue:** #884 (go-live blocker). Predecessors: slice 3 (public `athlete_gear` store, same branch), slice 3a (`0024`), slice 2 (#919), slice 1 (`0022`).
-**PR:** none yet — **awaiting Andy's go**. Work committed + pushed to the branch.
+**PR:** [#932](https://github.com/ahorn885/exercise/pull/932) (opened 2026-06-28, shared with slice 3; auto-merge SQUASH armed — self-merges when the 3 required checks pass).
 
 ## 0. Thread continuity — STAY ON THIS THREAD (READ FIRST)
 
