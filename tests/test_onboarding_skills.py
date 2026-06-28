@@ -386,8 +386,10 @@ class TestSkillsRoute:
         ):
             response = ob_mod.skills_save()
 
-        # Vocab SELECT + 2 craft upserts (2c.2b) + 2 skill upserts.
-        assert len(conn.calls) == 5
+        # Vocab SELECT + 2 craft upserts (2c.2b) + the #884 slice-4 gear sync
+        # (a scoped DELETE, no crafts submitted → no INSERT) + 2 skill upserts.
+        assert len(conn.calls) == 6
+        assert any('DELETE FROM athlete_gear' in sql for sql, _ in conn.calls)
         skill_upserts = [(sql, params) for sql, params in conn.calls
                          if 'INSERT INTO athlete_skill_toggles' in sql]
         assert len(skill_upserts) == 2
@@ -428,13 +430,18 @@ class TestSkillsRoute:
                                       data={'bike_types': 'mountain_bike'}):
             response = ob_mod.skills_save()
 
-        # Vocab SELECT + 2 craft upserts (no skill upsert — empty vocab).
-        assert len(conn.calls) == 3
+        # Vocab SELECT + 2 craft upserts (no skill upsert — empty vocab) + the
+        # #884 slice-4 gear sync (scoped DELETE + one INSERT for mountain_bike).
+        assert len(conn.calls) == 5
         craft_upserts = [(sql, params) for sql, params in conn.calls
                          if 'discipline_baseline_' in sql]
         assert len(craft_upserts) == 2
         cyc = [p for sql, p in craft_upserts if 'cycling' in sql][0]
         assert cyc == (42, 'mountain_bike')
+        # The same write reached athlete_gear: mountain_bike inserted as bike gear.
+        gear_inserts = [p for sql, p in conn.calls
+                        if 'INSERT INTO athlete_gear' in sql]
+        assert gear_inserts == [(42, 'mountain_bike', 'bike', 'own')]
         assert conn.commits == 1
         assert evictions == [42]
         assert response.status_code == 302

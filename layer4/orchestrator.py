@@ -212,21 +212,31 @@ class _UpstreamFullCone:
     layer3b_payload: Layer3BPayload
 
 
-def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
-    """Flatten the athlete's owned crafts across discipline baselines.
+# #884 slice 4a — the gear `group_kind`s that participate in the craft axis of
+# the feasibility/substitution cascade today. Slice 4b widens this to the other
+# discipline-unlocking kinds (ski/snow/climbing/alpine) when the fidelity-rank
+# walk lands; mirrors `session_feasibility._CRAFT_GROUP_KINDS`.
+_CRAFT_ALIAS_GROUP_KINDS = frozenset({"bike", "paddle"})
 
-    Today only paddle + bike baselines carry craft inventories; the
-    training-substitution resolver hands the union to the Layer 4 LLM as the
-    candidate set (gate Q2 — no family filtering here). Deduped + sorted for a
-    stable cache hash.
+
+def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
+    """The athlete's owned crafts, read from the unified `athlete_gear` store via
+    `Layer1Payload.owned_gear` (#884 slice 3b populates it from `athlete_gear`,
+    riding `layer1_hash`). Filtered to the craft `group_kind`s the feasibility +
+    training-substitution cascade consumes today (bike/paddle); slice 4b widens
+    the gate to the other owned gear kinds (ski/snow/climbing/alpine) via the
+    fidelity-rank walk. Deduped + sorted for a stable cache hash.
+
+    #884 slice 4a cutover: the source moved off the cycling/paddling discipline
+    baselines onto `athlete_gear` (the gear store's craft rows are backfilled 1:1
+    from the same craft inventories), so the output is unchanged.
     """
-    crafts: list[str] = []
-    baselines = layer1_payload.discipline_baselines
-    if baselines.paddling and baselines.paddling.paddle_craft_types:
-        crafts.extend(baselines.paddling.paddle_craft_types)
-    if baselines.cycling and baselines.cycling.bike_types_available:
-        crafts.extend(baselines.cycling.bike_types_available)
-    return sorted(set(crafts))
+    from athlete_gear_repo import GEAR_REGISTRY
+
+    return sorted(
+        g for g in set(layer1_payload.owned_gear)
+        if GEAR_REGISTRY.get(g) in _CRAFT_ALIAS_GROUP_KINDS
+    )
 
 
 def _athlete_discipline_overrides(layer1_payload: Layer1Payload) -> dict[str, dict]:
@@ -333,17 +343,24 @@ def _q_modality_groups(db: Any) -> dict[str, list[str]]:
 
 
 def _q_craft_discipline_aliases(db: Any) -> dict[str, list[str]]:
-    """X1b.3b — `{craft_name: [discipline_id, ...]}` (many-to-many) from
-    `layer0.craft_discipline_aliases` (active rows). Empty dict → substitution
-    narrowing is off (pre-X1b.3b behavior)."""
+    """X1b.3b — `{gear_id: [discipline_id, ...]}` (many-to-many) from
+    `layer0.gear_discipline_aliases` (active rows). Empty dict → substitution
+    narrowing is off (pre-X1b.3b behavior).
+
+    #884 slice 4a cutover: reads the unified `gear_discipline_aliases` (migration
+    0024) in place of the legacy `craft_discipline_aliases` (retired in slice 4c).
+    The craft rows migrated 1:1 (verified identical), so craft behavior is
+    unchanged; the table additionally carries the gear-toggle aliases
+    (ski/snow/climbing/alpine) — harmless to craft consumers, which only key on
+    owned bike/paddle slugs, and consumed by the slice-4b fidelity-rank walk."""
     cur = db.execute(
-        "SELECT craft_name, discipline_id "
-        "FROM layer0.craft_discipline_aliases "
+        "SELECT gear_id, discipline_id "
+        "FROM layer0.gear_discipline_aliases "
         "WHERE superseded_at IS NULL"
     )
     out: dict[str, list[str]] = {}
     for row in cur.fetchall():
-        out.setdefault(row["craft_name"], []).append(row["discipline_id"])
+        out.setdefault(row["gear_id"], []).append(row["discipline_id"])
     return out
 
 
@@ -360,15 +377,19 @@ def _q_modality_group_kind(db: Any) -> dict[str, str]:
 
 
 def _q_craft_group_kind(db: Any) -> dict[str, str]:
-    """#540 slice 2c.2c — `{craft_name: group_kind}` from
-    `layer0.craft_discipline_aliases` (active rows; `group_kind` is per-craft,
+    """#540 slice 2c.2c — `{gear_id: group_kind}` from
+    `layer0.gear_discipline_aliases` (active rows; `group_kind` is per-gear,
     constant across its discipline rows). Pairs with `_q_craft_discipline_aliases`
-    to drive the craft axis. Empty dict → the craft axis is inert."""
+    to drive the craft axis. Empty dict → the craft axis is inert.
+
+    #884 slice 4a cutover: reads `gear_discipline_aliases` (migration 0024) in
+    place of `craft_discipline_aliases`; craft rows are identical, so the
+    bike/paddle kinds are unchanged."""
     cur = db.execute(
-        "SELECT DISTINCT craft_name, group_kind FROM layer0.craft_discipline_aliases "
+        "SELECT DISTINCT gear_id, group_kind FROM layer0.gear_discipline_aliases "
         "WHERE superseded_at IS NULL"
     )
-    return {row["craft_name"]: row["group_kind"] for row in cur.fetchall()}
+    return {row["gear_id"]: row["group_kind"] for row in cur.fetchall()}
 
 
 def _q_craft_terrain_compatibility(db: Any) -> dict[str, set[str]]:
@@ -1971,6 +1992,11 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     "modality_groups": "0A",
     "discipline_modality_membership": "0A",
     "craft_discipline_aliases": "0A",
+    # gear_discipline_aliases (#884 migration 0024) — the unified gear/craft alias
+    # table the feasibility + substitution cascade reads as of slice 4a. Tracked
+    # so a re-seed (the D-028 ladder, gear-toggle aliases) invalidates the 0A
+    # digest. craft_discipline_aliases stays mapped until slice 4c retires it.
+    "gear_discipline_aliases": "0A",
     # craft_terrain_compatibility (#586 WS-I) is created by migration 0004, not
     # schema.sql (like terrain_gap_rules); read by the unified craft/terrain
     # cascade. Same 0A family as its sibling craft_discipline_aliases.

@@ -22,6 +22,7 @@ can't silently leak into the alias lookup (the V4c silent-mismatch class).
 from __future__ import annotations
 
 from athlete import BIKE_TYPES, CRAFT_LABELS, PADDLE_CRAFT_TYPES
+from athlete_gear_repo import replace_owned_gear_for_kinds
 from layer4.cache import Layer4Cache
 from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
@@ -85,6 +86,21 @@ def replace_athlete_crafts(
         "ON CONFLICT (user_id) DO UPDATE SET "
         "  paddle_craft_types = EXCLUDED.paddle_craft_types, updated_at = NOW()",
         (user_id, ",".join(paddles)),
+    )
+    # #884 slice 4 — close the read/write authority gap: keep the unified
+    # athlete_gear store (the feasibility cascade's read source as of slice 4a) in
+    # lockstep with the craft baselines. Crafts own the bike/paddle kinds; the
+    # gear-toggle + swim surfaces write their own kinds (slices 4b / 6). Without
+    # this, a craft edit landed on the baselines but the cascade read a stale
+    # store between slice 4 and slice 6 (CARRY_FORWARD #884 attention item 1). The
+    # baselines stay authoritative for the Layer 1 payload (builder reads them);
+    # this is a forward-sync, not a move. Slugs are already enum-validated above
+    # and BIKE_TYPES/PADDLE_CRAFT_TYPES ⊆ GEAR_REGISTRY, so no re-validation owed.
+    replace_owned_gear_for_kinds(
+        db,
+        user_id,
+        {slug: "own" for slug in (*bikes, *paddles)},
+        {"bike", "paddle"},
     )
 
 
