@@ -155,6 +155,16 @@ class TestFreshBlockA:
         assert "O-text" not in out and "H-text" not in out
 
 
+class TestSurfaceNeutralWording:
+    def test_directive_is_surface_neutral(self):
+        # Slice 2 (Andy 2026-06-28): the directive is reused verbatim across the
+        # refresh tiers AND per_phase / race_week_brief / single_session, so the
+        # refresh-specific "in this refresh" framing was genericized to "here".
+        out = "\n".join(format_recovery_guidance(_payload()))
+        assert "PRIORITIZE recovery here:" in out
+        assert "in this refresh" not in out
+
+
 class TestNoDataBlockB:
     def test_no_recovery_data_emits_do_not_infer_and_no_directive(self):
         out = "\n".join(
@@ -177,5 +187,28 @@ class TestSingleSourced:
         )
         assert (
             plan_refresh_t3.format_recovery_guidance
+            is recovery_guidance.format_recovery_guidance
+        )
+
+    def test_slice2_surfaces_share_one_helper(self):
+        # Slice 2 — per_phase / race_week_brief / single_session fold in the same
+        # helper object (single-sourced wording, no per-surface copy).
+        from layer4 import (
+            per_phase,
+            race_week_brief,
+            recovery_guidance,
+            single_session,
+        )
+
+        assert (
+            per_phase.format_recovery_guidance
+            is recovery_guidance.format_recovery_guidance
+        )
+        assert (
+            race_week_brief.format_recovery_guidance
+            is recovery_guidance.format_recovery_guidance
+        )
+        assert (
+            single_session.format_recovery_guidance
             is recovery_guidance.format_recovery_guidance
         )

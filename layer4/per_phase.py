@@ -67,6 +67,7 @@ from layer4.payload import (
 )
 from layer4 import periodization
 from layer4.injury_render import format_active_injuries
+from layer4.recovery_guidance import format_recovery_guidance
 from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.session_feasibility import (
     EventWindowSegment,
@@ -2761,6 +2762,11 @@ def render_user_prompt(
         f"{layer3a_payload.data_density.integration_data_days} days of "
         f"integration data"
     )
+    parts.append("")
+    # === Recovery state (3A wellness) — #196 Phase 4 recovery-aware planning ===
+    # Freshness-gated, LLM-soft strong-lean guidance surfaced from the already-
+    # hashed 3A digest (no new cache-key input). See layer4/recovery_guidance.py.
+    parts.extend(format_recovery_guidance(layer3a_payload))
     # #337 — measured physiological anchors so the synthesizer grounds
     # intensity_target numbers in real values (suppress-on-empty).
     physiology_lines = format_measured_physiology(layer1_payload)

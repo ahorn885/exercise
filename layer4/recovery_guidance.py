@@ -87,7 +87,7 @@ def format_recovery_guidance(layer3a_payload: "Layer3APayload") -> list[str]:
         "data signals suppressed recovery — short-term trajectory `fatigued` or "
         "`overreached`, HRV trending down, sleep debt, or an ACWR zone of "
         "`functional_overreach` / `non_functional_overreach` — PRIORITIZE recovery "
-        "in this refresh: pull volume toward the lower edge of the band and cut "
+        "here: pull volume toward the lower edge of the band and cut "
         "intensity (bias Z1-Z2), unless a race-proximity constraint overrides. When "
         "the signals conflict, default to the more conservative load. When recovery "
         "is solid (`recovered` / `steady` / `building`, HRV and sleep intact), "
