@@ -111,10 +111,15 @@ def _cone(
     paddling = (
         SimpleNamespace(paddle_craft_types=paddle_crafts) if paddle_crafts else None
     )
+    # #884 slice 4a — `_collect_athlete_crafts` now reads `owned_gear` (the unified
+    # athlete_gear store, riding layer1_hash), not the discipline baselines. The
+    # baselines stay set for any other reader; owned_gear carries the craft slugs.
+    owned_gear = sorted({*(bike_crafts or []), *(paddle_crafts or [])})
     return SimpleNamespace(
         primary_locale=primary_locale,
         layer1_payload=SimpleNamespace(
-            discipline_baselines=SimpleNamespace(paddling=paddling, cycling=cycling)
+            discipline_baselines=SimpleNamespace(paddling=paddling, cycling=cycling),
+            owned_gear=owned_gear,
         ),
         # #780 — the cone carries one 2C payload per cluster locale (keyed by
         # locale_id). `_gather_feasibility_inputs` reads the primary entry for the
