@@ -33,7 +33,6 @@ from layer4.context import (
     PolarCardioLoadCrossRef,
     ProviderStatus,
     SleepRecord,
-    WellnessSource,
     WorkoutRecord,
     WorkoutSource,
 )
@@ -162,42 +161,6 @@ def q_layer3A_recent_workouts(
 
 # ─── 2. q_layer3A_recent_wellness ────────────────────────────────────────────
 
-# Device priority for the freshest-non-null coalesce tiebreak. Higher wins
-# when two sources carry the same field for a day at equal (or missing) ingest
-# timestamps. Garmin first — richest, highest-fidelity daily source; then Whoop +
-# Oura (dedicated recovery/sleep devices) above the watch sources Polar/COROS
-# (#767 slice 4 + #681 (B); garmin>whoop>oura>polar>coros — Oura just under Whoop).
-_WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
-    "garmin": 5,
-    "whoop": 4,
-    "oura": 3,
-    "polar": 2,
-    "coros": 1,
-}
-
-# A candidate value for one (day, field): (ingest_timestamp, value, source).
-_WellnessCandidate = tuple["datetime | None", float, str]
-
-
-def _coalesce_wellness_field(
-    candidates: list[_WellnessCandidate],
-) -> tuple[float | None, WellnessSource | None]:
-    """Freshest-non-null pick: among the sources that carry a non-null value
-    for this (day, field), choose the one whose ingest timestamp is newest.
-    A NULL source never reaches here (callers skip nulls), so a populated
-    older value never loses to a fresher NULL. Ties (equal or missing
-    timestamps) break on `_WELLNESS_SOURCE_PRIORITY` so the result is
-    deterministic — the bundle hash folds into the 3A cache key, and a
-    non-deterministic pick would drift that key across resumable passes."""
-    if not candidates:
-        return None, None
-    best = max(
-        candidates,
-        key=lambda c: (c[0] or datetime.min, _WELLNESS_SOURCE_PRIORITY[c[2]]),
-    )
-    return best[1], best[2]  # type: ignore[return-value]
-
-
 def q_layer3A_recent_wellness(
     db: Any,
     user_id: int,
@@ -205,187 +168,52 @@ def q_layer3A_recent_wellness(
     *,
     since_days: int = _DEFAULT_SLEEP_WINDOW_DAYS,
 ) -> list[DailyWellnessRecord]:
-    """Per-day device wellness, coalesced field-by-field across providers into
-    one `DailyWellnessRecord` per calendar day (newest first). Sources:
-    Garmin `daily_wellness_metrics` (sleep span, `hrv_overnight_avg_ms`,
-    `resting_hr`), Polar (`provider_raw_record` sleep + nightly-recharge HRV),
-    COROS (`provider_raw_record` daily summary: sleep span + `ppg_hrv`) and
-    Whoop (`provider_raw_record` daily summary: sleep minutes + RMSSD HRV +
-    resting HR — #767 slice 4); the non-Garmin three are provider-tagged in
-    `provider_raw_record`.
+    """Per-day device wellness for the recent window — one `DailyWellnessRecord`
+    per calendar day (newest first), read straight from the materialized
+    `canonical_daily_wellness` table (#196 Phase 2, Slice 2.3).
 
-    Each field is resolved by freshest-non-null (`_coalesce_wellness_field`):
-    the value from the source with the newest ingest timestamp wins, ties
-    break garmin>whoop>polar>coros. Self-report sleep is intentionally excluded
-    — it rides separately via `q_layer3A_recent_self_report_sleep` so the §6.1
-    objective-vs-subjective weighting stays intact. `resting_hr` was garmin-only
-    until Whoop (slice 4) joined it as a second device source."""
+    The per-field freshest-non-null coalesce across the five device sources
+    (garmin/whoop/oura/polar/coros) now lives in `canonical_wellness.py`, which
+    rebuilds the merged row on every wellness ingest (Slice 2.2). This reader is
+    a thin SELECT of those merged columns — it retired the inline six-source
+    coalesce that used to live here. The output is byte-identical to that path
+    for the same underlying data (canonical stores the same rounded doubles in
+    DOUBLE PRECISION columns, so no round-trip drift), keeping the 3A bundle hash
+    / cache key stable across the repoint.
+
+    Self-report sleep is intentionally excluded — it rides separately via
+    `q_layer3A_recent_self_report_sleep` so the §6.1 objective-vs-subjective
+    weighting stays intact."""
     cutoff_iso = _window_cutoff(as_of, since_days).isoformat()
-
-    sleep_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
-    hrv_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
-    rhr_cand: dict[date, list[_WellnessCandidate]] = defaultdict(list)
-
-    # Garmin — daily_wellness_metrics (sleep span, overnight HRV, resting HR).
     cur = db.execute(
         """
-        SELECT date, sleep_start_ms, sleep_end_ms, hrv_overnight_avg_ms,
-               resting_hr, updated_at
-          FROM daily_wellness_metrics
+        SELECT date, total_sleep_hours, total_sleep_hours_source,
+               hrv_rmssd_ms, hrv_rmssd_ms_source, resting_hr, resting_hr_source
+          FROM canonical_daily_wellness
          WHERE user_id = %s AND date >= %s
          ORDER BY date DESC
         """,
         (user_id, cutoff_iso),
     )
-    for row in cur.fetchall():
-        d = _as_date(row["date"])
-        ts = row["updated_at"]
-        start_ms, end_ms = row["sleep_start_ms"], row["sleep_end_ms"]
-        if start_ms is not None and end_ms is not None and end_ms > start_ms:
-            sleep_cand[d].append((ts, (end_ms - start_ms) / 3600_000.0, "garmin"))
-        hrv = row["hrv_overnight_avg_ms"]
-        if hrv is not None:
-            hrv_cand[d].append((ts, float(hrv), "garmin"))
-        rhr = row["resting_hr"]
-        if rhr is not None:
-            rhr_cand[d].append((ts, float(rhr), "garmin"))
-
-    # Polar sleep (provider_raw_record, data_type='sleep').
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'total_sleep_min')::int AS total_sleep_min,
-               fetched_at
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'polar' AND data_type = 'sleep'
-           AND external_id >= %s
-        """,
-        (user_id, cutoff_iso),
-    )
-    for row in cur.fetchall():
-        mins = row["total_sleep_min"]
-        if mins is not None:
-            sleep_cand[_as_date(row["date"])].append(
-                (row["fetched_at"], mins / 60.0, "polar")
-            )
-
-    # Polar HRV (provider_raw_record, data_type='hrv' — true RMSSD).
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'hrv_rmssd_ms')::float AS hrv_rmssd_ms,
-               fetched_at
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'polar' AND data_type = 'hrv'
-           AND external_id >= %s
-           AND (raw_payload->>'hrv_rmssd_ms') IS NOT NULL
-        """,
-        (user_id, cutoff_iso),
-    )
-    for row in cur.fetchall():
-        v = row["hrv_rmssd_ms"]
-        if v is not None:
-            hrv_cand[_as_date(row["date"])].append(
-                (row["fetched_at"], float(v), "polar")
-            )
-
-    # COROS daily summary (provider_raw_record): sleep span + nightly PPG HRV.
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'sleep_start_ms')::bigint AS sleep_start_ms,
-               (raw_payload->>'sleep_end_ms')::bigint   AS sleep_end_ms,
-               (raw_payload->>'ppg_hrv')::float         AS ppg_hrv,
-               fetched_at
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'coros' AND data_type = 'daily_summary'
-           AND external_id >= %s
-        """,
-        (user_id, cutoff_iso),
-    )
-    for row in cur.fetchall():
-        d = _as_date(row["date"])
-        ts = row["fetched_at"]
-        start_ms, end_ms = row["sleep_start_ms"], row["sleep_end_ms"]
-        if start_ms is not None and end_ms is not None and end_ms > start_ms:
-            sleep_cand[d].append((ts, (end_ms - start_ms) / 3600_000.0, "coros"))
-        ppg = row["ppg_hrv"]
-        if ppg is not None:
-            hrv_cand[d].append((ts, float(ppg), "coros"))
-
-    # Whoop daily cycle (provider_raw_record, data_type='daily_summary';
-    # #767 slice 4): sleep minutes + overnight HRV (RMSSD) + resting HR, one row
-    # per day from physiological_cycles.csv. First non-Garmin resting-HR source.
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'total_sleep_min')::float AS total_sleep_min,
-               (raw_payload->>'hrv_rmssd_ms')::float    AS hrv_rmssd_ms,
-               (raw_payload->>'resting_hr')::float       AS resting_hr,
-               fetched_at
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'whoop' AND data_type = 'daily_summary'
-           AND external_id >= %s
-        """,
-        (user_id, cutoff_iso),
-    )
-    for row in cur.fetchall():
-        d = _as_date(row["date"])
-        ts = row["fetched_at"]
-        mins = row["total_sleep_min"]
-        if mins is not None:
-            sleep_cand[d].append((ts, mins / 60.0, "whoop"))
-        hrv = row["hrv_rmssd_ms"]
-        if hrv is not None:
-            hrv_cand[d].append((ts, float(hrv), "whoop"))
-        rhr = row["resting_hr"]
-        if rhr is not None:
-            rhr_cand[d].append((ts, float(rhr), "whoop"))
-
-    # Oura daily sleep (provider_raw_record, data_type='daily_summary'; #681 (B)):
-    # same daily_summary shape as Whoop — total sleep minutes + overnight HRV
-    # (RMSSD) + resting HR (sleep.lowest_heart_rate). Ranks just under Whoop in
-    # the tiebreak (both dedicated recovery/sleep devices, above the watches).
-    cur = db.execute(
-        """
-        SELECT external_id AS date,
-               (raw_payload->>'total_sleep_min')::float AS total_sleep_min,
-               (raw_payload->>'hrv_rmssd_ms')::float    AS hrv_rmssd_ms,
-               (raw_payload->>'resting_hr')::float       AS resting_hr,
-               fetched_at
-          FROM provider_raw_record
-         WHERE user_id = %s AND provider = 'oura' AND data_type = 'daily_summary'
-           AND external_id >= %s
-        """,
-        (user_id, cutoff_iso),
-    )
-    for row in cur.fetchall():
-        d = _as_date(row["date"])
-        ts = row["fetched_at"]
-        mins = row["total_sleep_min"]
-        if mins is not None:
-            sleep_cand[d].append((ts, mins / 60.0, "oura"))
-        hrv = row["hrv_rmssd_ms"]
-        if hrv is not None:
-            hrv_cand[d].append((ts, float(hrv), "oura"))
-        rhr = row["resting_hr"]
-        if rhr is not None:
-            rhr_cand[d].append((ts, float(rhr), "oura"))
-
     out: list[DailyWellnessRecord] = []
-    for d in sorted(set(sleep_cand) | set(hrv_cand) | set(rhr_cand), reverse=True):
-        sleep_h, sleep_src = _coalesce_wellness_field(sleep_cand.get(d, []))
-        hrv_v, hrv_src = _coalesce_wellness_field(hrv_cand.get(d, []))
-        rhr_v, rhr_src = _coalesce_wellness_field(rhr_cand.get(d, []))
+    for row in cur.fetchall():
+        sleep_h = row["total_sleep_hours"]
+        hrv_v = row["hrv_rmssd_ms"]
+        rhr_v = row["resting_hr"]
+        # A canonical row that carries only Garmin context (training_readiness /
+        # vo2max with no merged device sleep/HRV/resting-HR) is skipped: the old
+        # coalesce emitted a record only for days with at least one device value.
+        if sleep_h is None and hrv_v is None and rhr_v is None:
+            continue
         out.append(
             DailyWellnessRecord(
-                date=d,
-                total_sleep_hours=round(sleep_h, 3) if sleep_h is not None else None,
-                total_sleep_hours_source=sleep_src,
+                date=_as_date(row["date"]),
+                total_sleep_hours=sleep_h,
+                total_sleep_hours_source=row["total_sleep_hours_source"],
                 hrv_rmssd_ms=hrv_v,
-                hrv_rmssd_ms_source=hrv_src,
-                resting_hr=int(round(rhr_v)) if rhr_v is not None else None,
-                resting_hr_source=rhr_src,
+                hrv_rmssd_ms_source=row["hrv_rmssd_ms_source"],
+                resting_hr=rhr_v,
+                resting_hr_source=row["resting_hr_source"],
             )
         )
     return out
