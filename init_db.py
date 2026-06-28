@@ -3045,21 +3045,32 @@ _PG_MIGRATIONS = [
         id                       SERIAL PRIMARY KEY,
         user_id                  INTEGER NOT NULL REFERENCES users(id),
         date                     TEXT NOT NULL,
-        total_sleep_hours        REAL,    total_sleep_hours_source TEXT,
-        hrv_rmssd_ms             REAL,    hrv_rmssd_ms_source      TEXT,
+        total_sleep_hours        DOUBLE PRECISION, total_sleep_hours_source TEXT,
+        hrv_rmssd_ms             DOUBLE PRECISION, hrv_rmssd_ms_source      TEXT,
         resting_hr               INTEGER, resting_hr_source        TEXT,
-        hrv_7d_avg_ms            REAL,
+        hrv_7d_avg_ms            DOUBLE PRECISION,
         resting_hr_7day_avg      INTEGER,
         sleep_score              INTEGER,
         training_readiness       INTEGER,
-        vo2max_running           REAL,
-        vo2max_cycling           REAL,
+        vo2max_running           DOUBLE PRECISION,
+        vo2max_cycling           DOUBLE PRECISION,
         acute_training_load      INTEGER,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         UNIQUE (user_id, date)
     )""",
     "CREATE INDEX IF NOT EXISTS canonical_daily_wellness_user_date_idx ON canonical_daily_wellness (user_id, date)",
+    # Slice 2.3 (#196): the 3A wellness reader now reads these merged floats back
+    # out of canonical and folds them into the 3A bundle hash (integration_bundle_hash),
+    # which serializes exact double-precision repr. REAL (single precision) would
+    # round-trip e.g. 54.7 -> 54.70000076293945 and drift the cache key vs the
+    # retired inline-coalesce path, so widen to DOUBLE PRECISION (lossless; the
+    # table is empty in prod so the rewrite is trivial). Idempotent on re-deploy.
+    "ALTER TABLE canonical_daily_wellness ALTER COLUMN total_sleep_hours TYPE DOUBLE PRECISION",
+    "ALTER TABLE canonical_daily_wellness ALTER COLUMN hrv_rmssd_ms      TYPE DOUBLE PRECISION",
+    "ALTER TABLE canonical_daily_wellness ALTER COLUMN hrv_7d_avg_ms     TYPE DOUBLE PRECISION",
+    "ALTER TABLE canonical_daily_wellness ALTER COLUMN vo2max_running    TYPE DOUBLE PRECISION",
+    "ALTER TABLE canonical_daily_wellness ALTER COLUMN vo2max_cycling    TYPE DOUBLE PRECISION",
 ]
 
 _CLOTHING_SEEDS = [

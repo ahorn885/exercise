@@ -9,9 +9,10 @@ sleep score, training readiness, VO2max, acute training load) straight from
 `daily_wellness_metrics`. Idempotent: called on every wellness ingest for the
 affected date (Slice 2.2 wires the call sites), upserts ON CONFLICT (user_id,date).
 
-The coalesce rule is a copy of layer3a.integration's (`_WELLNESS_SOURCE_PRIORITY`
-+ `_coalesce_wellness_field`) so this slice touches only new code; Slice 2.3
-repoints the 3A reader at this table and folds the two copies into one.
+This module is the single home of the wellness coalesce rule
+(`_WELLNESS_SOURCE_PRIORITY` + `_coalesce`). Slice 2.3 repointed the 3A reader
+(`layer3a.integration.q_layer3A_recent_wellness`) at this materialized table and
+retired its inline copy, so the merge logic lives here only.
 
 Design: designs/CanonicalDailyWellness_196_Phase2_Design_v1.md
 """
@@ -20,8 +21,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-# Device priority for the freshest-non-null tiebreak — identical to
-# layer3a.integration._WELLNESS_SOURCE_PRIORITY (deduped in Slice 2.3).
+# Device priority for the freshest-non-null tiebreak. Garmin first (richest daily
+# source), then Whoop + Oura (dedicated recovery devices) above the watches
+# Polar/COROS. The sole owner since Slice 2.3 deduped the layer3a copy.
 _WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
     "garmin": 5,
     "whoop": 4,
@@ -36,8 +38,9 @@ _Candidate = tuple["datetime | None", float, str]
 
 def _coalesce(candidates: list[_Candidate]) -> tuple[float | None, str | None]:
     """Freshest-non-null pick: newest ingest timestamp wins; ties (equal/missing
-    timestamps) break on `_WELLNESS_SOURCE_PRIORITY`. Mirrors the 3A reader so a
-    later repoint is behaviour-preserving."""
+    timestamps) break on `_WELLNESS_SOURCE_PRIORITY`. Deterministic so the merged
+    row — and the 3A bundle hash that reads it (Slice 2.3) — is stable across
+    resumable passes."""
     if not candidates:
         return None, None
     best = max(
