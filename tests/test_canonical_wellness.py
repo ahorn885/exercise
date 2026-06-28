@@ -141,3 +141,84 @@ class TestUpsertShape:
         cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
         assert _upsert(conn) is None
         assert any("DELETE FROM canonical_daily_wellness" in c[0] for c in conn.calls)
+
+
+class TestProviderHook:
+    """`materialize_wellness_for_provider` — the ingest-route gate (Slice 2.2).
+    A wellness-feeding (provider, data_type) re-materializes; anything else is a
+    no-op (no canonical read/write), so non-wellness ingests stay cheap."""
+
+    def _fired(self, provider, data_type):
+        # Empty conn → if the hook fires, materialize issues its reads (+ a
+        # no-data DELETE); if gated out, the conn sees zero calls.
+        conn = _FakeConn(garmin=None)
+        cw.materialize_wellness_for_provider(conn, 1, provider, data_type, "2026-06-20")
+        return any("FROM daily_wellness_metrics" in c[0] for c in conn.calls), conn
+
+    def test_wellness_data_types_fire(self):
+        for provider, data_type in (
+            ("polar", "sleep"), ("polar", "hrv"),
+            ("coros", "daily_summary"), ("whoop", "daily_summary"),
+            ("oura", "daily_summary"),
+        ):
+            fired, _ = self._fired(provider, data_type)
+            assert fired, f"{provider}/{data_type} should re-materialize"
+
+    def test_non_wellness_writes_are_no_ops(self):
+        for provider, data_type in (
+            ("polar", "cardio_load"), ("whoop", "workout"),
+            ("coros", "exercise"), ("garmin", "daily_summary"),  # garmin not in the map
+            ("oura", "tags"),
+        ):
+            fired, conn = self._fired(provider, data_type)
+            assert not fired, f"{provider}/{data_type} must not re-materialize"
+            assert conn.calls == [], f"{provider}/{data_type} touched the DB"
+
+
+class _BackfillConn:
+    """Serves the backfill discovery UNION its work-list, then routes each
+    per-(uid, date) materialize read. Records which (uid, date) materialize ran
+    for (via the daily_wellness_metrics read params)."""
+
+    def __init__(self, targets):
+        self.targets = targets            # [(user_id, date), ...] the union returns
+        self.calls: list[tuple[str, tuple]] = []
+        self.materialized: list[tuple[int, str]] = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        s = " ".join(sql.split())
+        if "UNION" in s:                  # the discovery query
+            return _Cursor(rows=[{"user_id": u, "date": d} for u, d in self.targets])
+        if "FROM daily_wellness_metrics" in s:
+            self.materialized.append((params[0], params[1]))
+            return _Cursor(one=None)      # no Garmin row → no-data path
+        if "FROM provider_raw_record" in s:
+            return _Cursor(rows=[])
+        return _Cursor()                  # DELETE canonical (no-data clear)
+
+
+class TestBackfill:
+    def test_targets_parsed_from_union(self):
+        conn = _BackfillConn([(1, "2026-06-20"), (1, "2026-06-21"), (2, "2026-06-20")])
+        targets = cw._wellness_backfill_targets(conn)
+        assert targets == [(1, "2026-06-20"), (1, "2026-06-21"), (2, "2026-06-20")]
+        # The discovery query unions both wellness homes.
+        disco = next(c for c in conn.calls if "UNION" in " ".join(c[0].split()))[0]
+        assert "FROM daily_wellness_metrics" in disco
+        assert "FROM provider_raw_record" in disco
+
+    def test_backfill_materializes_each_target(self):
+        targets = [(1, "2026-06-20"), (1, "2026-06-21"), (7, "2026-06-19")]
+        conn = _BackfillConn(targets)
+        n = cw.backfill_canonical_wellness(conn)
+        assert n == 3
+        assert conn.materialized == targets  # materialize ran once per (user, date)
+
+    def test_backfill_user_scope_filters_query(self):
+        conn = _BackfillConn([(5, "2026-06-20")])
+        cw._wellness_backfill_targets(conn, uid=5)
+        disco_sql, disco_params = next(
+            c for c in conn.calls if "UNION" in " ".join(c[0].split()))
+        assert disco_params == (5, 5)             # filter bound to both union halves
+        assert "user_id = %s" in disco_sql

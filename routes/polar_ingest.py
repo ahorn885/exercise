@@ -47,6 +47,8 @@ from typing import Any
 import requests
 from flask import current_app
 
+from canonical_wellness import materialize_wellness_for_provider
+
 # Polar AccessLink base URL. Mirror the env override in routes/polar.py
 # so the two modules can rotate independently of code.
 _POLAR_API_URL = os.environ.get(
@@ -365,6 +367,9 @@ def _record_raw(
         '    fetched_at = NOW()',
         (user_id, 'polar', data_type, external_id, external_id, json.dumps(payload)),
     )
+    # #196 Phase 2 Slice 2.2 — refresh the canonical daily-wellness row when this
+    # write is a wellness source (sleep/hrv); cardio_load is gated out.
+    materialize_wellness_for_provider(db, user_id, 'polar', data_type, external_id)
 
 
 def _record_hr_sample(db: Any, user_id: int, ts_ms: int, heart_rate: int | None) -> None:

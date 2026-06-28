@@ -186,3 +186,105 @@ def materialize_canonical_wellness(db: Any, uid: int, target_date: str) -> None:
     ctx_present = ", ".join(c for c in _GARMIN_CTX_COLS if ctx[c] is not None)
     print(f"[wellness-canon] user={uid} date={target_date} "
           f"merged={{{merged}}} garmin_ctx={{{ctx_present}}}")
+
+
+# ── Slice 2.2: ingest-hook + backfill entry points ────────────────────────
+
+# The (provider, data_type) pairs in provider_raw_record that actually feed a
+# canonical row — i.e. the sources materialize_canonical_wellness reads. An
+# ingest write OUTSIDE this set (polar 'cardio_load', whoop 'workout', …)
+# changes nothing the canonical layer reads, so it must NOT trigger a
+# re-materialization. Garmin is absent here on purpose: its daily_wellness_metrics
+# write always feeds canonical, so its hook calls materialize_* directly.
+_WELLNESS_FEED_DATA_TYPES: dict[str, frozenset[str]] = {
+    "polar": frozenset({"sleep", "hrv"}),
+    "coros": frozenset({"daily_summary"}),
+    "whoop": frozenset({"daily_summary"}),
+    "oura": frozenset({"daily_summary"}),
+}
+
+
+def materialize_wellness_for_provider(
+    db: Any, uid: int, provider: str, data_type: str, target_date: str,
+) -> None:
+    """Ingest-hook wrapper for the provider_raw_record writers: re-materialize
+    (uid, target_date) only when the row just written is one the canonical layer
+    reads. Gating keeps non-wellness writes (cardio load, workouts) from doing
+    useless re-materialization work. Runs in the caller's transaction, so the
+    canonical row lands atomically with the raw write (and a failure rolls both
+    back — consistent with the existing webhook re-dispatch contract)."""
+    if data_type in _WELLNESS_FEED_DATA_TYPES.get(provider, frozenset()):
+        materialize_canonical_wellness(db, uid, target_date)
+
+
+def _wellness_backfill_targets(db: Any, uid: int | None = None) -> list[tuple[int, str]]:
+    """Every (user_id, date) carrying any wellness source — the backfill
+    work-list. Unions the Garmin daily-metrics days with the non-Garmin
+    provider_raw_record wellness days (exactly the sources materialize reads),
+    casting both date keys to text so the union types line up."""
+    where_g = "WHERE date IS NOT NULL" + (" AND user_id = %s" if uid is not None else "")
+    where_p = (
+        "WHERE (provider, data_type) IN "
+        "(('polar','sleep'),('polar','hrv'),('coros','daily_summary'),"
+        "('whoop','daily_summary'),('oura','daily_summary'))"
+        + (" AND user_id = %s" if uid is not None else "")
+    )
+    params = (uid, uid) if uid is not None else ()
+    rows = db.execute(
+        f"""
+        SELECT DISTINCT user_id, date::text AS date
+          FROM daily_wellness_metrics {where_g}
+        UNION
+        SELECT DISTINCT user_id, external_id AS date
+          FROM provider_raw_record {where_p}
+        """,
+        params,
+    ).fetchall()
+    return [(r["user_id"], r["date"]) for r in rows]
+
+
+def backfill_canonical_wellness(db: Any, uid: int | None = None) -> int:
+    """One-time (re)materialization of the canonical row for every historical
+    (user, date) that has wellness data. Idempotent — safe to re-run, and a
+    day that lost all its data clears its row (materialize's no-data path). The
+    caller owns the commit. Returns the number of (user, date) pairs processed."""
+    targets = _wellness_backfill_targets(db, uid)
+    for user_id, target_date in targets:
+        materialize_canonical_wellness(db, user_id, target_date)
+    scope = f" user={uid}" if uid is not None else ""
+    print(f"[wellness-canon] backfill{scope} materialized {len(targets)} (user,date) pairs")
+    return len(targets)
+
+
+def _main(argv: "list[str] | None" = None) -> int:
+    """`python canonical_wellness.py --backfill [--user N]` — run the one-time
+    backfill against the DATABASE_URL Postgres. The gated backfill GitHub Action
+    sets DATABASE_URL=NEON_DATABASE_URL. `database` is imported lazily here so
+    the library stays Flask-free for the unit tests (which import this module)."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Canonical daily-wellness ops")
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="(re)materialize every historical (user, date) wellness row")
+    parser.add_argument(
+        "--user", type=int, default=None,
+        help="limit the backfill to one user_id (default: all users)")
+    args = parser.parse_args(argv)
+    if not args.backfill:
+        parser.error("nothing to do — pass --backfill")
+
+    from database import _PgConn, _connect  # lazy: keeps the unit tests Flask-free
+
+    db = _PgConn(_connect())
+    try:
+        n = backfill_canonical_wellness(db, uid=args.user)
+        db.commit()
+    finally:
+        db.close()
+    print(f"[wellness-canon] backfill committed: {n} (user,date) rows")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

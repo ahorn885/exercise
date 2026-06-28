@@ -41,11 +41,15 @@ class TestVerifySignature:
 # ── stateful fake DB for the merge ───────────────────────────────────
 
 class _Cur:
-    def __init__(self, row=None):
+    def __init__(self, row=None, rows=None):
         self._row = row
+        self._rows = rows or []
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return self._rows
 
 
 class _MergeDB:
@@ -58,7 +62,14 @@ class _MergeDB:
 
     def execute(self, sql, params=()):
         s = ' '.join(sql.split())
-        if s.startswith('SELECT raw_payload'):
+        # Slice 2.2: _merge_daily now re-materializes canonical wellness, which
+        # reads the two wellness homes. No Garmin/other-provider data in this
+        # unit context → both come back empty (materialize's no-data path).
+        if 'FROM daily_wellness_metrics' in s:
+            return _Cur(None)
+        if s.startswith('SELECT raw_payload, fetched_at'):  # materialize's _prr read
+            return _Cur(rows=[])
+        if s.startswith('SELECT raw_payload'):     # _merge_daily read-back (single col)
             day = params[1]
             payload = self.daily.get(day)
             return _Cur({'raw_payload': payload} if payload is not None else None)

@@ -23,12 +23,17 @@ class _FakeRow(dict):
     pass
 
 
+_NO_ROW = object()  # explicit "fetchone() → None" (vs the default owner-row stub)
+
+
 class _Cursor:
     def __init__(self, rows, one=None):
         self._rows = rows
         self._one = one
 
     def fetchone(self):
+        if self._one is _NO_ROW:
+            return None
         if self._one is not None:
             return self._one
         return _FakeRow(id=1, username='owner', email='o@x.test',
@@ -47,6 +52,12 @@ class _Conn:
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
+        # Slice 2.2: ingesting a WHOOP CSV here now re-materializes canonical
+        # wellness, which reads daily_wellness_metrics. No Garmin row in this
+        # context → return an explicit None so materialize takes its no-data path
+        # (the default fetchone stub is an owner row, which it would misread).
+        if 'FROM daily_wellness_metrics' in s:
+            return _Cursor([], one=_NO_ROW)
         # The Files list reads the deduped canonical_cardio_feed (#196 Slice 4b),
         # not raw cardio_log — match either so the fake tracks the live surface.
         cardio_src = 'cardio_log' in s or 'canonical_cardio_feed' in s
