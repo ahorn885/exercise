@@ -35,8 +35,19 @@ from layer4.cache_postgres import PostgresCacheBackend
 # a catalog join (§5.1). Craft slugs (bike/paddle) reuse the existing closed
 # craft enums (single source — no drift with the craft pickers); the owned-gear
 # toggles get their stable slugs here. `rollerskis` is the one new entry
-# (Decision 10). Keep in lockstep with migration 0024's gear_id set — guarded by
-# test_athlete_gear_repo.test_registry_matches_layer0_keyspace.
+# (Decision 10).
+#
+# Two kinds of gear share this keyspace:
+#   - DISCIPLINE-UNLOCKING gear (bike/paddle/ski/snow/climbing/alpine) — aliases
+#     to disciplines in layer0.gear_discipline_aliases (migration 0024). Guarded
+#     in lockstep by test_athlete_gear_repo.test_registry_matches_layer0_keyspace.
+#   - DRILL-GATING swim gear (group_kind 'swim') — #884 slice 3b / Decision 11.
+#     Owned portable gear that gates cardio_drills[] pool membership (pull buoy →
+#     pull set, kickboard → kick set), NEVER discipline feasibility (D-004 stays
+#     feasible on water) — so it has NO gear_discipline_aliases row. The gate
+#     reads layer0.cardio_drill_gear_requirements (migration 0025). `paddles` +
+#     `fins` are capturable owned gear with no gated drill in the active catalog
+#     yet (Andy 2026-06-23 — seed the vocab; the drills can map to them later).
 GEAR_REGISTRY: dict[str, str] = {
     **{slug: "bike" for slug in BIKE_TYPES},
     **{slug: "paddle" for slug in PADDLE_CRAFT_TYPES},
@@ -47,6 +58,11 @@ GEAR_REGISTRY: dict[str, str] = {
     "climbing_gear": "climbing",
     "mountaineering": "alpine",
     "skimo_at": "alpine",
+    # Swim gear — drill-gating, non-discipline-unlocking (slice 3b).
+    "pull_buoy": "swim",
+    "kickboard": "swim",
+    "paddles": "swim",
+    "fins": "swim",
 }
 
 # Stable ordering for deterministic reads + a stable INSERT sequence on write

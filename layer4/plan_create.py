@@ -1628,6 +1628,7 @@ def _run_pattern_a_engine(
         race_event=race_event_payload,
         capacity_hours=weekly_capacity_hours(layer1_payload),
         daily_availability_windows=daily_windows_from_layer1(layer1_payload),
+        owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
     )
     final_validator = validate_layer4_payload(
         final_payload, ctx, pass_index=len(validator_results)

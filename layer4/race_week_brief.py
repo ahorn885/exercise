@@ -1892,6 +1892,7 @@ def llm_layer4_race_week_brief(
             layer3b_payload=layer3b_payload,
             race_event=race_event_payload,
             capacity_hours=weekly_capacity_hours(layer1_payload),
+            owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=retries_used

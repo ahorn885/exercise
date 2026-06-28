@@ -67,12 +67,23 @@ _KEYSPACE_0024 = {
     # D-028 ladder
     "classic_xc_ski", "skate_xc_ski", "rollerskis",
 }
-_GROUP_KINDS = {"bike", "paddle", "ski", "snow", "climbing", "alpine"}
+# Drill-gating swim gear (slice 3b) — group_kind 'swim', NOT in gear_discipline_
+# aliases (it gates cardio drills, not disciplines). pull_buoy/kickboard map to
+# EX126/EX128 in layer0.cardio_drill_gear_requirements (migration 0025); paddles/
+# fins are seeded vocab with no gated drill yet (Andy 2026-06-23).
+_SWIM_GEAR = {"pull_buoy", "kickboard", "paddles", "fins"}
+_GROUP_KINDS = {"bike", "paddle", "ski", "snow", "climbing", "alpine", "swim"}
 
 
 class TestKeyspace:
-    def test_registry_matches_layer0_keyspace(self):
-        assert set(GEAR_REGISTRY) == _KEYSPACE_0024
+    def test_discipline_unlocking_subset_matches_layer0_keyspace(self):
+        # The non-swim (discipline-unlocking) gear must match migration 0024.
+        unlocking = {g for g, kind in GEAR_REGISTRY.items() if kind != "swim"}
+        assert unlocking == _KEYSPACE_0024
+
+    def test_swim_gear_vocab(self):
+        swim = {g for g, kind in GEAR_REGISTRY.items() if kind == "swim"}
+        assert swim == _SWIM_GEAR
 
     def test_group_kinds_are_the_closed_set(self):
         assert set(GEAR_REGISTRY.values()) == _GROUP_KINDS
@@ -81,6 +92,7 @@ class TestKeyspace:
         assert GEAR_REGISTRY["road_bike"] == "bike"
         assert GEAR_REGISTRY["kayak"] == "paddle"
         assert GEAR_REGISTRY["rollerskis"] == "ski"  # Decision 10 — owned dryland gear
+        assert GEAR_REGISTRY["pull_buoy"] == "swim"  # Decision 11 — drill-gating gear
 
 
 # ─── get_athlete_gear ────────────────────────────────────────────────────────

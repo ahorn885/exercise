@@ -1035,11 +1035,13 @@ def llm_layer4_single_session_synthesize(
         if layer2c_payload_for_locale is not None
         else set()
     )
+    owned_gear = frozenset((layer1_payload or {}).get("owned_gear") or [])
     cardio_drill_pool_ids = compute_cardio_drill_pool_ids(
         locale_l2c,
         layer2d_payload,
         disciplines=cardio_drill_disciplines,
         phase="Base",
+        owned_gear=owned_gear,
     )
     cardio_drill_pool_lines = _format_cardio_drill_pool(
         locale_l2c,
@@ -1047,6 +1049,7 @@ def llm_layer4_single_session_synthesize(
         layer2d_payload,
         disciplines=cardio_drill_disciplines,
         phase="Base",
+        owned_gear=owned_gear,
     )
     tool_schema = build_record_single_session_tool(
         feasible_pool_ids=feasible_pool_ids or None,
@@ -1165,6 +1168,7 @@ def llm_layer4_single_session_synthesize(
             else {},
             layer2d_payload=layer2d_payload,
             layer3a_payload=layer3a_payload,
+            owned_gear=owned_gear,
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=retries_used

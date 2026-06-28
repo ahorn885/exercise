@@ -80,8 +80,8 @@ def _queue_empty_athlete(conn: _FakeConn) -> None:
     (D-73 Phase 5.2 Bucket C (l) added the `_load_skill_toggle_states`
     query; the dead `food_allergies` load was later removed; 2E-6 §I.1 added
     the `_load_supplements` query; #690 added the `_load_coaching_preferences`
-    query.)"""
-    for _ in range(26):
+    query; #884 slice 3b added the `_load_owned_gear` query.)"""
+    for _ in range(27):
         conn.queue_response()
 
 
@@ -181,8 +181,9 @@ class TestEmptyUser:
         # back to 25 with the 2E-6 §I.1 `_load_supplements` SELECT. #304 swapped
         # the retired `_load_target_race_event_id` SELECT for the event-windows
         # `travel_constraint` SELECT — net-zero, 25. #690 added the
-        # `_load_coaching_preferences` SELECT — 26.
-        assert len(conn.calls) == 26
+        # `_load_coaching_preferences` SELECT — 26. #884 slice 3b added the
+        # `_load_owned_gear` SELECT — 27.
+        assert len(conn.calls) == 27
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -381,6 +382,13 @@ class TestFullyPopulated:
         conn.queue_response(rows=[
             {"toggle_name": "climbing_roped", "enabled": True},
             {"toggle_name": "whitewater_handling", "enabled": True},
+        ])
+        # 23b) athlete_gear — #884 slice 3b owned gear/craft store, read by
+        # _load_owned_gear into Layer1Payload.owned_gear (the cardio-drill gear
+        # gate + slice-4 cascade consume it). Andy's backfilled crafts.
+        conn.queue_response(rows=[
+            {"gear_id": "gravel_bike", "group_kind": "bike", "access": "own"},
+            {"gear_id": "kayak", "group_kind": "paddle", "access": "own"},
         ])
         # 24) athlete_supplements — 2E-6 §I.1 structured protocol. Two records;
         # frequency/timing are closed-vocab tokens, dose/notes free text.
@@ -637,6 +645,28 @@ class TestSkillToggleStates:
             "climbing_roped": True,
             "whitewater_handling": True,
         }
+
+
+# ─── #884 slice 3b — athlete_gear loader (owned_gear) ────────────────────────
+
+
+class TestOwnedGear:
+    """`_load_owned_gear` reads athlete_gear and threads the sorted gear_id list
+    into Layer1Payload.owned_gear (the cardio-drill gear gate + slice-4 cascade
+    consume it). Empty on athletes with no captured/backfilled gear."""
+
+    def test_empty_athlete_yields_empty_list(self):
+        conn = _FakeConn()
+        _queue_empty_athlete(conn)
+        payload = build_layer1_payload(conn, user_id=42)
+        assert payload.owned_gear == []
+
+    def test_populated_gear_threads_through_sorted(self):
+        conn = _FakeConn()
+        TestFullyPopulated()._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        # _queue_andy seeds gravel_bike + kayak; sorted for a stable hash.
+        assert payload.owned_gear == ["gravel_bike", "kayak"]
 
     def test_explicit_off_rows_preserved(self):
         """An athlete who toggled ON then toggled OFF surfaces as
