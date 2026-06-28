@@ -28,6 +28,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from canonical_wellness import materialize_wellness_for_provider
+
 # COROS sport-mode integers per their Open API. Map to the v1
 # `cardio_log.activity` text vocabulary used by the existing UI.
 # Unmapped modes fall through to 'other' so ingestion never drops
@@ -191,6 +193,9 @@ def _record_raw(
         '    fetched_at = NOW()',
         (user_id, 'coros', data_type, external_id, external_id, json.dumps(payload)),
     )
+    # #196 Phase 2 Slice 2.2 — refresh the canonical daily-wellness row (COROS
+    # daily_summary carries sleep + ppg_hrv that the canonical layer reads).
+    materialize_wellness_for_provider(db, user_id, 'coros', data_type, external_id)
 
 
 def _record_hr_sample(db: Any, user_id: int, ts_ms: int, heart_rate: int | None) -> None:

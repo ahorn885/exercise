@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session as flask_session
 from werkzeug.utils import secure_filename
 from database import get_db
+from canonical_wellness import materialize_canonical_wellness
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
 from provider_cardio_resolve import DISCIPLINE_TO_PLAN_SPORT
@@ -1945,6 +1946,9 @@ def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
         try:
             fields = _metrics_to_db_fields(parsed)
             wrote = _upsert_garmin_daily_metrics(db, uid, parsed['date'], fields)
+            # #196 Phase 2 Slice 2.2 — rebuild the canonical daily-wellness row
+            # for the day we just wrote, atomically with the upsert.
+            materialize_canonical_wellness(db, uid, parsed['date'])
             db.commit()
             detail_keys = ', '.join(sorted(fields.keys())) or '(no columns)'
             results.append({'name': name, 'status': 'imported',
@@ -1978,6 +1982,7 @@ def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
         # Also harvest the daily-aggregate values that live in WELLNESS files
         # (resting metabolic rate, resting HR, 7d-avg resting HR). Best-effort:
         # a parse failure here shouldn't fail the per-second insert above.
+        extras_date = None
         try:
             extras = parse_wellness_daily_extras(raw)
             if extras.get('date'):
@@ -1993,8 +1998,16 @@ def _ingest_wellness_fit(db, uid, name, raw, kind, results, summary):
                     _upsert_garmin_daily_metrics(
                         db, uid, extras['date'], extras_fields,
                     )
+                    extras_date = extras['date']
         except Exception:
             pass
+        # #196 Phase 2 Slice 2.2 — rebuild the canonical row for the day whose
+        # daily aggregates (incl. resting_hr) we just wrote. OUTSIDE the
+        # best-effort harvest above on purpose: a materialize failure must
+        # surface (the outer except rolls back the whole file) rather than be
+        # swallowed by `pass` and then poison the wellness_log commit below.
+        if extras_date:
+            materialize_canonical_wellness(db, uid, extras_date)
         db.commit()
         dates = sorted({r['date'] for r in rows if r.get('date')})
         drange = dates[0] if dates else '?'

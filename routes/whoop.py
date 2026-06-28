@@ -42,6 +42,7 @@ from flask import (
 )
 
 from database import get_db
+from canonical_wellness import materialize_wellness_for_provider
 from routes import provider_auth as pa
 from routes.auth import current_user_id
 from whoop_csv_parser import parse_whoop_physiological_cycles
@@ -301,6 +302,10 @@ def _record_raw(db, user_id, data_type, external_id, payload):
         (user_id, 'whoop', data_type, external_id, external_id,
          json.dumps(payload)),
     )
+    # #196 Phase 2 Slice 2.2 — refresh the canonical daily-wellness row for this
+    # WHOOP day (daily_summary carries sleep/hrv/rhr the canonical layer reads).
+    # Also covers the Garmin bulk-upload CSV path, which delegates here.
+    materialize_wellness_for_provider(db, user_id, 'whoop', data_type, external_id)
 
 
 def ingest_whoop_csv(db, user_id, raw) -> int:

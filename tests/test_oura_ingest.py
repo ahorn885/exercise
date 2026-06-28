@@ -27,11 +27,15 @@ class _FakeResp:
 
 
 class _Cur:
-    def __init__(self, row=None):
+    def __init__(self, row=None, rows=None):
         self._row = row
+        self._rows = rows or []
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        return self._rows
 
 
 class _MergeDB:
@@ -40,7 +44,14 @@ class _MergeDB:
 
     def execute(self, sql, params=()):
         s = ' '.join(sql.split())
-        if s.startswith('SELECT raw_payload'):
+        # Slice 2.2: _merge_daily now re-materializes canonical wellness, which
+        # reads daily_wellness_metrics + provider_raw_record. Empty here → the
+        # no-data path; the assertions below are on the daily_summary write.
+        if 'FROM daily_wellness_metrics' in s:
+            return _Cur(None)
+        if s.startswith('SELECT raw_payload, fetched_at'):  # materialize's _prr read
+            return _Cur(rows=[])
+        if s.startswith('SELECT raw_payload'):     # _merge_daily read-back (single col)
             return _Cur({'raw_payload': self.daily.get(params[1])}
                         if params[1] in self.daily else None)
         if "'daily_summary'" in s and 'INSERT INTO provider_raw_record' in s:

@@ -43,6 +43,7 @@ from flask import (
 )
 
 from database import get_db
+from canonical_wellness import materialize_wellness_for_provider
 from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
@@ -395,3 +396,6 @@ def _merge_daily(db: Any, user_id: int, day: str, partial: dict) -> None:
         '    fetched_at = NOW()',
         (user_id, day, day, json.dumps(existing)),
     )
+    # #196 Phase 2 Slice 2.2 — refresh the canonical daily-wellness row for this
+    # Oura day after the merged daily_summary write.
+    materialize_wellness_for_provider(db, user_id, 'oura', 'daily_summary', day)
