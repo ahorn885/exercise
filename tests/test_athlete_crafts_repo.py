@@ -89,10 +89,24 @@ class TestReplace:
             bike_types=["gravel_bike", "road_bike", "road_bike"],
             paddle_crafts=["packraft"],
         )
-        assert len(conn.calls) == 2
-        assert all("ON CONFLICT (user_id)" in c[0] for c in conn.calls)
-        assert conn.calls[0][1] == (1, "road_bike,gravel_bike")   # enum order
-        assert conn.calls[1][1] == (1, "packraft")
+        # First two calls are the discipline-baseline upserts (the craft contract).
+        baseline_calls = conn.calls[:2]
+        assert all("ON CONFLICT (user_id)" in c[0] for c in baseline_calls)
+        assert baseline_calls[0][1] == (1, "road_bike,gravel_bike")   # enum order
+        assert baseline_calls[1][1] == (1, "packraft")
+        # #884 slice 4 — the same write forward-syncs athlete_gear (bike/paddle
+        # kinds only): a scoped DELETE then one INSERT per owned craft, so the
+        # feasibility cascade (which reads athlete_gear as of slice 4a) never sees
+        # a stale store between a craft edit and slice 6.
+        gear_calls = conn.calls[2:]
+        assert any(
+            "DELETE FROM athlete_gear" in c[0] and "group_kind IN" in c[0]
+            for c in gear_calls
+        )
+        inserted = {
+            c[1][1] for c in gear_calls if "INSERT INTO athlete_gear" in c[0]
+        }
+        assert inserted == {"road_bike", "gravel_bike", "packraft"}
 
     def test_empty_lists_clear_each_family(self):
         conn = _FakeConn()

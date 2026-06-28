@@ -118,10 +118,15 @@ Repoint the three readers onto the new store, keeping bike/paddle behavior ident
 
 ---
 
-## Open confirmations
-- 4.2 gear-toggle capture form: reuse the profile gear tab's checkbox pattern (no new UX) — Andy
-  said write-path only. Confirm the toggle list to expose = the discipline-unlocking GEAR_REGISTRY
-  set (climbing_gear, snowshoes, mountaineering, skimo_at, classic/skate/rollerskis).
-- Rollerski dryland terrain: confirm `craft_terrain_compatibility` rows before 4.1b.
+## Resolved decisions (Andy 2026-06-28)
+- **Order:** 4.2 (write-path forward) before 4b (cascade extension).
+- **Rollerski dryland terrain (4b/4.3 Layer-0):** **reuse an existing paved terrain** — map
+  `rollerskis` to the road/paved `TRN-xxx` `road_bike` already rides (no new terrain vocab).
+  Verify the exact paved `TRN` id from `craft_terrain_compatibility` (road_bike rows) before
+  seeding the ski-gear terrain rows; classic/skate → snow `TRN-012`.
+- **4.2 gear-toggle capture:** reuse the profile gear tab's checkbox pattern (no new "Your gear"
+  UX); expose the discipline-unlocking GEAR_REGISTRY set (climbing_gear, snowshoes, mountaineering,
+  skimo_at, classic/skate/rollerskis). Gear toggles were #298-starved (never captured) → no
+  backfill owed; capture starts going forward. Crafts (bikes/paddles) repoint to write athlete_gear.
 
 **End of plan v1.**

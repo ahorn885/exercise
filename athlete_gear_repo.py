@@ -122,6 +122,44 @@ def replace_athlete_gear(db, user_id: int, owned: dict[str, str]) -> None:
         )
 
 
+def replace_owned_gear_for_kinds(
+    db, user_id: int, owned: dict[str, str], group_kinds: set[str]
+) -> None:
+    """Replace the athlete's owned gear WITHIN `group_kinds` only — gear of other
+    kinds is preserved (#884 slice 4).
+
+    Each capture surface owns a slice of the unified store: crafts → {'bike',
+    'paddle'}, gear toggles → {'ski','snow','climbing','alpine'} (slice 4b), swim
+    → {'swim'} (slice 6). This lets the per-surface forms write their own kinds
+    without clobbering the others, while keeping one store the feasibility cascade
+    reads (slice 4a). `owned` maps `gear_id → access`; every gear_id must be in
+    `GEAR_REGISTRY`, carry a `group_kind` in `group_kinds`, and every access in
+    `_ACCESS_VALUES`, else `GearSelectionError` is raised and nothing is written.
+    Caller commits.
+    """
+    validated = _validate_owned(owned)
+    off_surface = sorted(g for g in validated if GEAR_REGISTRY[g] not in group_kinds)
+    if off_surface:
+        raise GearSelectionError(
+            f"gear_id(s) outside this surface's kinds {sorted(group_kinds)}: "
+            f"{', '.join(off_surface)}"
+        )
+    kinds = sorted(group_kinds)
+    placeholders = ",".join("?" for _ in kinds)
+    db.execute(
+        f"DELETE FROM athlete_gear WHERE user_id = ? AND group_kind IN ({placeholders})",
+        (user_id, *kinds),
+    )
+    for gid in _GEAR_IDS:
+        if gid not in validated:
+            continue
+        db.execute(
+            "INSERT INTO athlete_gear (user_id, gear_id, group_kind, access) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, gid, GEAR_REGISTRY[gid], validated[gid]),
+        )
+
+
 def evict_layer1_on_gear_change(db, user_id: int) -> None:
     """Owned gear feeds the feasibility cascade (Layer 1 baselines, once slice 4
     re-homes `_collect_athlete_crafts` onto `athlete_gear`), so a save invalidates

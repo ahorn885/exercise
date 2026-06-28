@@ -17,6 +17,7 @@ from athlete_gear_repo import (
     load_gear_locales,
     replace_athlete_gear,
     replace_gear_locale,
+    replace_owned_gear_for_kinds,
 )
 
 
@@ -146,6 +147,44 @@ class TestReplace:
         conn = _FakeConn()
         with pytest.raises(GearSelectionError):
             replace_athlete_gear(conn, 1, {"road_bike": "borrowed"})
+        assert conn.calls == []
+
+
+# ─── replace_owned_gear_for_kinds (#884 slice 4 — per-surface scoped write) ───
+
+class TestReplaceForKinds:
+    def test_scoped_delete_then_inserts_only_those_kinds(self):
+        conn = _FakeConn()
+        replace_owned_gear_for_kinds(
+            conn, 1, {"gravel_bike": "own", "kayak": "own"}, {"bike", "paddle"}
+        )
+        # DELETE is scoped to the surface's kinds (sorted), preserving other kinds.
+        assert conn.calls[0][0].startswith("DELETE FROM athlete_gear")
+        assert "group_kind IN (?,?)" in conn.calls[0][0]
+        assert conn.calls[0][1] == (1, "bike", "paddle")
+        # INSERTs in GEAR_REGISTRY order, group_kind derived.
+        inserted = [(c[1][1], c[1][2]) for c in conn.calls[1:]]
+        assert inserted == [("gravel_bike", "bike"), ("kayak", "paddle")]
+
+    def test_empty_clears_only_those_kinds(self):
+        conn = _FakeConn()
+        replace_owned_gear_for_kinds(conn, 1, {}, {"ski", "snow", "climbing", "alpine"})
+        assert len(conn.calls) == 1
+        assert conn.calls[0][1] == (1, "alpine", "climbing", "ski", "snow")
+
+    def test_off_surface_gear_raises_and_writes_nothing(self):
+        # A craft surface ({bike,paddle}) cannot write a ski-kind gear_id.
+        conn = _FakeConn()
+        with pytest.raises(GearSelectionError):
+            replace_owned_gear_for_kinds(
+                conn, 1, {"rollerskis": "own"}, {"bike", "paddle"}
+            )
+        assert conn.calls == []
+
+    def test_unknown_gear_id_raises_and_writes_nothing(self):
+        conn = _FakeConn()
+        with pytest.raises(GearSelectionError):
+            replace_owned_gear_for_kinds(conn, 1, {"jetski": "own"}, {"bike"})
         assert conn.calls == []
 
 
