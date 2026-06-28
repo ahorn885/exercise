@@ -120,10 +120,12 @@ Repoint the three readers onto the new store, keeping bike/paddle behavior ident
 
 ## Resolved decisions (Andy 2026-06-28)
 - **Order:** 4.2 (write-path forward) before 4b (cascade extension).
-- **Rollerski dryland terrain (4b/4.3 Layer-0):** **reuse an existing paved terrain** — map
-  `rollerskis` to the road/paved `TRN-xxx` `road_bike` already rides (no new terrain vocab).
-  Verify the exact paved `TRN` id from `craft_terrain_compatibility` (road_bike rows) before
-  seeding the ski-gear terrain rows; classic/skate → snow `TRN-012`.
+- **Rollerski dryland terrain (4b Layer-0):** **reuse existing paved terrain, no new vocab.**
+  Resolved ids: `road_bike` rides `TRN-001` (Road / Paved) + `TRN-004` (Hill / Rolling); D-028's
+  required terrain is `TRN-012` (snow). So the ski-gear `craft_terrain_compatibility` seed (new
+  migration `0026`): `classic_xc_ski`→`TRN-012`, `skate_xc_ski`→`TRN-012`, `rollerskis`→`TRN-001`.
+  rollerskis on `TRN-001` (≠ the required snow) resolves via the existing "own craft, ride an
+  alternate compatible terrain" PROXY tier — the carve-out falls out of the structure.
 - **4.2 gear-toggle capture:** reuse the profile gear tab's checkbox pattern (no new "Your gear"
   UX); expose the discipline-unlocking GEAR_REGISTRY set (climbing_gear, snowshoes, mountaineering,
   skimo_at, classic/skate/rollerskis). Gear toggles were #298-starved (never captured) → no
