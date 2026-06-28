@@ -1,6 +1,6 @@
 # V5 Implementation — #196 Phase 4 Slice 1: Recovery-Aware Planning (LLM-soft) on the Refresh Tiers — Closing Handoff (2026-06-28)
 
-**Branch:** `claude/phase4-slice23-handoff-a0abm5` · **Suite:** 3588 passed / 30 skipped · **PR:** not yet opened (awaiting Andy's go) · **Kickoff/agenda:** `handoffs/V5_CanonicalDailyWellness_196_Phase4_RecoveryAwarePlanning_Kickoff_2026_06_28_v1.md` · **Design (Phase 2 substrate):** `designs/CanonicalDailyWellness_196_Phase2_Design_v1.md` · **Epic:** #196 (stays OPEN — Slice 2 + Phase 5 remain).
+**Branch:** `claude/phase4-slice23-handoff-a0abm5` · **Suite:** 3588 passed / 30 skipped · **PR:** [#936](https://github.com/ahorn885/exercise/pull/936) (auto-merge SQUASH armed) · **Kickoff/agenda:** `handoffs/V5_CanonicalDailyWellness_196_Phase4_RecoveryAwarePlanning_Kickoff_2026_06_28_v1.md` · **Design (Phase 2 substrate):** `designs/CanonicalDailyWellness_196_Phase2_Design_v1.md` · **Epic:** #196 (stays OPEN — Slice 2 + Phase 5 remain).
 
 > **▶ IMMEDIATE NEXT:** Phase 4 Slice 2 — fold the same `format_recovery_guidance` helper into the remaining Layer-4 prompt surfaces (`per_phase.py`, `race_week_brief.py`, `single_session.py`). Same channel (a), same wording, no new cache-key input. STOP-AND-ASK is **cleared for the mechanism** (ratified this session); a Slice-2 design gate is only needed if the wording is materially adapted per surface.
 
