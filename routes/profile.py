@@ -57,6 +57,15 @@ from athlete_crafts_repo import (
     load_craft_catalog,
     replace_athlete_crafts,
 )
+from athlete_gear_repo import (
+    GearSelectionError,
+    evict_layer1_on_gear_change,
+    get_owned_gear_toggles,
+    load_gear_toggle_catalog,
+    parse_gear_toggle_form,
+    replace_owned_gear_for_kinds,
+    _GEAR_TOGGLE_KINDS,
+)
 from athlete_event_windows_repo import (
     EventWindowError,
     OVERRIDE_TYPES,
@@ -477,6 +486,13 @@ def edit():
     craft_catalog = load_craft_catalog()
     athlete_crafts = get_athlete_crafts(db, uid)
 
+    # #884 slice 4b — owned gear-toggle picker (Gear & skills tab). Catalog = the
+    # discipline-unlocking ski/snow/climbing/alpine slugs; current = the athlete's
+    # owned toggles. Writes `athlete_gear` (un-starves the cascade's gear gate,
+    # #298); nothing reads the toggle kinds until the cascade extension lands.
+    gear_toggle_catalog = load_gear_toggle_catalog()
+    owned_gear_toggles = get_owned_gear_toggles(db, uid)
+
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
     # mutated in place because it's the dict the template reads.
@@ -561,6 +577,8 @@ def edit():
         discipline_weighting=discipline_weighting,
         craft_catalog=craft_catalog,
         athlete_crafts=athlete_crafts,
+        gear_toggle_catalog=gear_toggle_catalog,
+        owned_gear_toggles=owned_gear_toggles,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -712,6 +730,33 @@ def save_crafts():
         return redirect(url_for('profile.edit', tab='gear'))
     db.commit()
     evict_layer1_on_crafts_change(db, uid)
+    flash('Gear saved.', 'success')
+    return redirect(url_for('profile.edit', tab='gear'))
+
+
+@bp.route('/gear-toggles', methods=['POST'])
+def save_gear_toggles():
+    """Persist the owned gear-toggle form (Gear & skills tab) — #884 slice 4b.
+
+    The athlete checks the discipline-unlocking gear they own (XC/rollerskis,
+    snowshoes, climbing/mountaineering/skimo kit); replace-all within the
+    ski/snow/climbing/alpine kinds (unchecked = not owned), preserving crafts +
+    swim gear in the shared store. Mirrors `save_crafts`' parse → write → evict
+    path. This un-starves the cascade's gear gate (#298) — nothing reads the
+    toggle kinds until the slice-4b cascade extension lands.
+    """
+    db = get_db()
+    uid = current_user_id()
+    owned = parse_gear_toggle_form(request.form)
+    try:
+        replace_owned_gear_for_kinds(db, uid, owned, _GEAR_TOGGLE_KINDS)
+    except GearSelectionError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='gear'))
+    db.commit()
+    evict_layer1_on_gear_change(db, uid)
+    # Rule #15 — the decision this path made (which toggles the athlete now owns).
+    print(f"[gear-toggle-capture] uid={uid} owned={sorted(owned)}")
     flash('Gear saved.', 'success')
     return redirect(url_for('profile.edit', tab='gear'))
 
