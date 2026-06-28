@@ -137,6 +137,24 @@ def _blocker_item(item_key="b1"):
     )
 
 
+def _informational_item(item_key="i1", message="msg", source="3C"):
+    """A display-only (`informational`) gate item — the surfaced advisory
+    coaching_flags 3C emits (or a 3B informational note): the plan-home
+    coaching-note source. Never gates a plan."""
+    return GateItem(
+        item_key=item_key,
+        source=source,
+        source_item_id="2C:flag:toggle_off_for_discipline",
+        severity="informational",
+        title="Toggle off for discipline",
+        message=message,
+        resolution_options=[],
+        revise_target="profile.locales",
+        can_acknowledge=True,
+        evidence={"origin": "2C", "flag_type": "toggle_off_for_discipline"},
+    )
+
+
 def _plan_row(status="needs_review", pvid=7, uid=3):
     return {
         "id": pvid, "user_id": uid, "created_at": "ts", "created_via": "plan_create",
@@ -666,3 +684,104 @@ class TestOneInFlight:
         resp = client.post("/plans/v2/new", data={"plan_start_date": "2999-01-01"})
         assert resp.status_code == 302
         assert "/9/progress" in resp.headers["Location"]
+
+
+# ─── Item B: plan-page coaching notes (informational items) ───────────────────
+
+
+class TestPlanCoachingNotes:
+    """`_plan_coaching_notes` returns only the plan's display-only
+    (`informational`) gate items — the plan-home coaching-note panel (Item B,
+    §5.4 Slice 2). Warnings/blockers belong on the review screen, not here."""
+
+    def test_returns_informational_items_only(self):
+        gate = _gate(
+            status="green",
+            items=[
+                _warning_item("w1"),
+                _blocker_item("b1"),
+                _informational_item("i1", message="Trail running is gear-gated everywhere."),
+                _informational_item("i2", message="Calorie target sits below race demand."),
+            ],
+        )
+        conn = _GateConn(hitl_gate_json=gate.model_dump_json())
+        notes = plan_create._plan_coaching_notes(conn, 3, 7)
+        assert [n.item_key for n in notes] == ["i1", "i2"]
+        assert all(n.severity == "informational" for n in notes)
+
+    def test_no_gate_returns_empty(self):
+        conn = _GateConn(hitl_gate_json=None)
+        assert plan_create._plan_coaching_notes(conn, 3, 7) == []
+
+    def test_no_informational_items_returns_empty(self):
+        gate = _gate(items=[_warning_item("w1"), _blocker_item("b1")])
+        conn = _GateConn(hitl_gate_json=gate.model_dump_json())
+        assert plan_create._plan_coaching_notes(conn, 3, 7) == []
+
+    def test_load_failure_degrades_to_empty(self, monkeypatch, capsys):
+        def _boom(db, uid, pvid):
+            raise RuntimeError("blob corrupt")
+
+        monkeypatch.setattr(plan_create, "load_hitl_gate", _boom)
+        assert plan_create._plan_coaching_notes(object(), 3, 7) == []
+        # Rule #15 — the fail-safe prints why no notes showed.
+        assert "gate load failed" in capsys.readouterr().out
+
+
+class TestCoachingNotesRender:
+    """The plan-home view renders the informational items as coaching notes (and
+    no panel when there are none). Renders the real `view.html` against a stub
+    base so no Flask app/DB is needed (mirrors `test_plan_view_conditions_render`)."""
+
+    def _render(self, coaching_notes):
+        from jinja2 import ChoiceLoader, DictLoader, Environment, FileSystemLoader
+
+        env = Environment(
+            loader=ChoiceLoader(
+                [
+                    DictLoader(
+                        {
+                            "base.html": (
+                                "{% block title %}{% endblock %}"
+                                "{% block crumbs %}{% endblock %}"
+                                "{% block content %}{% endblock %}"
+                            )
+                        }
+                    ),
+                    FileSystemLoader("templates"),
+                ]
+            )
+        )
+        env.globals["url_for"] = lambda *a, **k: "#"
+        env.globals["csrf_token"] = lambda: "test-token"
+        return env.get_template("plan_create/view.html").render(
+            plan_version={
+                "id": 1, "pattern": "A", "created_via": "plan_create",
+                "scope_start_date": date(2026, 6, 1),
+                "scope_end_date": date(2026, 7, 17),
+            },
+            plan_version_id=1,
+            plan_name="Test plan",
+            lifecycle_state="Active",
+            coaching_notes=coaching_notes,
+            days=[],
+            session_count=0,
+            nutrition=None,
+            nutrition_by_date={},
+            conditions=None,
+            conditions_by_date={},
+        )
+
+    def test_informational_messages_render_as_notes(self):
+        html = self._render(
+            [
+                _informational_item("i1", message="Trail running is gear-gated everywhere."),
+                _informational_item("i2", message="Your calorie target sits below race demand."),
+            ]
+        )
+        assert "Coaching notes" in html
+        assert "Trail running is gear-gated everywhere." in html
+        assert "Your calorie target sits below race demand." in html
+
+    def test_no_notes_renders_no_panel(self):
+        assert "Coaching notes" not in self._render([])

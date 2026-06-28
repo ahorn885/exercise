@@ -1554,10 +1554,16 @@ def _run_pattern_a_engine(
         )
         # Rule #15: log the verdict + the planned-vs-actual inputs the reviewer
         # decided on, so a surprising flag (or a silent miss) is attributable.
+        # Log the issue TEXT (not just the count) on any non-clean verdict —
+        # the seam_issues are the diagnostic payload (WHY it flagged), and they
+        # ride the unpersisted `notable_observations`, so the log is their only
+        # durable record. Logging just the count (the original gap) forced a
+        # cache-dig to recover the reasons after plan #82's flagged_major.
+        _issues_txt = " | ".join(res.seam_issues) if res.seam_issues else "(none)"
         print(
             f"week_seam_review: {seam_label} verdict={res.verdict} "
             f"direction={res.proposed_patch_direction} "
-            f"issues={len(res.seam_issues)}"
+            f"issues={len(res.seam_issues)}: {_issues_txt}"
         )
         if res.verdict == "approved":
             continue

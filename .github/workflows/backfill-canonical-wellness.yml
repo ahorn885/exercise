@@ -1,0 +1,56 @@
+name: Backfill canonical daily wellness
+
+# Manually-triggered one-time backfill of the #196 Phase 2 canonical_daily_wellness
+# table (re)materializing every historical (user, date) that has wellness data.
+#
+# Runs behind the protected `production` GitHub Environment, so the prod write
+# requires that environment's required-reviewer approval (a one-tap gate on
+# mobile). IMPORTANT: the `production` environment must already exist with a
+# required reviewer (Settings -> Environments) — it gates layer0-apply too.
+#
+# Reuses the live writer (canonical_wellness.materialize_canonical_wellness via
+# backfill_canonical_wellness) rather than re-deriving the coalesce in SQL, so the
+# backfilled rows are byte-identical to what on-ingest materialization produces.
+# Idempotent: safe to re-run; a day that lost all its data clears its stale row.
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_id:
+        description: "Limit the backfill to one user_id (blank = all users)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: python materialize -> prod Neon
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run backfill
+        env:
+          # The writer connects via database._connect(), which reads DATABASE_URL.
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          USER_ID: ${{ inputs.user_id }}
+        run: |
+          set -euo pipefail
+          test -n "${DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret unset"; exit 1; }
+          args=(--backfill)
+          if [ -n "${USER_ID:-}" ]; then args+=(--user "$USER_ID"); fi
+          python canonical_wellness.py "${args[@]}" | tee backfill.out
+          {
+            echo "### Canonical daily-wellness backfill"
+            echo '```'
+            cat backfill.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

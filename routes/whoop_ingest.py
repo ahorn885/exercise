@@ -39,6 +39,7 @@ from typing import Any
 
 import requests
 
+from canonical_wellness import materialize_wellness_for_provider
 from routes import provider_auth as pa
 
 _WHOOP_API_BASE = os.environ.get('WHOOP_API_BASE', 'https://api.prod.whoop.com/developer')
@@ -201,6 +202,9 @@ def _merge_daily(db: Any, user_id: int, day: str, partial: dict) -> None:
         '    fetched_at = NOW()',
         (user_id, day, day, json.dumps(existing)),
     )
+    # #196 Phase 2 Slice 2.2 — refresh the canonical daily-wellness row for this
+    # WHOOP day after the merged daily_summary write.
+    materialize_wellness_for_provider(db, user_id, 'whoop', 'daily_summary', day)
 
 
 def _record_raw(db: Any, user_id: int, data_type: str, external_id: str,

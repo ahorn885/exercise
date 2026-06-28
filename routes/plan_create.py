@@ -1244,11 +1244,19 @@ def view_plan(plan_version_id: int):
             f"plan_version_id={plan_version_id} (non-fatal): {_rwb_exc}"
         )
 
+    # Item B (§5.4 Slice 2) — list the plan's informational gate items (the
+    # advisory coaching_flags 3C surfaces + any 3B informational note) as
+    # plan-page coaching notes. They never parked this plan, so the review screen
+    # never showed them on a clean run; surface them here so a green plan still
+    # carries the cross-node context. Fail-safe inside the helper.
+    coaching_notes = _plan_coaching_notes(db, uid, plan_version_id)
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
         plan_version_id=plan_version_id,
         plan_name=plan_name,
+        coaching_notes=coaching_notes,
         evidence_sources=evidence_sources,
         lifecycle_state=_plan_lifecycle_label(plan_version, date.today()),
         days=_plan_days_with_rest_gaps(sessions_by_date),
@@ -1604,6 +1612,32 @@ def _build_revise_urls(db, uid: int, gate) -> dict[str, str]:
                     urls[t] = url
 
     return urls
+
+
+def _plan_coaching_notes(db, uid: int, plan_version_id: int) -> list:
+    """The plan's display-only (`informational`) gate items — the advisory
+    `coaching_flags` 3C surfaces (§5.4 Slice 2) plus any 3B `informational`
+    surface — for listing as plan-page coaching notes on a generated plan.
+
+    These never park a plan (`compute_gate_status` treats `informational` as
+    non-gating), so the review screen only shows them when *something else* parks
+    the plan; a fully-green plan never displays them. Surface them on the plan
+    home so the athlete still sees the cross-node context (e.g. an included
+    discipline that's gear-gated at every locale) on a clean plan.
+
+    Advisory — a gate load/parse fault must NEVER 500 the plan view, so degrade to
+    no notes (mirrors the nutrition/conditions/evidence loads in `view_plan`)."""
+    try:
+        gate = load_hitl_gate(db, uid, plan_version_id)
+    except Exception as exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"_plan_coaching_notes: gate load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {exc}"
+        )
+        return []
+    if gate is None:
+        return []
+    return [it for it in gate.items if it.severity == "informational"]
 
 
 def _gate_inputs_changed(db, uid: int, plan_version: dict, gate) -> bool:
