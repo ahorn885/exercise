@@ -51,6 +51,7 @@ from layer4.plan_refresh_t1 import (
     _format_window_verbatim,
 )
 from layer4.plan_refresh_t2 import _format_weekly_aggregate
+from layer4.recovery_guidance import format_recovery_guidance
 
 
 DEFAULT_MAX_TOKENS = 10000
@@ -303,6 +304,12 @@ def render_user_prompt(
         f"{layer3a_payload.data_density.integration_data_days} days of "
         f"integration data"
     )
+    parts.append("")
+
+    # === Recovery state (3A wellness) — #196 Phase 4 recovery-aware planning ===
+    # Freshness-gated, LLM-soft strong-lean guidance surfaced from the already-
+    # hashed 3A digest (no new cache-key input). See layer4/recovery_guidance.py.
+    parts.extend(format_recovery_guidance(layer3a_payload))
     parts.append("")
 
     # === Week -2 rollup ===
