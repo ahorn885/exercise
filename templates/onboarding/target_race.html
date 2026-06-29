@@ -353,6 +353,31 @@
       });
     }
 
+    // Issue #948 — the race-URL parse returns included_discipline_ids; the
+    // shared autofill partial hands them here so the grid toggles them on
+    // (they were never checked before, forcing manual entry). Stored because a
+    // framework_sport change rebinds the grid asynchronously — re-applied after
+    // every rebind so the parsed picks survive the swap.
+    let desiredDisciplineIds = null;
+
+    function applyDesiredDisciplines() {
+      if (!desiredDisciplineIds || !desiredDisciplineIds.size) return;
+      let changed = false;
+      grid.querySelectorAll('input[name="included_discipline_ids"]').forEach((box) => {
+        if (desiredDisciplineIds.has(box.value) && !box.checked) {
+          box.checked = true;
+          changed = true;
+        }
+      });
+      if (changed) applyTerrainDisciplineSelects();
+    }
+
+    document.addEventListener('race-autofill:disciplines', function (ev) {
+      const ids = (ev.detail && ev.detail.ids) || [];
+      desiredDisciplineIds = new Set(ids);
+      applyDesiredDisciplines();
+    });
+
     async function fetchDisciplinesAndRebind(frameworkSport) {
       try {
         const url = ENDPOINT + '?framework_sport=' + encodeURIComponent(frameworkSport);
@@ -361,6 +386,7 @@
         const data = await resp.json();
         const results = (data && data.results) || [];
         refreshGrid(results);
+        applyDesiredDisciplines();
         applyTerrainDisciplineSelects();
       } catch (_e) { /* network/parse error — leave existing grid alone */ }
     }

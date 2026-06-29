@@ -1,20 +1,23 @@
-"""Slice 2.3 deterministic-equality test (#196 Phase 2).
+"""Slice 2.3 reader-equality test (#196 Phase 2), retuned for the B2 merge.
 
-Proves the Layer-3A wellness-reader repoint is behaviour-preserving: for the same
-underlying multi-source device data, the **NEW** path
-(`canonical_wellness.materialize_canonical_wellness` writes the merged row →
-`layer3a.integration.q_layer3A_recent_wellness` reads it back) yields a
-`recent_wellness` list **byte-identical** to the **OLD** inline six-source
-coalesce that used to live in the reader.
+Proves the writer → reader round-trip is deterministic and matches an independent
+reimplementation of the merge: for the same underlying multi-source device data,
+the **NEW** path (`canonical_wellness.materialize_canonical_wellness` writes the
+merged row → `layer3a.integration.q_layer3A_recent_wellness` reads it back) yields
+a `recent_wellness` list **byte-identical** to a standalone **reference** coalesce
+below.
 
 Why byte-identical matters: the list folds into `integration_bundle_hash`
 (exact-float `canonical_json`) and thus the 3A cache key — any drift silently
 invalidates 3A caches. The canonical numeric columns are DOUBLE PRECISION
 (Slice 2.3 widened them from REAL) so the merged doubles round-trip losslessly.
 
-The OLD reader is preserved verbatim below as `_old_inline_recent_wellness`. The
-two paths are independent coalesce implementations (the writer's lives in
-`canonical_wellness.py`); driving both from one fixture set cross-checks them.
+The reference coalesce below mirrors the production rule. Through Slice 2.3 that
+rule was freshest-non-null; **#196 Phase 5 Track B (B2) changed it to
+most-complete-record-primary + per-metric gap-fill** (decision 2), and this
+reference was retuned to match. The two paths remain independent implementations
+(the writer's lives in `canonical_wellness.py`); driving both from one fixture set
+cross-checks them.
 """
 from __future__ import annotations
 
@@ -30,24 +33,40 @@ _AS_OF = datetime(2026, 5, 20, 12, 0, 0)
 _SINCE = 14  # _DEFAULT_SLEEP_WINDOW_DAYS
 
 
-# ─── OLD reader, verbatim (the path the repoint retired) ─────────────────────
+# ─── Reference reader (independent reimplementation of the B2 merge) ──────────
 
 _WELLNESS_SOURCE_PRIORITY = {"garmin": 5, "whoop": 4, "oura": 3, "polar": 2, "coros": 1}
 
 
-def _coalesce_old(candidates):
+def _rank_sources_ref(*metric_cands):
+    """Richest-first source order: completeness (metrics carried) desc, priority
+    desc as the tiebreak — the reference twin of `cw._rank_sources`."""
+    score: dict[str, int] = {}
+    for cands in metric_cands:
+        for src in {c[2] for c in cands}:
+            score[src] = score.get(src, 0) + 1
+    return sorted(score, key=lambda s: (-score[s], -_WELLNESS_SOURCE_PRIORITY[s]))
+
+
+def _coalesce_ref(candidates, ranked):
+    """Most-complete pick for one metric: the first source in `ranked` that has a
+    value (freshest within a source). No pin here — the equality fixtures set none."""
     if not candidates:
         return None, None
-    best = max(
-        candidates,
-        key=lambda c: (c[0] or datetime.min, _WELLNESS_SOURCE_PRIORITY[c[2]]),
-    )
-    return best[1], best[2]
+    by_source: dict[str, tuple] = {}
+    for ts, val, src in candidates:
+        cur = by_source.get(src)
+        if cur is None or (ts or datetime.min) >= (cur[0] or datetime.min):
+            by_source[src] = (ts, val)
+    for src in ranked:
+        if src in by_source:
+            return by_source[src][1], src
+    return None, None
 
 
-def _old_inline_recent_wellness(db, user_id, as_of, *, since_days=_SINCE):
-    """The pre-Slice-2.3 inline six-source coalesce, copied unchanged so the
-    equality assertion compares the new path against the real former behaviour."""
+def _reference_recent_wellness(db, user_id, as_of, *, since_days=_SINCE):
+    """Standalone six-source coalesce mirroring the B2 production merge, so the
+    equality assertion compares the new path against an independent implementation."""
     cutoff_iso = _window_cutoff(as_of, since_days).isoformat()
     sleep_cand: dict[date, list] = defaultdict(list)
     hrv_cand: dict[date, list] = defaultdict(list)
@@ -101,9 +120,11 @@ def _old_inline_recent_wellness(db, user_id, as_of, *, since_days=_SINCE):
 
     out: list[DailyWellnessRecord] = []
     for d in sorted(set(sleep_cand) | set(hrv_cand) | set(rhr_cand), reverse=True):
-        sleep_h, sleep_src = _coalesce_old(sleep_cand.get(d, []))
-        hrv_v, hrv_src = _coalesce_old(hrv_cand.get(d, []))
-        rhr_v, rhr_src = _coalesce_old(rhr_cand.get(d, []))
+        s_c, h_c, r_c = sleep_cand.get(d, []), hrv_cand.get(d, []), rhr_cand.get(d, [])
+        ranked = _rank_sources_ref(s_c, h_c, r_c)
+        sleep_h, sleep_src = _coalesce_ref(s_c, ranked)
+        hrv_v, hrv_src = _coalesce_ref(h_c, ranked)
+        rhr_v, rhr_src = _coalesce_ref(r_c, ranked)
         out.append(DailyWellnessRecord(
             date=d,
             total_sleep_hours=round(sleep_h, 3) if sleep_h is not None else None,
@@ -126,7 +147,8 @@ _UID = 1
 # garmin daily_wellness_metrics rows: date -> full column dict (writer reads the
 # context fields too; the reader ignores them).
 _GARMIN: dict[str, dict[str, Any]] = {
-    # 2026-05-19 — garmin carries all three; a FRESHER Whoop flips hrv + rhr.
+    # 2026-05-19 — garmin carries all three (the most-complete record); a fresher
+    # but less-complete Whoop (hrv+rhr only) no longer flips anything under B2.
     "2026-05-19": dict(
         sleep_start_ms=0, sleep_end_ms=7 * 3_600_000 + 3_000_000,  # 7.8333h
         hrv_overnight_avg_ms=58.3, resting_hr=50,
@@ -149,13 +171,15 @@ _GARMIN: dict[str, dict[str, Any]] = {
 
 # provider_raw_record rows: (provider, data_type, date) -> [(payload, fetched_at)]
 _PRR: dict[tuple[str, str, str], list[tuple[dict, datetime]]] = {
-    # 2026-05-19 — Whoop, fresher than garmin, carries only hrv + rhr (no sleep)
-    # → garmin keeps sleep, Whoop wins hrv + rhr by freshness.
+    # 2026-05-19 — Whoop, fresher than garmin, carries only hrv + rhr (no sleep).
+    # Under B2 garmin's record is more complete, so it stays primary for all three;
+    # Whoop contributes nothing (every metric it has, garmin also has).
     ("whoop", "daily_summary", "2026-05-19"): [
         ({"hrv_rmssd_ms": 71.4, "resting_hr": 45.0}, datetime(2026, 5, 19, 9, 0)),
     ],
-    # 2026-05-17 — COROS sleep+hrv (fresher) and Oura sleep+hrv+rhr (older). COROS
-    # wins sleep+hrv by freshness despite lower priority; rhr is Oura-only.
+    # 2026-05-17 — COROS sleep+hrv (fresher, 2 metrics) and Oura sleep+hrv+rhr
+    # (older, 3 metrics). Under B2 Oura is the most-complete record → primary for
+    # sleep+hrv+rhr; COROS contributes nothing despite being fresher.
     ("coros", "daily_summary", "2026-05-17"): [
         ({"sleep_start_ms": 0, "sleep_end_ms": 8 * 3_600_000 + 1_800_000,  # 8.5h
           "ppg_hrv": 47.9}, datetime(2026, 5, 17, 8, 0)),
@@ -181,10 +205,10 @@ class _Cursor:
         return self._rows
 
 
-class _OldConn:
-    """Serves the OLD reader's six windowed reads, projecting each fixture into
-    the computed-column shape the old SQL produced (so the verbatim reader runs
-    unchanged). Provider/data_type are fixed per call label."""
+class _RefConn:
+    """Serves the reference reader's six windowed reads, projecting each fixture
+    into the computed-column shape the reader's SQL produced. Provider/data_type
+    are fixed per call label."""
 
     def execute(self, label, params=()):
         if label.startswith("daily_wellness_metrics"):
@@ -287,10 +311,10 @@ def _new_path_recent_wellness():
 
 
 class TestReaderEquality:
-    def test_new_path_equals_old_inline(self):
-        old = _old_inline_recent_wellness(_OldConn(), _UID, _AS_OF)
+    def test_new_path_equals_reference(self):
+        ref = _reference_recent_wellness(_RefConn(), _UID, _AS_OF)
         new = _new_path_recent_wellness()
-        assert new == old
+        assert new == ref
 
     def test_expected_shape(self):
         # Guards the fixtures themselves: if both paths silently collapsed to []
@@ -299,20 +323,22 @@ class TestReaderEquality:
         assert [r.date for r in new] == [date(2026, 5, 19), date(2026, 5, 17)]  # desc
 
         r19 = new[0]
+        # garmin is the most-complete record → primary for all three (B2).
         assert r19.total_sleep_hours == round(7 + 3_000_000 / 3_600_000, 3)  # garmin
         assert r19.total_sleep_hours_source == "garmin"
-        assert r19.hrv_rmssd_ms == 71.4 and r19.hrv_rmssd_ms_source == "whoop"  # fresher
-        assert r19.resting_hr == 45 and r19.resting_hr_source == "whoop"
+        assert r19.hrv_rmssd_ms == 58.3 and r19.hrv_rmssd_ms_source == "garmin"
+        assert r19.resting_hr == 50 and r19.resting_hr_source == "garmin"
 
         r17 = new[1]
-        assert r17.total_sleep_hours == 8.5 and r17.total_sleep_hours_source == "coros"
-        assert r17.hrv_rmssd_ms == 47.9 and r17.hrv_rmssd_ms_source == "coros"  # fresher
-        assert r17.resting_hr == 48 and r17.resting_hr_source == "oura"  # oura-only
+        # oura's record (3 metrics) out-completes coros (2) → primary for all three.
+        assert r17.total_sleep_hours == round(500.0 / 60.0, 3) and r17.total_sleep_hours_source == "oura"
+        assert r17.hrv_rmssd_ms == 46.0 and r17.hrv_rmssd_ms_source == "oura"
+        assert r17.resting_hr == 48 and r17.resting_hr_source == "oura"
 
     def test_context_only_day_skipped_both_paths(self):
         # 2026-05-18 has only Garmin context (readiness, no device sleep/hrv/rhr):
         # absent from both the old coalesce output and the new reader output.
         new = _new_path_recent_wellness()
-        old = _old_inline_recent_wellness(_OldConn(), _UID, _AS_OF)
+        ref = _reference_recent_wellness(_RefConn(), _UID, _AS_OF)
         assert all(r.date != date(2026, 5, 18) for r in new)
-        assert all(r.date != date(2026, 5, 18) for r in old)
+        assert all(r.date != date(2026, 5, 18) for r in ref)

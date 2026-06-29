@@ -106,6 +106,20 @@
         fs.value = f.framework_sport;
         fs.dispatchEvent(new Event('change', { bubbles: true }));
       }
+
+      // #948 — thread the parsed disciplines into the checkbox grid so they
+      // toggle on (they previously stayed unchecked, forcing manual entry).
+      // The grid script owns the discipline checkboxes AND their async rebind
+      // on a framework_sport change, so hand it the ids via an event rather
+      // than reaching into the checkboxes here — it re-applies them after each
+      // rebind so the picks survive the swap. Fires whether or not the
+      // framework_sport changed above (an edit form with a sport already set
+      // still gets its disciplines toggled).
+      if (Array.isArray(f.included_discipline_ids) && f.included_discipline_ids.length) {
+        document.dispatchEvent(new CustomEvent('race-autofill:disciplines', {
+          detail: { ids: f.included_discipline_ids }
+        }));
+      }
     }
 
     // ── distance/event chooser (distance is athlete-selected) ─────────────
@@ -190,7 +204,21 @@
         var dsel = row.querySelector('select[name$="[discipline_id]"]');
         if (optionExists(tsel, e.terrain_id)) { tsel.value = e.terrain_id; any = true; }
         if (pct && e.pct_of_race != null) pct.value = e.pct_of_race;
-        if (e.discipline_id && optionExists(dsel, e.discipline_id)) dsel.value = e.discipline_id;
+        // #948 — the cloned template row only carries disciplines for the
+        // framework_sport rendered at page load, but a URL parse may set a
+        // different sport whose rebind hasn't landed yet (it's async). Inject
+        // the parsed leg-discipline as an option so the value sticks; the grid
+        // script's applyTerrainDisciplineSelects() then keeps or narrows it
+        // once the rebind + discipline toggles settle (its keepPrior path).
+        if (e.discipline_id && dsel) {
+          if (!optionExists(dsel, e.discipline_id)) {
+            var opt = document.createElement('option');
+            opt.value = e.discipline_id;
+            opt.textContent = e.discipline_id;
+            dsel.appendChild(opt);
+          }
+          dsel.value = e.discipline_id;
+        }
       });
       return any;
     }
