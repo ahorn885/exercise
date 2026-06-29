@@ -1135,6 +1135,17 @@ def _upstream_full_cone(
     # resolvable home) falls back to the primary locale alone, preserving the
     # primary entry that the strength pool + skill-gate read.
     cluster_for_2c = cluster or [primary_locale]
+    # #884 slice 4b PR-3 — feed the gear-toggle gate from the athlete's owned gear
+    # (the last #298 consumer; the 2C sites passed `{}` since the toggle store was
+    # empty). Derived off the already-loaded `owned_gear` (rides layer1_hash, no new
+    # query) via the §5.5 gear_id→toggle_name bridge. Owning the gear suppresses the
+    # spurious "toggle off for discipline" 2C flag for the disciplines it gates
+    # (Climbing gear → D-012/013/014, Snowshoeing setup → D-017), keeping 2C
+    # consistent with the cascade's gear gating (PR-2); the per-cluster state is the
+    # same for every locale (gear is portable — §3).
+    from athlete_gear_repo import owned_gear_toggle_states
+
+    cluster_gear_states = owned_gear_toggle_states(layer1_payload.owned_gear)
     layer2c_payloads = {
         locale: q_layer2c_equipment_mapper_payload(
             db,
@@ -1143,7 +1154,7 @@ def _upstream_full_cone(
                 locations.locale_effective_tags(db, user_id, locale)
             ),
             cluster_locale_ids=cluster_for_2c,
-            cluster_gear_toggle_states={},
+            cluster_gear_toggle_states=cluster_gear_states,
             included_discipline_ids=included_discipline_ids,
             layer2d_payload=layer2d_payload,
             etl_version_set=etl_version_set,
@@ -1159,7 +1170,8 @@ def _upstream_full_cone(
     print(
         f"_upstream_full_cone: user_id={user_id} layer2c built per-locale for "
         f"cluster={cluster_for_2c} pool_sizes="
-        f"{ {loc: len(p.effective_pool) for loc, p in layer2c_payloads.items()} }"
+        f"{ {loc: len(p.effective_pool) for loc, p in layer2c_payloads.items()} } "
+        f"gear_toggle_states={dict(sorted(cluster_gear_states.items()))}"
     )
 
     integration_bundle = assemble_layer3a_integration_bundle(db, user_id, as_of)
@@ -1559,6 +1571,8 @@ def orchestrate_single_session_synthesize(
         today=today,
     )
 
+    from athlete_gear_repo import owned_gear_toggle_states
+
     layer2c_payload_for_locale = None
     if request.locale_slug is not None:
         if not _q_locale_by_slug(db, user_id, request.locale_slug):
@@ -1575,7 +1589,10 @@ def orchestrate_single_session_synthesize(
             locale_id=request.locale_slug,
             locale_equipment_pool=locale_equipment_pool,
             cluster_locale_ids=[request.locale_slug],
-            cluster_gear_toggle_states={},
+            # #884 slice 4b PR-3 — same gear-toggle feed as the full-cone path.
+            cluster_gear_toggle_states=owned_gear_toggle_states(
+                layer1_payload.owned_gear
+            ),
             included_discipline_ids=included_discipline_ids,
             layer2d_payload=layer2d_payload,
             etl_version_set=etl_version_set,
