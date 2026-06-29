@@ -1266,6 +1266,8 @@ body.bulk-mode { padding-bottom: 80px; }
   margin: 28px 0 6px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline);
 }
 .app .day-group { margin-top: 16px; }
+/* Clear the 56px sticky topbar when a day/session is reached via deep-link (#956). */
+.app .day-group, .app .sess-card { scroll-margin-top: 72px; }
 .app .day-group .day-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .app .day-group .day-label .dow { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
 .app .sess-card { padding: 14px 16px; }

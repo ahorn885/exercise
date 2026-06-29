@@ -77,6 +77,9 @@ def _v2_session_card(session, plan_name=None) -> dict:
         'plan_name': plan_name or 'Training plan',
         'item_date': item_date.isoformat() if hasattr(item_date, 'isoformat')
         else item_date,
+        # Deep-link key into the plan's daily view (#956): the session's slot
+        # within its day. Pairs with `item_date` to target `#s-<iso>-<idx>`.
+        'session_index': getattr(session, 'session_index_in_day', 0),
     }
 
 
@@ -102,6 +105,9 @@ def _rest_day_card(plan_version_id: int, plan_name: str | None, d: date) -> dict
         'locale_name': None,
         'plan_name': plan_name or 'Training plan',
         'item_date': d.isoformat(),
+        # Synthesized rest day (no session row) — deep-link to the day group
+        # (`#day-<iso>`) rather than a session slot (#956).
+        'session_index': None,
     }
 
 
