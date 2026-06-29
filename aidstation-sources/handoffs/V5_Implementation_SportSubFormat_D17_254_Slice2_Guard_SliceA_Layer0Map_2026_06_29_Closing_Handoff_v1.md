@@ -7,7 +7,7 @@
 
 ## 0. Thread continuity — NEXT SESSION CONTINUES #254 → SLICE B
 
-This session shipped the **design** + **slice 2** (Layer 2A guard) + **slice A** (Layer 0 `sport_sub_format_map`). **Slice B (serving/capture) is NOT done — it is the next session's work**, and it is gated on the Layer-0 apply of slice A (§6.1). Do §6.1 (apply 0033) BEFORE building slice B.
+This session shipped the **design** + **slice 2** (Layer 2A guard) + **slice A** (Layer 0 `sport_sub_format_map`), and the slice-A **`layer0-apply` is DONE** (§6.1 — `sport_sub_format_map` is live in prod). **Slice B (serving/capture) is NOT done — it is the next session's work** and is now **UNBLOCKED**. Build it per §6.2 on branch `claude/issue-254-slice-b`.
 
 ## 1. The problem (confirmed in live Layer 0 data)
 
@@ -58,10 +58,9 @@ Design; storage reversed to D1′; slices re-cut A/B; open questions resolved.
 
 ## 6. Next session pointers
 
-### 6.1 OWED on merge — Layer-0 ops sequence (do in this order, BEFORE slice B)
-1. **`layer0-apply`** (gated; Andy one-tap `production`) — applies `0033` to prod Neon. Idempotent.
-2. **`layer0-redump`** (`version` = next, e.g. `v1.10.1`) → snapshot includes `sport_sub_format_map`; then **archive the now-baked migrations** per `etl/migrations/layer0/README.md` (re-dump must be paired with folding).
-3. Only then is slice B's table read live.
+### 6.1 Layer-0 ops sequence
+1. ✅ **`layer0-apply` DONE** — PR #1015 merged, then run `28387337720` (2026-06-29) applied `0033` to prod Neon: `CREATE TABLE` + `INSERT 0 17` + verify DO-block **PASS** + ledger insert; `0031`/`0032` ledger-skipped (already applied by #255). **`layer0.sport_sub_format_map` is LIVE (17 rows) — slice B's table is readable, slice B is UNBLOCKED.**
+2. ⬜ **`layer0-redump` OWED hygiene** (`version` `v1.10.1`) → fold `0033` into the baseline snapshot + archive the baked migration per `etl/migrations/layer0/README.md`. **NOT a slice-B blocker** (the table is live); can ride slice B's PR or a follow-up (as #884-4.3 did).
 
 ### 6.2 Next session — BUILD SLICE B (serving/capture)
 Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIGRATIONS` (public; auto-applies on deploy) + backfill (D5, set default for the 5 parents where NULL); (b) thread the column through `race_events_repo.py` create/update + `RaceEventPayload`; (c) orchestrator compose — `framework_sport_for_2a = sport_sub_format or <parent default from sport_sub_format_map> or framework_sport` — at the `_resolve_planning_sport`→`q_layer2a` boundary (`layer4/orchestrator.py` ~1065/1089); (d) second `<select>` + parent→options JSON blob in `templates/onboarding/target_race.html` + `templates/profile/race_event_edit.html`, default pre-selected, shown only for the 5 parents; (e) submit wiring in `routes/onboarding.py` + `routes/race_events.py` + `_framework_sport_choices`/options helper; (f) invalidation (D6) — fire `evict_on_target_event_framework_sport_change` on a `sport_sub_format`-only change; (g) `Athlete_Onboarding_Data_Spec_v6.md` §H.2 row (design §7.4) — distinguish from the `race_format` periodization enum. Tests: helper-level (repo + orchestrator compose + options helper) per the route-test convention.
@@ -89,7 +88,7 @@ Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIG
 | Check test + count | `etl/tests/test_validate_layer0.py` | grep `len(v.CHECKS) == 12` + `test_sport_sub_format_map_violation_fails_the_gate` |
 | Spec in-progress | `aidstation-sources/specs/Layer2A_Spec.md` | grep `#254 resolution (2026-06-29, in progress)` |
 | Tests green | (local venv) | `tests/test_layer2a.py` 40 + `etl/tests/test_validate_layer0.py` 15 |
-| Layer-0 ops OWED | — | `layer0-apply` (`0033`) then `layer0-redump` — NOT yet run (§6.1) |
+| Layer-0 apply DONE | — | `layer0-apply` `0033` applied to prod (run `28387337720`, `INSERT 0 17` + verify PASS); `layer0-redump` v1.10.1 still owed-hygiene (§6.1) |
 | Slice B OWED | — | serving/capture not started (§6.2) |
 
 ## 9. Files shipped this session
