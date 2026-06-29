@@ -4,7 +4,9 @@
 **Date:** 2026-06-29
 **Predecessor handoff:** `V5_Implementation_UnifiedGearCraftModel_884_DesignV3_Slice4b_PR2_CascadeExtension_2026_06_29_Closing_Handoff_v1.md` (PR-2, merged as `2cdd24b` / PR #983)
 **Branch:** `claude/884-cascade-extension-m5weck` (harness-pinned; name reflects PR-2's scope, reused for PR-3 — see §6)
-**Status:** code done, **suite 3737/30 green**, ruff clean. Committed `52d71ae`. **PR not yet opened — awaiting Andy's go** (ops model). No new migration → **no Neon apply owed** (PR-2's apply is DONE — §1).
+**Status:** code done, **suite 3737/30 green**, ruff clean. Commits `52d71ae` (code) + `e4989d8`/bookkeeping. **PR [#993](https://github.com/ahorn885/exercise/pull/993) — merging** (Andy: open + merge). No new migration → **no Neon apply owed** (PR-2's apply is DONE — §1). **#884 CONTINUES — next is slice 4.3** (§0/§6.2).
+
+> **PR lifecycle note.** First opened as [#990] with auto-merge; Andy closed it without merging, then directed "reopen and merge." The close had **deleted the branch**, so #990 couldn't be reopened — re-pushed the identical commits and opened **[#993]** for the same change. **CI-trigger gotcha (new finding):** PRs opened via the GitHub MCP token do **not** fire the `on: pull_request` `ci.yml` workflow (GitHub suppresses runs from that token to avoid recursion), so the three required checks never ran on #990 and it couldn't satisfy branch protection. **Workaround:** trigger `ci.yml` via **`workflow_dispatch` on the branch** — all three required jobs run under `workflow_dispatch` (`if: github.event_name != 'schedule'`), attach as check runs on the PR head SHA, and release auto-merge. (Worth a CARRY_FORWARD ops note so future MCP-opened PRs don't strand the same way.)
 
 ---
 
@@ -67,11 +69,13 @@ PR-2 split the 2C feed to PR-3 (Decision 2: it needs a `gear_id → sport_specif
 ## 6. Next session pointers
 
 ### 6.1 OWED this PR
-- **Nothing DB-side.** PR not yet opened — awaiting Andy's go (ops model). When he says go: push (done), open PR (ready, not draft), `enable_pr_auto_merge` with **method=`merge`** (real merge commit, NOT squash — Andy 2026-06-29).
-- **Branch note:** the harness pinned `claude/884-cascade-extension-m5weck` (PR-2's name). Kept it for PR-3 rather than rename (the strict "never push to a different branch without permission" harness rule). The PR title/handoff carry the real scope. Andy may want a cleaner branch name for the PR.
+- **Nothing DB-side** (no migration). PR **[#993](https://github.com/ahorn885/exercise/pull/993)** open, auto-merge **method=`merge`** (real merge commit, NOT squash — Andy 2026-06-29). CI driven via `workflow_dispatch` (status-line note). On merge: post the #298 completion comment with the merge ref.
+- **Branch note:** the harness pinned `claude/884-cascade-extension-m5weck` (PR-2's name). Kept it for PR-3 (the strict "never push to a different branch without permission" harness rule). The PR title/handoff carry the real scope.
 
-### 6.2 Next session — CONTINUE #884 (start here)
-- **Slice 4.3 — Layer-0 redump + equipment strip.** Retire `craft_discipline_aliases` (forced redump — **heed the redump-MUST-pair-with-fold rule**, `etl/migrations/layer0/README.md`); strip `pull_buoy`/`kickboard`/`Swim fins` from `equipment_items` + EX126/EX128 `equipment_required` (0B supersede+re-insert → global cache invalidation). Then slices 5–6.
+### 6.2 Next session — CONTINUE #884 (start here) — **slice 4.3 is the active next step**
+**#884 is NOT done — the thread continues directly into slice 4.3, then slices 5–6** (design-v3 §15: 4b→4.3→5→6). Do not drift to another epic until #884 is done or Andy redirects.
+- **Slice 4.3 — Layer-0 redump + equipment strip.** Retire `craft_discipline_aliases` (forced redump — **heed the redump-MUST-pair-with-fold rule**, `etl/migrations/layer0/README.md`); strip `pull_buoy`/`kickboard`/`Swim fins` from `equipment_items` + EX126/EX128 `equipment_required` (0B supersede+re-insert → global cache invalidation). Carries a Layer-0 redump → Andy one-tap `layer0-apply`. Fresh branch off main.
+- **Then slices 5–6** (design-v3 §15): away/locale availability (5) + capture-UX polish (6).
 
 ### 6.3 Open follow-on (not owed by this slice)
 - **Onboarding parity for gear toggles** (carried from PR-1/PR-2): toggles captured on the profile gear-tab only; if onboarding should surface them too, small follow-on. Flag for Andy.
