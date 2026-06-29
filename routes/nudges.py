@@ -170,6 +170,42 @@ NUDGE_REGISTRY = {
         'category': 'info',
         'notification_type': 'race_week_plan_due',
     },
+    # ─── #964 recurring time-of-day sends ───────────────────────────────────
+    # Fired on a per-user clock by `scan_scheduled_sends` (not a standing DB
+    # condition), once per local day per `notification_schedules` row. Each
+    # `schedule_type` is the same string as its `nudge_type` here (identity
+    # mapping — no translation table). Copy is static (account_nudges has no
+    # per-row content column): next_day_workouts links to the live plan rather
+    # than enumerating tomorrow's sessions. AM + PM are distinct feed rows but
+    # both roll up to the one `supplement_reminder` in-app toggle.
+    'supplement_am': {
+        'message': 'Take your morning supplements.',
+        'cta_label': 'View your supplements',
+        'cta_endpoint': 'profile.edit',
+        'category': 'info',
+        'notification_type': 'supplement_reminder',
+    },
+    'supplement_pm': {
+        'message': 'Take your evening supplements.',
+        'cta_label': 'View your supplements',
+        'cta_endpoint': 'profile.edit',
+        'category': 'info',
+        'notification_type': 'supplement_reminder',
+    },
+    'next_day_workouts': {
+        'message': "Here's a look at tomorrow's training — open your plan.",
+        'cta_label': 'Open your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'info',
+        'notification_type': 'next_day_workouts',
+    },
+    'daily_log_ping': {
+        'message': "Log today's training to keep your plan and progress current.",
+        'cta_label': 'Log a workout',
+        'cta_endpoint': 'log.index',
+        'category': 'info',
+        'notification_type': 'daily_log_ping',
+    },
 }
 
 # Registry knobs that are internal plumbing, stripped from the per-row overlay
@@ -810,6 +846,82 @@ def scan_reconcile_staleness():
     db.commit()
     return jsonify(inserted=inserted, cleared=cleared,
                    resurfaced=resurfaced), 200
+
+
+# ─── #964 recurring time-of-day sends (delivery cron) ───────────────────────
+#
+# Hourly cron that fires the `notification_schedules` rows due *this local hour*.
+# Localization is done in Postgres (`NOW() AT TIME ZONE u.timezone`) — no Python
+# tz library in the hot path. A row is due when it's enabled, its user has a
+# timezone, the user's current local hour equals `send_hour`, and it hasn't
+# already fired today (`last_sent_on < local_date`). NULL timezone ⇒ never due
+# (fail-safe). `schedule_type` == the `nudge_type` it surfaces (identity).
+#
+# PG-only (AT TIME ZONE / EXTRACT / ON CONFLICT). Token-gated; SQLite dev never
+# reaches it.
+_SCHEDULED_DUE_SELECT = '''
+    SELECT s.user_id, s.schedule_type,
+           (NOW() AT TIME ZONE u.timezone)::date AS local_date
+    FROM notification_schedules s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.enabled
+      AND u.timezone IS NOT NULL
+      AND EXTRACT(HOUR FROM (NOW() AT TIME ZONE u.timezone)) = s.send_hour
+      AND (s.last_sent_on IS NULL
+           OR s.last_sent_on < (NOW() AT TIME ZONE u.timezone)::date)
+'''
+# Resurface upsert: a fresh INSERT lands an unread, undismissed row (column
+# defaults); on conflict with the existing `(user_id, nudge_type)` row it
+# re-stamps `created_at = NOW()` and clears `read_at`/`dismissed_at` so the
+# recurring send floats to the top of the feed and reads unread — the same
+# pattern `plan_needs_review` uses for its escalation rungs.
+_SCHEDULED_RESURFACE_UPSERT = '''
+    INSERT INTO account_nudges (user_id, nudge_type)
+    VALUES (?, ?)
+    ON CONFLICT (user_id, nudge_type)
+    DO UPDATE SET created_at = NOW(), read_at = NULL, dismissed_at = NULL
+'''
+# Advance the dedup watermark to the local date so a second cron fire in the
+# same local day is a no-op (the due-select's `last_sent_on < local_date` guard).
+_SCHEDULED_ADVANCE_LAST_SENT = '''
+    UPDATE notification_schedules
+    SET last_sent_on = ?
+    WHERE user_id = ? AND schedule_type = ?
+'''
+
+
+@bp.route('/cron/notifications/scheduled', methods=['GET'])
+def scan_scheduled_sends():
+    """Hourly cron: fire the recurring-send schedules due this local hour (#964).
+
+    Selects every enabled `notification_schedules` row whose user's current
+    local hour matches its `send_hour` and that hasn't fired yet today, then per
+    row: resurface-upserts an `account_nudges` row (re-stamps `created_at`,
+    clears `read_at`/`dismissed_at` so it floats up fresh) and advances
+    `last_sent_on` to the local date (once-per-day dedup). Each fire is logged
+    individually (Rule #15).
+
+    NULL `users.timezone` ⇒ no rows due (fail-safe — the cron can't localize the
+    send hour without it). Display still honours the per-type in-app preference
+    at read time (`get_active_nudges`).
+
+    Token-gated like the other cron drains. Returns JSON `{sent: {...}}`.
+    """
+    if not cron_authorized():
+        abort(401)
+    db = get_db()
+    sent: dict[str, int] = {}
+    for row in db.execute(_SCHEDULED_DUE_SELECT).fetchall():
+        uid = row['user_id']
+        stype = row['schedule_type']
+        local_date = row['local_date']
+        db.execute(_SCHEDULED_RESURFACE_UPSERT, (uid, stype))
+        db.execute(_SCHEDULED_ADVANCE_LAST_SENT, (local_date, uid, stype))
+        sent[stype] = sent.get(stype, 0) + 1
+        print(f'scheduled-send fired: user={uid} type={stype} '
+              f'local_date={local_date}')
+    db.commit()
+    return jsonify(sent=sent), 200
 
 
 @bp.route('/nudges/<int:nudge_id>/dismiss', methods=['POST'])
