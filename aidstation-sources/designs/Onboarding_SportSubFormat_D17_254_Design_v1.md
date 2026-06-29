@@ -64,13 +64,13 @@ Result: for all five sports, Layer 2A silently produces disciplines with **no ph
 |---|---|---|
 | ~~D1~~ | ~~`race_events.framework_sport` stores the fully-resolved sub-format name.~~ **SUPERSEDED → D1′.** | Reversed — see the revision banner above (top-level consumers break). |
 | **D1′** | **Two-column storage.** `race_events.framework_sport` stays the **top-level** name (unchanged; all bridge/terrain consumers untouched). A **new `race_events.sport_sub_format` column** holds the athlete's chosen full PLA sub-format name (NULL = use the parent's curated default). The Layer-4 orchestrator **composes** the Layer 2A input: `framework_sport_for_2a = sport_sub_format or <parent default> or framework_sport`. | Smallest blast radius — one composition point vs. N strip sites; the entire existing top-level machinery is left alone; round-trips trivially on edit (two columns ↔ two selects, no name-parsing). `race_events` is *public* schema, so the column add + backfill auto-apply on deploy. |
-| D2 | **The default sub-format is a Layer 0, data-driven fact** (`layer0.sport_sub_format_map`): one row per `(parent_sport, sub_format_sport)`, `is_default` marks exactly one per parent, `display_label` = the athlete-facing short label. Onboarding reads options + default from it; no curation in app code. **Ratified ("layer 0").** | DB-is-source-of-truth (CLAUDE.md). Curator owns the default + option list. **Shipped slice A** (migration 0031 + `validate_layer0` check). |
+| D2 | **The default sub-format is a Layer 0, data-driven fact** (`layer0.sport_sub_format_map`): one row per `(parent_sport, sub_format_sport)`, `is_default` marks exactly one per parent, `display_label` = the athlete-facing short label. Onboarding reads options + default from it; no curation in app code. **Ratified ("layer 0").** | DB-is-source-of-truth (CLAUDE.md). Curator owns the default + option list. **Shipped slice A** (migration 0033 + `validate_layer0` check). |
 | D3 | **Onboarding/profile renders a second "sub-format" select**, shown only when the chosen parent has rows in `sport_sub_format_map`. Options = that parent's rows; the `is_default` row is pre-selected. Submit sets `race_events.sport_sub_format`. Parents with no sub-formats keep today's single-select behaviour. | "Default + override": default pre-filled, athlete may change it. The parent `framework_sport` select is unchanged, so the #885 non-empty-by-construction invariant holds. |
 | D4 | **Layer 2A loud-failure guard.** When `framework_sport` is exactly a `_SUB_FORMAT_SPORTS` parent **and** disciplines load but zero PLA rows joined, emit an `error` `UnresolvedFlag` + `hitl_required = True` + a Rule-#15 `print`. | Turns the silent NULL-bands data-loss into a loud failure for legacy/regression inputs. **Shipped slice 2.** |
 | D5 | **One-time backfill** sets `race_events.sport_sub_format` = the parent's default for existing rows whose `framework_sport` is one of the five parents and whose `sport_sub_format` is NULL. *Public*-schema `_PG_MIGRATIONS` → auto-applies on deploy. | Andy's own row is AR (unaffected), so risk is ~nil, but the backfill makes the cutover deterministic. |
 | D6 | **Sub-format change reuses the existing `framework_sport`-change invalidation path** (`evict_on_target_event_framework_sport_change`); the route fires it when `sport_sub_format` changes too. No new invalidation rule. | A sub-format change shifts the composed Layer 2A input, the same cache axis a `framework_sport` change already evicts. |
 
-### 2.1 Defaults (D2 `is_default`) — **ratified 2026-06-29; seeded in migration 0031**
+### 2.1 Defaults (D2 `is_default`) — **ratified 2026-06-29; seeded in migration 0033**
 
 | Parent sport | Proposed default sub-format | Why |
 |---|---|---|
@@ -80,7 +80,7 @@ Result: for all five sports, Layer 2A silently produces disciplines with **no ph
 | `Canoe / Kayak Marathon` | `Canoe / Kayak Marathon (ICF Competition)` | The standardized marathon format vs. the bespoke ultra. |
 | `Open Water Marathon Swimming` | `Open Water Marathon Swimming (10km / Olympic Distance)` | The standard marathon-swim distance. |
 
-Ratified by Andy 2026-06-29 ("approve your original suggestions"); seeded as the `is_default` rows in migration `0031_sport_sub_format_map.sql`.
+Ratified by Andy 2026-06-29 ("approve your original suggestions"); seeded as the `is_default` rows in migration `0033_sport_sub_format_map.sql`.
 
 ### 2.2 Sub-decisions deferred to the implementation PR
 
@@ -200,14 +200,14 @@ Add to the §H.2 field table a **Sport Sub-Format** row: closed enum per parent 
 ## 8. Implementation slices
 
 - **Slice 2 — Layer 2A guard (D4). ✅ SHIPPED** (commit on `claude/issue-254-cd81r3`): `q_layer2a` flags + HITL-gates a bare sub-format parent; tests; Layer2A_Spec §5.1/§6/§12 updated.
-- **Slice A — Layer 0 table (D2). ✅ SHIPPED (code; awaiting gated apply):** migration `0031_sport_sub_format_map.sql` (CREATE + 17 seeded rows + DO-block verify), `validate_layer0` check `sport_sub_format_map` (+ test). **Needs the gated `layer0-apply` action (Andy one-tap) to land in prod Neon**, then a `layer0-redump` to fold into the baseline.
+- **Slice A — Layer 0 table (D2). ✅ SHIPPED (code; awaiting gated apply):** migration `0033_sport_sub_format_map.sql` (CREATE + 17 seeded rows + DO-block verify), `validate_layer0` check `sport_sub_format_map` (+ test). **Needs the gated `layer0-apply` action (Andy one-tap) to land in prod Neon**, then a `layer0-redump` to fold into the baseline.
 - **Slice B — serving/capture (D1′/D3/D5/D6). ⬜ NEXT:** add `race_events.sport_sub_format` column (`_PG_MIGRATIONS`, auto-applies on deploy) + backfill (D5); orchestrator compose of the Layer 2A input; the second select + parent→options JSON blob in the onboarding + profile templates; route submit wiring + invalidation (D6); `Athlete_Onboarding_Data_Spec_v6.md` §H.2 row (§7.4). Depends on slice A's table being applied (reads it for options/defaults).
 
 Slice ordering note: slice B's serving compose can ship before slice A is *applied* only if it tolerates the table's absence (it won't until applied), so **apply slice A first**.
 
 ## 9. Resolved decisions (formerly open questions)
 
-1. **Defaults (§2.1):** ✅ ratified 2026-06-29; seeded in 0031.
+1. **Defaults (§2.1):** ✅ ratified 2026-06-29; seeded in 0033.
 2. **Storage model:** ✅ **two-column (D1′)** — reversed from D1 after the bridge/terrain-consumer discovery (see §2 revision banner).
 3. **Default-change propagation:** ✅ existing rows keep their stored `sport_sub_format` when the Layer-0 default later moves (athlete intent wins; new events pick up the new default).
 4. **Sequencing:** ✅ guard shipped first (slice 2); Layer 0 (slice A) before serving/capture (slice B).

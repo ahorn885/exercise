@@ -9,7 +9,7 @@ PLA sub-formats, with one curated default per parent. Three invariants:
   (c) the `parent_sport` set equals the data-derived mismatched-parent set —
       `sport_discipline_bridge` framework_sports with NO same-named PLA row.
 
-Any breach → ERROR. Mirrors the in-migration verify in 0031; this is the
+Any breach → ERROR. Mirrors the in-migration verify in 0033; this is the
 CI-gate guard against later drift (a new sub-format PLA row, a renamed sport).
 """
 from __future__ import annotations
@@ -20,8 +20,8 @@ from typing import Any
 def run_sport_sub_format_map(conn) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     with conn.cursor() as cur:
-        # The table is introduced by migration 0031; tolerate its absence so the
-        # gate still runs against a pre-0031 baseline (returns a clean pass).
+        # The table is introduced by migration 0033; tolerate its absence so the
+        # gate still runs against a pre-0033 baseline (returns a clean pass).
         cur.execute(
             "SELECT to_regclass('layer0.sport_sub_format_map') IS NOT NULL"
         )

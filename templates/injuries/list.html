@@ -50,7 +50,7 @@
     <div class="injury-head">
       <div class="injury-id">
         <span class="chip {% if e.status == 'Active' %}bad{% elif e.status == 'Managing' %}warn{% else %}good{% endif %}">{{ e.status }}</span>
-        <strong>{{ e.body_part }}</strong>
+        <strong>{{ e.body_part }}{% if e.side and e.side != 'N/A' %} ({{ e.side }}){% endif %}</strong>
         <span class="dim">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
         {% if e.severity %}
           <span class="chip {% if e.severity in ['Acute', 'Post-surgical'] %}bad{% elif e.severity in ['Recovering', 'Chronic-Managed', 'Structural-Permanent'] %}warn{% endif %}">{{ e.severity }}</span>

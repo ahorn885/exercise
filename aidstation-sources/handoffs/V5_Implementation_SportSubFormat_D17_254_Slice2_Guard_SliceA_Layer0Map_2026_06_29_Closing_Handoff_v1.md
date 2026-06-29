@@ -7,7 +7,7 @@
 
 ## 0. Thread continuity — NEXT SESSION CONTINUES #254 → SLICE B
 
-This session shipped the **design** + **slice 2** (Layer 2A guard) + **slice A** (Layer 0 `sport_sub_format_map`). **Slice B (serving/capture) is NOT done — it is the next session's work**, and it is gated on the Layer-0 apply of slice A (§6.1). Do §6.1 (apply 0031) BEFORE building slice B.
+This session shipped the **design** + **slice 2** (Layer 2A guard) + **slice A** (Layer 0 `sport_sub_format_map`). **Slice B (serving/capture) is NOT done — it is the next session's work**, and it is gated on the Layer-0 apply of slice A (§6.1). Do §6.1 (apply 0033) BEFORE building slice B.
 
 ## 1. The problem (confirmed in live Layer 0 data)
 
@@ -19,7 +19,7 @@ Five sports name themselves **top-level** in `sport_discipline_map` + `sport_dis
 `q_layer2a_discipline_classifier_payload` now detects a bare sub-format parent (exactly a `_SUB_FORMAT_SPORTS` key) that loaded SDM disciplines but joined zero PLA bands, and emits an `error` `UnresolvedFlag` + forces `hitl_required` + logs (Rule #15). A correctly-resolved sub-format name carries the parenthetical and is not in the whitelist, so the guard fires only on the bug case. **Behavior change:** a mismatched onboarding now *fails loudly (HITL)* instead of silently — strictly better, but NOT the full fix (that's slice B).
 
 ### Slice A — Layer 0 `sport_sub_format_map` (the option source + curated default)
-`layer0.sport_sub_format_map(parent_sport, sub_format_sport, is_default, display_label, …)`, 17 rows across the 5 parents, one `is_default` each (Triathlon→Standard/Olympic, Skimo→Individual/Team, LDC→Road/Gran Fondo, Canoe/Kayak→ICF Competition, OWMS→10km/Olympic — ratified). Migration `0031` self-validates via a DO block; a `validate_layer0` check guards against later vocab drift. **NOT registered in `orchestrator._LAYER0_TABLE_FAMILY`** — the athlete's *chosen* sub-format (stored on `race_events`, slice B) drives the plan, so the table default is a lookup, not a cached plan input → no cache-version coordination, no deploy-order coupling.
+`layer0.sport_sub_format_map(parent_sport, sub_format_sport, is_default, display_label, …)`, 17 rows across the 5 parents, one `is_default` each (Triathlon→Standard/Olympic, Skimo→Individual/Team, LDC→Road/Gran Fondo, Canoe/Kayak→ICF Competition, OWMS→10km/Olympic — ratified). Migration `0033` self-validates via a DO block; a `validate_layer0` check guards against later vocab drift. **NOT registered in `orchestrator._LAYER0_TABLE_FAMILY`** — the athlete's *chosen* sub-format (stored on `race_events`, slice B) drives the plan, so the table default is a lookup, not a cached plan input → no cache-version coordination, no deploy-order coupling.
 
 ## 3. KEY FINDING — storage model reversed D1 → D1′ (two-column)
 
@@ -33,11 +33,11 @@ D-17 guard block before the HITL gate (`sub_format_unresolved`). `_strip_sub_for
 ### 4.2 `tests/test_layer2a.py` (modified) — slice 2
 `TestTriathlonD17`: 5-parent parametrized guard-fires + resolved-subformat-inert + parent-with-PLA-inert.
 
-### 4.3 `etl/migrations/layer0/0031_sport_sub_format_map.sql` (new) — slice A
-CREATE + 17 rows (`0A-v1.9.3`) + DO-block verify: 17 active rows; exactly-one-default per parent; every `sub_format_sport` ∈ active PLA `sport_name`; parent set == bridge-framework_sports-without-a-same-named-PLA-row (drift-proof).
+### 4.3 `etl/migrations/layer0/0033_sport_sub_format_map.sql` (new) — slice A
+CREATE + 17 rows (`0A-v1.10.1`) + DO-block verify: 17 active rows; exactly-one-default per parent; every `sub_format_sport` ∈ active PLA `sport_name`; parent set == bridge-framework_sports-without-a-same-named-PLA-row (drift-proof).
 
 ### 4.4 `etl/layer0/validation/sport_sub_format_map.py` (new) — slice A
-`run_sport_sub_format_map`: the same 3 invariants as the migration verify; tolerates the table's absence on a pre-0031 baseline (clean pass).
+`run_sport_sub_format_map`: the same 3 invariants as the migration verify; tolerates the table's absence on a pre-0033 baseline (clean pass).
 
 ### 4.5 `etl/layer0/validate_layer0.py` (modified) — slice A
 Import + `_v_sport_sub_format_map` extractor + `CHECKS` entry (now 12).
@@ -54,13 +54,13 @@ Design; storage reversed to D1′; slices re-cut A/B; open questions resolved.
 ## 5. Code / tests validation
 
 - `tests/test_layer2a.py` → 40 passed. `etl/tests/test_validate_layer0.py` → 15 passed. Import smoke of the new validate module OK (`CHECKS=12`).
-- Migration `0031` NOT run locally (no container Neon egress + no local PG this session) — relies on the **`layer0-gate` CI job** (Postgres + genesis snapshot) to apply `0023…0031` + run `validate_layer0`. **Watch that job on the PR.**
+- Migration `0033` NOT run locally (no container Neon egress + no local PG this session) — relies on the **`layer0-gate` CI job** (Postgres + genesis snapshot) to apply `0023…0033` + run `validate_layer0`. **Watch that job on the PR.**
 
 ## 6. Next session pointers
 
 ### 6.1 OWED on merge — Layer-0 ops sequence (do in this order, BEFORE slice B)
-1. **`layer0-apply`** (gated; Andy one-tap `production`) — applies `0031` to prod Neon. Idempotent.
-2. **`layer0-redump`** (`version` = next, e.g. `v1.10.0`) → snapshot includes `sport_sub_format_map`; then **archive the now-baked migrations** per `etl/migrations/layer0/README.md` (re-dump must be paired with folding).
+1. **`layer0-apply`** (gated; Andy one-tap `production`) — applies `0033` to prod Neon. Idempotent.
+2. **`layer0-redump`** (`version` = next, e.g. `v1.10.1`) → snapshot includes `sport_sub_format_map`; then **archive the now-baked migrations** per `etl/migrations/layer0/README.md` (re-dump must be paired with folding).
 3. Only then is slice B's table read live.
 
 ### 6.2 Next session — BUILD SLICE B (serving/capture)
@@ -73,7 +73,7 @@ Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIG
 
 - **D1′ two-column storage** (reversed from D1; ratified) — `framework_sport` top-level + new `sport_sub_format`; orchestrator composes the 2A input.
 - **D2 Layer 0 defaults** (`sport_sub_format_map`, ratified "layer 0") — shipped slice A.
-- **Defaults** (§2.1) — ratified; seeded in 0031.
+- **Defaults** (§2.1) — ratified; seeded in 0033.
 - **Default-change propagation** — existing rows keep their stored `sport_sub_format` when the Layer-0 default later moves (athlete intent wins).
 - **Not in `_LAYER0_TABLE_FAMILY`** — table default is a lookup, not a cached plan input.
 
@@ -83,13 +83,13 @@ Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIG
 |---|---|---|
 | Layer 2A guard | `layer2a/builder.py` | grep `sub_format_unresolved` — guard block + HITL OR + Rule-#15 print |
 | Guard tests | `tests/test_layer2a.py` | grep `test_bare_parent_flags_unresolved_and_hitl` (parametrized 5 parents) |
-| Layer 0 map migration | `etl/migrations/layer0/0031_sport_sub_format_map.sql` | grep `CREATE TABLE IF NOT EXISTS layer0.sport_sub_format_map`; 17 VALUES rows; `0A-v1.9.3` |
+| Layer 0 map migration | `etl/migrations/layer0/0033_sport_sub_format_map.sql` | grep `CREATE TABLE IF NOT EXISTS layer0.sport_sub_format_map`; 17 VALUES rows; `0A-v1.10.1` |
 | Validate check | `etl/layer0/validation/sport_sub_format_map.py` | `def run_sport_sub_format_map`; tolerates absent table |
 | Check registered | `etl/layer0/validate_layer0.py` | grep `sport_sub_format_map` in imports + `CHECKS` |
 | Check test + count | `etl/tests/test_validate_layer0.py` | grep `len(v.CHECKS) == 12` + `test_sport_sub_format_map_violation_fails_the_gate` |
 | Spec in-progress | `aidstation-sources/specs/Layer2A_Spec.md` | grep `#254 resolution (2026-06-29, in progress)` |
 | Tests green | (local venv) | `tests/test_layer2a.py` 40 + `etl/tests/test_validate_layer0.py` 15 |
-| Layer-0 ops OWED | — | `layer0-apply` (`0031`) then `layer0-redump` — NOT yet run (§6.1) |
+| Layer-0 ops OWED | — | `layer0-apply` (`0033`) then `layer0-redump` — NOT yet run (§6.1) |
 | Slice B OWED | — | serving/capture not started (§6.2) |
 
 ## 9. Files shipped this session
@@ -97,7 +97,7 @@ Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIG
 **Substantive (2 code + 2 test + 1 migration + 1 validation module + 1 spec + 1 design):**
 1. `layer2a/builder.py` — D-17 guard (slice 2)
 2. `tests/test_layer2a.py` — guard tests (slice 2)
-3. `etl/migrations/layer0/0031_sport_sub_format_map.sql` — Layer 0 map (slice A)
+3. `etl/migrations/layer0/0033_sport_sub_format_map.sql` — Layer 0 map (slice A)
 4. `etl/layer0/validation/sport_sub_format_map.py` — validate runner (slice A)
 5. `etl/layer0/validate_layer0.py` — register check (slice A)
 6. `etl/tests/test_validate_layer0.py` — check test (slice A)
@@ -108,4 +108,4 @@ Per design §8 "Slice B": (a) `race_events.sport_sub_format` column via `_PG_MIG
 
 ## 10. Carry-forward updates
 
-`CARRY_FORWARD.md` #254: design ratified; **slice 2 (Layer 2A guard) + slice A (Layer 0 `sport_sub_format_map`) done + merged**; storage model = two-column (D1′). **OWED on merge: `layer0-apply` 0031 + redump. NEXT: slice B (serving/capture) — gated on the apply.**
+`CARRY_FORWARD.md` #254: design ratified; **slice 2 (Layer 2A guard) + slice A (Layer 0 `sport_sub_format_map`) done + merged**; storage model = two-column (D1′). **OWED on merge: `layer0-apply` 0033 + redump. NEXT: slice B (serving/capture) — gated on the apply.**
