@@ -136,3 +136,37 @@ def entered_height_to_cm(value: Optional[float], unit_pref: Optional[str]) -> Op
 def height_unit_label(unit_pref: Optional[str]) -> str:
     """Short label for templates: 'in' or 'cm'."""
     return 'in' if normalize_unit_preference(unit_pref) == IMPERIAL else 'cm'
+
+
+# ─── Temperature (canonical °C) ───────────────────────────────────────────────
+#
+# Weather/climate values originate in metric (Open-Meteo returns °C). Imperial
+# athletes see Fahrenheit so the weather display honors the same unit toggle as
+# weight + height (issue #946).
+
+
+def c_to_f(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return float(value) * 9.0 / 5.0 + 32.0
+
+
+def f_to_c(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    return (float(value) - 32.0) * 5.0 / 9.0
+
+
+def display_temperature(value_c: Optional[float], unit_pref: Optional[str]) -> Optional[float]:
+    """Return `value_c` converted to the athlete's display unit (°F or °C)."""
+    if value_c is None:
+        return None
+    pref = normalize_unit_preference(unit_pref)
+    if pref == IMPERIAL:
+        return c_to_f(value_c)
+    return float(value_c)
+
+
+def temp_unit_label(unit_pref: Optional[str]) -> str:
+    """Short label for templates: '°F' or '°C'."""
+    return '°F' if normalize_unit_preference(unit_pref) == IMPERIAL else '°C'
