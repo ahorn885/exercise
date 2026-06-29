@@ -132,8 +132,10 @@ One new reconcile spec, riding the **existing** daily `/cron/nudges/reconcile` (
 
 ```python
 # Thresholds — alert-worthy extremes (NOT the Layer-5B clothing-band boundaries).
+# RATIFIED Andy 2026-06-29 (the "90°F recommendation set" — a heat-management
+# heads-up bar, not record-heat; see Open item 11.1, resolved).
 ADVISORY_HORIZON_DAYS = 7
-HEAT_TMAX_C  = 37.8   # 100°F  (per #964 "over 100°"; see Open item 11.1)
+HEAT_TMAX_C  = 32.2   # 90°F   forecast daily high at/above which heat matters
 FREEZE_TMIN_C = 0.0   # 32°F   freezing overnight/low
 RAIN_PROB_PCT = 60    # forecast precip probability — a real "likely to rain"
 
@@ -207,7 +209,7 @@ _CONDITIONS_CROSSES = f'''
 
 ## 5. Slice plan (≈8 substantive files → two within-ceiling slices)
 
-**Slice 1 — #289 producer (the new infrastructure).** ~5 substantive:
+**Slice 1 — #289 producer (the new infrastructure). ✅ SHIPPED 2026-06-29** (commit on branch `claude/notification-triggers-recurring-schedule-6e50c0`; full suite 3928 passed / 30 skipped; ruff clean on changed files; no Neon/layer0 apply owed). ~5 substantive:
 1. `weather_client.py` — `DayForecast` + `get_upcoming_forecast`.
 2. `init_db.py` — `upcoming_conditions` CREATE (`_PG_MIGRATIONS`, auto-applies; **no layer0-apply**).
 3. `upcoming_conditions_repo.py` (new) — `upsert_upcoming_conditions`, `prune_past`.
@@ -276,7 +278,7 @@ Both land this arc → the full build Andy chose.
 
 ## 11. Open items (decide before/at build)
 
-1. **Threshold calibration (the one real open question).** §4 pins heat at **37.8 °C / 100 °F** to match the #964 wording literally — but for Andy's MN context (and a *heat-management* heads-up rather than a record-heat alert) a lower bar (e.g. **32 °C / 90 °F**) may be the better trigger. Same question, milder: is `precip_prob ≥ 60%` the right "rain likely" bar, and is freeze at the **low** (`temp_min ≤ 0`) right vs. the high? These are one-line constants; recommend Andy ratifies the numbers when Slice 2 is built. *(User impact: too-high a bar = the advisory rarely fires; too-low = it nags. No infra impact.)*
+1. **Threshold calibration — RESOLVED (Andy 2026-06-29).** Heat lands at **32.2 °C / 90 °F** (the "90°F recommendation set" — a heat-*management* heads-up, not record-heat), freeze at `temp_min ≤ 0 °C / 32 °F`, rain at `precip_prob ≥ 60%`. Constants in §4; baked into Slice 2. *(User impact: too-high a bar = the advisory rarely fires; too-low = it nags. No infra impact.)*
 2. **Live-conditions surface for the CTA.** The advisory deep-links to the plan, which renders **normals**, not this live forecast. A small surface that renders `upcoming_conditions` (or folding it into the dashboard/plan-view conditions block beside the normals) would make the CTA land on the actual forecast that triggered the nudge. Deferred enhancement — not a v1 blocker, but the most natural follow-up.
 3. **Away-window locale resolution** (§7) — fold `resolve_weather_location` (away-destination coords win) into the producer if travel-day sessions don't already carry the travel locale. Confirm against real plan-session data before building (Rule #14 — don't infer).
 

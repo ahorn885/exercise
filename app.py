@@ -399,6 +399,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # Vercel Cron hits these scanners with no session cookie; auth is via
     # the `Authorization: Bearer $CRON_SECRET` header verified inside the
     # route (`routes.auth.cron_authorized`).
+    'conditions.cron_refresh_conditions',
     'nudges.scan_connect_provider_14d',
     'nudges.scan_reconcile_staleness',
     'nudges.scan_scheduled_sends',

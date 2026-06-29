@@ -3256,6 +3256,26 @@ _PG_MIGRATIONS = [
     # cron). NULL ⇒ schedules never fire (fail-safe — can't localize the clock
     # without it). Nullable so existing users need no backfill.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
+    # ── upcoming_conditions (#289 Layer-5 producer / #964 conditions advisory) ──
+    # Live near-term forecast for each upcoming TRAINING day, per user. Refreshed
+    # daily by the producer cron (/cron/conditions/refresh) and pruned as days
+    # pass. Distinct from plan_conditions (climate normals baked per plan_version
+    # as opaque JSONB) — this is the plain, (user, date)-queryable signal the
+    # conditions-advisory reconcile fires on. temp_*_c are DOUBLE PRECISION (avoid
+    # the REAL round-trip drift fixed in #196 Slice 2.3); precip_prob_pct is
+    # 0–100. Canonical °C (Open-Meteo native); any rendering uses the units
+    # toggle. Public-schema, so it auto-applies on each Vercel deploy (no
+    # layer0-apply). PG-only; SQLite dev never reaches the cron that writes it.
+    """CREATE TABLE IF NOT EXISTS upcoming_conditions (
+        user_id         INTEGER  NOT NULL REFERENCES users(id),
+        forecast_date   DATE     NOT NULL,
+        locale_id       TEXT,
+        temp_max_c      DOUBLE PRECISION,
+        temp_min_c      DOUBLE PRECISION,
+        precip_prob_pct SMALLINT,
+        refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, forecast_date)
+    )""",
     # #254 / D-17 slice B — sport SUB-format capture (two-column model, D1′).
     # `framework_sport` stays the top-level bridge key; this new column holds the
     # athlete's chosen full PLA sub-format name for the five sub-format-parent

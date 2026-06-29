@@ -1,8 +1,8 @@
-# V5 — Notification Triggers: Conditions Advisory — DESIGN (live upcoming-conditions producer #289 + advisory notification #964) — Closing Handoff (2026-06-29)
+# V5 — Notification Triggers: Conditions Advisory — DESIGN + Slice 1 (#289 live upcoming-conditions producer) — Closing Handoff (2026-06-29)
 
-**Branch:** `claude/notification-triggers-recurring-schedule-6e50c0` · **PR:** not yet opened (push + bookkeep + wait for Andy's go) · **Issues:** [#289](https://github.com/ahorn885/exercise/issues/289) (producer, epic #286) / [#964](https://github.com/ahorn885/exercise/issues/964) (consumer, epic #259) · **Design:** `designs/Notifications_ConditionsAdvisory_289_964_Design_v1.md` · **Suite:** not run — **no code shipped this session** (design only).
+**Branch:** `claude/notification-triggers-recurring-schedule-6e50c0` · **PR:** not yet opened (push + bookkeep + wait for Andy's go) · **Issues:** [#289](https://github.com/ahorn885/exercise/issues/289) (producer, epic #286) / [#964](https://github.com/ahorn885/exercise/issues/964) (consumer, epic #259) · **Design:** `designs/Notifications_ConditionsAdvisory_289_964_Design_v1.md` · **Suite:** full `tests/` **3928 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
 
-**Context:** Continuation of the #964 arc. The recurring-send arc (Slices 1+2) is complete; the prior handoff's decided NEXT was "#964 conditions advisory, coordinating with #289." This session did that coordination, found the handoff's premise was stale (Rule #9), surfaced the architectural decision to Andy (Stop-and-ask Triggers #3 + #5), and — per Andy's choice — wrote the design.
+**Context:** Continuation of the #964 arc. The recurring-send arc (Slices 1+2) is complete; the prior handoff's decided NEXT was "#964 conditions advisory, coordinating with #289." This session did that coordination, found the handoff's premise was stale (Rule #9), surfaced the architectural decision to Andy (Stop-and-ask Triggers #3 + #5), wrote the design per Andy's choice, then — on Andy's go + ratified thresholds — **shipped Slice 1 (the #289 producer)** in the same session.
 
 ---
 
@@ -16,15 +16,23 @@ The prior Slice-2 handoff's §6 anchor table swept clean (the recurring-send bui
 
 **Material Rule #9 finding (drove the whole session):** the prior handoff §5 (and #289's May comment) framed #289's conditions advisor as **unbuilt** / "no conditions signal." **On disk it IS built** — `weather_client.py` + `layer5/conditions_builder.py` + `layer5/conditions_orchestrator.py` + `plan_conditions_repo.py` produce a per-day climate-normals clothing advisory persisted in the `plan_conditions` table (`UNIQUE (plan_version_id)`, payload as JSONB), rendered in the plan view. The #941 weather/location fix (PR #980) further repointed weather off Mapbox `lat/lng`. So #289 is a **partially-shipped Layer-5 surface**, not an empty icebox — the assumption was reconciled before any work.
 
-## 2. What shipped — the design (no code)
+## 2. What shipped — the design + Slice 1 (#289 producer)
 
 | File | Change |
 |---|---|
-| `designs/Notifications_ConditionsAdvisory_289_964_Design_v1.md` | **New design doc** — the live upcoming-conditions producer (#289) + the conditions-advisory notification (#964), with implementation-ready SQL/signatures (Rule #11). |
-| `CURRENT_STATE.md` | New last-shipped block; prior Slice-2 demoted to predecessor. |
-| `CARRY_FORWARD.md` | (unchanged this session) |
+| `designs/Notifications_ConditionsAdvisory_289_964_Design_v1.md` | **New design doc** — the live upcoming-conditions producer (#289) + the conditions-advisory notification (#964), implementation-ready SQL/signatures (Rule #11). Thresholds ratified (§4, §11.1); Slice 1 marked shipped (§5). |
+| `weather_client.py` | **`DayForecast`** dataclass + **`get_upcoming_forecast(lat,lng,start,end)`** → `dict[date, DayForecast]` (Open-Meteo `/v1/forecast` daily max/min/precip-prob, `timezone=auto`; best-effort empty-dict degrade; null/bad-day skip). |
+| `init_db.py` | **`upcoming_conditions`** CREATE in `_PG_MIGRATIONS` (PK `(user_id, forecast_date)`; `temp_*_c DOUBLE PRECISION`; `precip_prob_pct SMALLINT`; `locale_id`, `refreshed_at`). Public-schema → auto-applies on deploy. |
+| `upcoming_conditions_repo.py` (new) | `upsert_upcoming_conditions` (`ON CONFLICT (user_id, forecast_date) DO UPDATE`) + `prune_past`. Pure DB, caller commits. |
+| `layer5/upcoming_conditions.py` (new) | The producer: `refresh_upcoming_conditions_for_user` (prune → active ready plan → in-window located sessions → representative locale/date → 1 forecast call per locale → upsert; Rule #15 `[conditions-refresh]` log) + `refresh_all_upcoming_conditions` (per-user try/except batch). `ADVISORY_HORIZON_DAYS = 7`. |
+| `routes/conditions.py` | New cron **`GET /cron/conditions/refresh`** (`cron_authorized()`-gated → `refresh_all` → commit → `{refreshed:{users,rows}}`). |
+| `vercel.json` | Cron `{ "path": "/cron/conditions/refresh", "schedule": "0 13 * * *" }` (before the `0 15` reconcile). |
+| `app.py` | `'conditions.cron_refresh_conditions'` added to `_AUTH_EXEMPT_ENDPOINTS`. |
+| `tests/test_upcoming_conditions.py` (new) | ~20 tests: forecast parse/degrade/skip, repo upsert/prune SQL+params, producer happy/no-plan/out-of-window/localeless/no-coords/empty-forecast, batch user-count + failure isolation, cron token-gate + commit. |
 
-Bookkeeping-class only — **zero substantive code files** (design + pointer + issue comments). Spec-first per Andy's "design first" choice.
+**5 substantive code files** (`weather_client.py`, `upcoming_conditions_repo.py`, `layer5/upcoming_conditions.py`, `routes/conditions.py`, the test) + `init_db`/`vercel.json`/`app.py` one-liners — at the ceiling. Design + bookkeeping are exempt.
+
+**Ratified thresholds (Andy 2026-06-29, "90°F recommendation set"):** heat ≥ **32.2 °C / 90 °F**, freeze ≤ **0 °C / 32 °F**, rain ≥ **60 %** — consumer-side, baked into Slice 2 (design §4).
 
 ## 3. The decision (Stop-and-ask — Triggers #3 cross-layer + #5 architectural alternatives)
 
@@ -46,17 +54,20 @@ Surfaced to Andy with options/tradeoffs/recommendation/gut-check; **Andy 2026-06
 
 ## 5. Verification
 
-- **No suite run / no ruff** — no code changed. (The design's §9 names the verification the build owes.)
-- **No Neon/layer0 apply owed** — design only; the future `upcoming_conditions` table is public-schema.
+- Full suite **3928 passed / 30 skipped** (`python -m venv /tmp/venv && /tmp/venv/bin/pip install -r requirements.txt pytest Flask-WTF`); the new `tests/test_upcoming_conditions.py` ~20 passed. Only the 3 pre-existing #217 `evidence_basis` warnings.
+- Ruff: **zero new findings** on the changed files (`weather_client.py`/`upcoming_conditions_repo.py`/`layer5/upcoming_conditions.py`/`routes/conditions.py`/test all clean). The 42 `app.py`+`init_db.py` E402s are the pre-existing deferred-blueprint-import structure — **identical count HEAD vs worktree** (`git stash` confirmed).
+- **No Neon/layer0 apply owed** — `upcoming_conditions` is public-schema (`_PG_MIGRATIONS`, auto-applies on deploy).
 
-## 6. NEXT — Slice 1 (#289 producer), on Andy's go
+## 6. NEXT — Slice 2 (#964 consumer), on Andy's go
 
-The build is pre-split (design §5) into two within-ceiling slices:
-- **Slice 1 — #289 producer** (~5–6 files): `weather_client` forecast fn; `init_db` `upcoming_conditions`; `upcoming_conditions_repo.py`; `layer5/upcoming_conditions.py`; `routes/conditions.py` cron + `vercel.json`/`app.py` one-liners; `tests/test_upcoming_conditions.py`. After Slice 1 the signal populates daily; nothing fires yet.
-- **Slice 2 — #964 consumer** (~2–3 files): `routes/nudges.py` reconcile spec + registry entry + thresholds; `notification_prefs.py` type; tests.
+Slice 1 (#289 producer) is shipped (§2). **Slice 2** wires the consumer (design §4, copy-paste ready) — ~2–3 substantive files:
+- `routes/nudges.py` — the `conditions_advisory` `_STALENESS_RECONCILE` entry (insert while any `upcoming_conditions` row in `[today, today+7]` crosses `temp_max_c ≥ 32.2 OR temp_min_c ≤ 0.0 OR precip_prob_pct ≥ 60`; delete when none remain) + the `NUDGE_REGISTRY` entry (CTA `plans.list_plans`, `warning`) + the threshold constants.
+- `notification_prefs.py` — the new `conditions_advisory` §22 type (`warning`, `['in_app','push']`).
+- tests — reconcile insert/delete matrix (heat-only / freeze-only / rain-only / none→cleared / outside-horizon ignored) + registry/pref shape.
 
-**Decide at/ before Slice 2 (design §11 open items):**
-1. **Threshold calibration (real open question):** §4 pins heat at 37.8 °C / 100 °F per the #964 wording; for MN / a heat-*management* heads-up, 32 °C / 90 °F may be the better trigger. Ratify the heat/freeze/rain numbers — one-line constants.
+The thresholds are ratified (heat 32.2 °C/90 °F, freeze 0 °C, rain 60 %) — no open question blocks Slice 2.
+
+**Remaining design open items (§11, non-blocking):**
 2. **Live-conditions surface for the CTA** — the advisory deep-links to the plan, which shows *normals*, not this live forecast. A surface rendering `upcoming_conditions` is the natural follow-up (not a v1 blocker).
 3. **Away-window locale resolution** — v1 keys off the session's own `locale_id`; fold in `resolve_weather_location` (away-destination coords win) only if real plan-session data shows away-days carry the home locale (Rule #14 — confirm, don't infer).
 
@@ -68,10 +79,15 @@ The build is pre-split (design §5) into two within-ceiling slices:
 
 | File | Anchor string | Check |
 |---|---|---|
-| `designs/Notifications_ConditionsAdvisory_289_964_Design_v1.md` | `# Conditions advisory — live upcoming-conditions producer` | grep (file exists) |
-| `CURRENT_STATE.md` | `#289/#964 CONDITIONS ADVISORY — DESIGN` | grep (last-shipped block) |
-| `designs/...289_964_Design_v1.md` | `CREATE TABLE IF NOT EXISTS upcoming_conditions` | grep (producer DDL spec'd) |
-| `designs/...289_964_Design_v1.md` | `'nudge_type': 'conditions_advisory',` | grep (consumer reconcile spec'd) |
+| `weather_client.py` | `def get_upcoming_forecast(` | grep |
+| `init_db.py` | `CREATE TABLE IF NOT EXISTS upcoming_conditions (` | grep |
+| `upcoming_conditions_repo.py` | `def upsert_upcoming_conditions(` | grep |
+| `layer5/upcoming_conditions.py` | `def refresh_all_upcoming_conditions(` | grep |
+| `routes/conditions.py` | `def cron_refresh_conditions():` | grep |
+| `vercel.json` | `/cron/conditions/refresh` | grep |
+| `app.py` | `'conditions.cron_refresh_conditions',` | grep |
+| `tests/test_upcoming_conditions.py` | `def test_producer_happy_path_writes_in_window_day():` | grep |
+| `designs/...289_964_Design_v1.md` | `'nudge_type': 'conditions_advisory',` | grep (Slice 2 consumer spec'd) |
 
 ### Operating notes for next session (Rule #13 read order)
 
