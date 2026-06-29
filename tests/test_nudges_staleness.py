@@ -2,12 +2,13 @@
 
 Three concerns, all exercised without a real DB:
 
-1. **Registry wiring** — the three new `NUDGE_REGISTRY` entries
-   (`log_reminder`, `body_metric_stale`, `injury_review`) each carry a CTA +
-   their own `notification_type`, and the matching `notification_prefs`
-   types are registered in-app + push (email deliberately non-applicable —
-   there's no nudge→email path and `email` is `available`, so a toggle would
-   imply a delivery that never happens).
+1. **Registry wiring** — the staleness `NUDGE_REGISTRY` entries
+   (`log_reminder`, `body_metric_stale`, `injury_review`) plus the
+   plan-attention `plan_needs_review` entry each carry a CTA + their own
+   `notification_type`, and the matching `notification_prefs` types are
+   registered in-app + push (email deliberately non-applicable — there's no
+   nudge→email path and `email` is `available`, so a toggle would imply a
+   delivery that never happens).
 
 2. **Preference gating** — `get_active_nudges` suppresses a nudge whose mapped
    in-app notification type is muted, and fails **open** (shows it) if the
@@ -35,11 +36,16 @@ os.environ['DATABASE_URL'] = ''
 import notification_prefs as np  # noqa: E402
 from routes.nudges import (  # noqa: E402
     NUDGE_REGISTRY,
+    PLAN_REVIEW_RUNGS,
     _STALENESS_RECONCILE,
     get_active_nudges,
 )
 
 STALENESS_TYPES = ['log_reminder', 'body_metric_stale', 'injury_review']
+# All types the reconcile cron arms/clears — the staleness three plus the
+# plan-attention nudge (`warning` category, so it's excluded from the
+# `info`-asserting parametrized tests above and covered on its own below).
+RECONCILE_TYPES = STALENESS_TYPES + ['plan_needs_review']
 
 
 # ─── Shared fake conn (mirrors tests/test_nudges.py) ────────────────────────
@@ -118,6 +124,30 @@ class TestRegistryWiring:
             assert NUDGE_REGISTRY[nt]['notification_type'] == 'account_reminders'
 
 
+class TestPlanNeedsReviewWiring:
+    """The plan-attention nudge mirrors the staleness wiring but carries a
+    `warning` category (it blocks a plan from finishing) and its own mutable
+    notification type."""
+
+    def test_registry_entry(self):
+        entry = NUDGE_REGISTRY['plan_needs_review']
+        assert entry['message']
+        assert entry['cta_label']
+        assert entry['cta_endpoint'] == 'plans.list_plans'
+        assert entry['category'] == 'warning'
+        assert entry['notification_type'] == 'plan_needs_review'
+        assert entry.get('display_delay_days', 0) == 0
+
+    def test_notification_type_registered_in_app_and_push(self):
+        t = np.TYPES_BY_KEY['plan_needs_review']
+        assert t['channels'] == ['in_app', 'push']
+        assert t['category'] == 'warning'
+        assert np.default_enabled('plan_needs_review', 'in_app') is True
+        assert np.default_enabled('plan_needs_review', 'push') is True
+        # Email non-applicable — no nudge→email path (same posture as staleness).
+        assert np.is_applicable('plan_needs_review', 'email') is False
+
+
 # ─── 2. Preference gating in get_active_nudges ──────────────────────────────
 
 
@@ -182,7 +212,41 @@ class TestPreferenceGating:
 
 class TestReconcileSpec:
     def test_spec_covers_all_staleness_types(self):
-        assert {s['nudge_type'] for s in _STALENESS_RECONCILE} == set(STALENESS_TYPES)
+        assert {s['nudge_type'] for s in _STALENESS_RECONCILE} == set(RECONCILE_TYPES)
+
+    def test_plan_needs_review_spec_targets_live_parked_plans(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'plan_needs_review')
+        ins = ' '.join(spec['insert'].split())
+        dele = ' '.join(spec['delete'].split())
+        res = ' '.join(spec['resurface'].split())
+        # Fires only on a live (non-superseded, non-archived) plan parked at the
+        # review gate; all three statements share that exact predicate.
+        for clause in ("generation_status = 'needs_review'",
+                       'superseded_at IS NULL', 'archived_at IS NULL'):
+            assert clause in ins
+            assert clause in dele
+            assert clause in res
+        # Rung 1 arms the first insert; the delete is age-agnostic.
+        assert "INTERVAL '1 day'" in ins
+        assert 'INTERVAL' not in dele
+
+    def test_plan_needs_review_resurface_escalates_on_later_rungs(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'plan_needs_review')
+        res = ' '.join(spec['resurface'].split())
+        # Re-surface re-arms a seen nudge: clears dismissal + unread + floats it
+        # up (re-stamped created_at). Re-stamping is what bounds it to once per
+        # rung (created_at then sits at/after the threshold).
+        assert res.startswith('UPDATE account_nudges')
+        assert 'dismissed_at = NULL' in res
+        assert 'read_at = NULL' in res
+        assert 'created_at = NOW()' in res
+        # The later rungs (every PLAN_REVIEW_RUNGS entry past the first) drive it;
+        # the first rung is the insert gate, not a re-surface.
+        for rung in PLAN_REVIEW_RUNGS[1:]:
+            assert "INTERVAL '%s'" % rung in res
+        assert "INTERVAL '%s'" % PLAN_REVIEW_RUNGS[0] not in res
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):
@@ -222,10 +286,16 @@ class TestReconcileRoute:
     def test_authorized_runs_delete_then_insert_per_type(self, monkeypatch):
         monkeypatch.setenv('CRON_SECRET', 's3cret')
         conn = _FakeConn()
-        # Per type: delete returns 1 cleared row, insert returns 2 armed rows.
-        for _ in _STALENESS_RECONCILE:
-            conn.queue([{'id': 10}])             # delete
+        # Per type: delete (1 cleared), insert (2 armed), and — for a type with
+        # a `resurface` statement — an update (1 re-armed), in that order.
+        expected_kinds = []
+        for s in _STALENESS_RECONCILE:
+            conn.queue([{'id': 10}])              # delete
             conn.queue([{'id': 20}, {'id': 21}])  # insert
+            expected_kinds += ['DELETE', 'INSERT']
+            if s.get('resurface'):
+                conn.queue([{'id': 30}])          # resurface
+                expected_kinds.append('UPDATE')
         client = _cron_client(monkeypatch, conn)
         resp = client.get('/cron/nudges/reconcile',
                           headers={'Authorization': 'Bearer s3cret'})
@@ -234,7 +304,10 @@ class TestReconcileRoute:
         for s in _STALENESS_RECONCILE:
             assert body['cleared'][s['nudge_type']] == 1
             assert body['inserted'][s['nudge_type']] == 2
-        # Exactly one commit, and the statements ran delete-before-insert.
+            if s.get('resurface'):
+                assert body['resurfaced'][s['nudge_type']] == 1
+        # Exactly one commit, and the statements ran in delete→insert→resurface
+        # order per type.
         assert conn.commits == 1
         kinds = [c[0].split()[0] for c in conn.calls]
-        assert kinds == ['DELETE', 'INSERT'] * len(_STALENESS_RECONCILE)
+        assert kinds == expected_kinds
