@@ -729,6 +729,74 @@ class TestTriathlonD17:
         assert params[0] == "Some New Sport (Variant)"
         assert params[1] == "Some New Sport (Variant)"
 
+    # ── D-17 guard (#254): bare sub-format parent → loud failure ──────────────
+
+    @pytest.mark.parametrize(
+        "parent",
+        [
+            "Triathlon",
+            "Skimo",
+            "Long Distance / Endurance Cycling",
+            "Canoe / Kayak Marathon",
+            "Open Water Marathon Swimming",
+        ],
+    )
+    def test_bare_parent_flags_unresolved_and_hitl(self, parent):
+        """A bare sub-format parent loads SDM disciplines but joins zero PLA
+        rows (all phase-load bands NULL) — the guard must flag unresolved +
+        force HITL rather than silently emitting a no-volume plan."""
+        conn = _FakeConn()
+        # Disciplines resolve via SDM (top-level key) but carry no PLA bands.
+        conn.queue_response(rows=[
+            _row("D-002", "Swim", "Primary",
+                 race_time_pct_low=15, race_time_pct_high=20),
+            _row("D-004", "Bike", "Primary",
+                 race_time_pct_low=50, race_time_pct_high=55),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, parent, etl_version_set=_DEFAULT_ETL,
+        )
+
+        # Disciplines still load (SDM matched) ...
+        assert len(payload.disciplines) == 2
+        # ... but the missing phase-load is surfaced loudly, not swallowed.
+        assert payload.hitl_required is True
+        assert any(
+            f.raw_input == parent and f.severity == "error"
+            for f in payload.unresolved_flags
+        )
+
+    def test_resolved_subformat_with_pla_does_not_flag(self):
+        """The correctly-resolved sub-format name (carries the parenthetical,
+        not in the whitelist) with real PLA bands must NOT trip the guard."""
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-004", "Road Cycling", "Primary",
+                 race_time_pct_low=50, race_time_pct_high=55,
+                 base_pct_low=48, base_pct_high=55, default_inclusion="included"),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Triathlon (Standard / Olympic)", etl_version_set=_DEFAULT_ETL,
+        )
+        assert payload.hitl_required is False
+        assert payload.unresolved_flags == []
+
+    def test_bare_parent_with_pla_present_does_not_flag(self):
+        """Defensive: if a parent-named sport ever DID carry PLA bands, the
+        guard keys on missing bands, not the name alone — so it stays inert."""
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-004", "Bike", "Primary",
+                 race_time_pct_low=50, race_time_pct_high=55,
+                 base_pct_low=48, base_pct_high=55, default_inclusion="included"),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Triathlon", etl_version_set=_DEFAULT_ETL,
+        )
+        assert not any(
+            f.raw_input == "Triathlon" for f in payload.unresolved_flags
+        )
+
 
 # ─── §10 edge cases ──────────────────────────────────────────────────────────
 

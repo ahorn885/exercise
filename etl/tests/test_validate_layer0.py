@@ -32,6 +32,7 @@ def _clean_results() -> dict[str, dict]:
         "vocab_alignment": {"exercise_warnings": [], "sport_warnings": []},
         "contraindicated_conditions": {"warnings": []},
         "default_inclusion": {"errors": []},
+        "sport_sub_format_map": {"errors": []},
     }
 
 
@@ -43,10 +44,10 @@ def test_clean_results_pass() -> None:
 
 
 def test_registry_has_all_logical_checks() -> None:
-    # fk_checks splits into two runners → 11 entries (10 logical checks: the
-    # original 7 + terrain_types, primary_movement, and exercises_fk, all added
-    # with the DB-source-of-truth model).
-    assert len(v.CHECKS) == 11
+    # fk_checks splits into two runners → 12 entries (11 logical checks: the
+    # original 7 + terrain_types, primary_movement, exercises_fk, all added with
+    # the DB-source-of-truth model, plus sport_sub_format_map for #254/D-17).
+    assert len(v.CHECKS) == 12
     names = [c.name for c in v.CHECKS]
     assert names.count("substitution_fks") == 1
     assert names.count("training_gap_fks") == 1
@@ -67,6 +68,19 @@ def test_fk_violation_fails_the_gate() -> None:
     assert sub.failed
     assert sub.unwaived[0].id == "D-001->D-999"
     assert "dangling FK" in sub.unwaived[0].detail
+
+
+def test_sport_sub_format_map_violation_fails_the_gate() -> None:
+    # #254/D-17 — a parent missing its single default trips the gate.
+    results = _clean_results()
+    results["sport_sub_format_map"] = {
+        "errors": [{"id": "Triathlon", "detail": "has 0 defaults, expected exactly 1"}],
+    }
+    outcomes = v.evaluate(results, {})
+    assert v.gate_failed(outcomes)
+    ssfm = next(o for o in outcomes if o.name == "sport_sub_format_map")
+    assert ssfm.failed
+    assert ssfm.unwaived[0].id == "Triathlon"
 
 
 def test_sum_to_100_waived_passes() -> None:
