@@ -29,14 +29,18 @@ class _Cursor:
 class _FakeConn:
     """Routes the writer's reads by table/params; records every call."""
 
-    def __init__(self, garmin=None, prr=None):
+    def __init__(self, garmin=None, prr=None, pin=None):
         self.garmin = garmin            # dict (one daily_wellness_metrics row) or None
         self.prr = prr or {}            # {(provider, data_type): [rows]}
+        self.pin = pin                  # wellness source pin provider, or None
         self.calls: list[tuple[str, tuple]] = []
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
         s = " ".join(sql.split())
+        if "FROM user_source_preferences" in s:
+            rows = [{"domain": "wellness", "preferred_provider": self.pin}] if self.pin else []
+            return _Cursor(rows=rows)
         if "FROM daily_wellness_metrics" in s:
             return _Cursor(one=self.garmin)
         if "FROM provider_raw_record" in s:
@@ -70,9 +74,10 @@ def _upsert(conn):
 
 
 class TestCoalesce:
-    def test_freshest_non_null_wins_per_field(self):
-        # Garmin carries all three (older ingest); Whoop carries a FRESHER hrv +
-        # rhr. Sleep stays Garmin (only it has sleep that day); hrv/rhr flip Whoop.
+    def test_most_complete_record_is_primary(self):
+        # Garmin carries all three (older ingest); Whoop carries a fresher hrv +
+        # rhr but a LESS complete record. Decision 2: most-complete wins, not
+        # freshest — so every metric stays Garmin; nothing flips to Whoop.
         conn = _FakeConn(
             garmin=_garmin_row(
                 sleep_start_ms=0, sleep_end_ms=8 * 3600_000,  # 8.0 h
@@ -86,11 +91,44 @@ class TestCoalesce:
         row, _ = _upsert(conn)
         assert row["total_sleep_hours"] == 8.0
         assert row["total_sleep_hours_source"] == "garmin"
-        assert row["hrv_rmssd_ms"] == 70.0 and row["hrv_rmssd_ms_source"] == "whoop"
-        assert row["resting_hr"] == 45 and row["resting_hr_source"] == "whoop"
+        assert row["hrv_rmssd_ms"] == 55.0 and row["hrv_rmssd_ms_source"] == "garmin"
+        assert row["resting_hr"] == 48 and row["resting_hr_source"] == "garmin"
 
-    def test_priority_tiebreak_when_timestamps_equal(self):
-        # Equal ingest timestamps → garmin (priority 5) beats coros (priority 1).
+    def test_completeness_beats_priority_for_primary(self):
+        # Oura's record is complete (sleep+hrv+rhr); Garmin has only hrv. Even
+        # though Garmin out-ranks Oura, the most-complete record is primary, so
+        # the shared hrv comes from Oura — completeness overrides static priority.
+        conn = _FakeConn(
+            garmin=_garmin_row(
+                hrv_overnight_avg_ms=55.0, updated_at=datetime(2026, 6, 20, 6, 0, 0)),
+            prr={("oura", "daily_summary"): [_prr_row(
+                {"total_sleep_min": 480, "hrv_rmssd_ms": 65.0, "resting_hr": 47},
+                datetime(2026, 6, 20, 7, 0, 0))]},
+        )
+        cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
+        row, _ = _upsert(conn)
+        assert row["total_sleep_hours"] == 8.0 and row["total_sleep_hours_source"] == "oura"
+        assert row["hrv_rmssd_ms"] == 65.0 and row["hrv_rmssd_ms_source"] == "oura"
+        assert row["resting_hr"] == 47 and row["resting_hr_source"] == "oura"
+
+    def test_gap_fill_from_lesser_source(self):
+        # Oura is the most-complete primary (sleep+hrv); resting HR exists only on
+        # Garmin's record → gap-filled from Garmin though Oura leads the merge.
+        conn = _FakeConn(
+            garmin=_garmin_row(resting_hr=50, updated_at=datetime(2026, 6, 20, 6, 0, 0)),
+            prr={("oura", "daily_summary"): [_prr_row(
+                {"total_sleep_min": 450, "hrv_rmssd_ms": 60.0},  # 7.5 h
+                datetime(2026, 6, 20, 7, 0, 0))]},
+        )
+        cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
+        row, _ = _upsert(conn)
+        assert row["total_sleep_hours"] == 7.5 and row["total_sleep_hours_source"] == "oura"
+        assert row["hrv_rmssd_ms"] == 60.0 and row["hrv_rmssd_ms_source"] == "oura"
+        assert row["resting_hr"] == 50 and row["resting_hr_source"] == "garmin"
+
+    def test_priority_tiebreak_when_completeness_equal(self):
+        # Garmin hrv vs COROS hrv — each a 1-metric record → completeness tie →
+        # garmin (priority 5) beats coros (priority 1).
         ts = datetime(2026, 6, 20, 7, 0, 0)
         conn = _FakeConn(
             garmin=_garmin_row(hrv_overnight_avg_ms=60.0, updated_at=ts),
@@ -106,6 +144,42 @@ class TestCoalesce:
         cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
         row, _ = _upsert(conn)
         assert row["resting_hr"] == 48 and row["resting_hr_source"] == "oura"
+
+
+class TestHardPin:
+    """The per-athlete wellness pin (`source_preferences_repo`, B2): a pinned
+    source wins per metric when it carries a value; else falls through to the
+    most-complete merge (decision 1, hard pin)."""
+
+    def test_pin_wins_over_more_complete_source(self):
+        # Garmin is the most-complete record, but a Whoop pin forces hrv + rhr to
+        # Whoop where Whoop has a value. Sleep (Whoop absent) falls back to merge.
+        conn = _FakeConn(
+            pin="whoop",
+            garmin=_garmin_row(
+                sleep_start_ms=0, sleep_end_ms=8 * 3600_000,  # 8.0 h
+                hrv_overnight_avg_ms=55.0, resting_hr=48,
+                updated_at=datetime(2026, 6, 20, 6, 0, 0)),
+            prr={("whoop", "daily_summary"): [_prr_row(
+                {"hrv_rmssd_ms": 70.0, "resting_hr": 45},
+                datetime(2026, 6, 20, 5, 0, 0))]},  # older + less complete
+        )
+        cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
+        row, _ = _upsert(conn)
+        assert row["hrv_rmssd_ms"] == 70.0 and row["hrv_rmssd_ms_source"] == "whoop"
+        assert row["resting_hr"] == 45 and row["resting_hr_source"] == "whoop"
+        assert row["total_sleep_hours"] == 8.0 and row["total_sleep_hours_source"] == "garmin"
+
+    def test_pinned_source_absent_falls_through_to_merge(self):
+        # Pin = polar, but polar has no data this day → pure most-complete merge.
+        conn = _FakeConn(
+            pin="polar",
+            garmin=_garmin_row(
+                hrv_overnight_avg_ms=55.0, updated_at=datetime(2026, 6, 20, 6, 0, 0)),
+        )
+        cw.materialize_canonical_wellness(conn, 1, "2026-06-20")
+        row, _ = _upsert(conn)
+        assert row["hrv_rmssd_ms"] == 55.0 and row["hrv_rmssd_ms_source"] == "garmin"
 
 
 class TestContextFields:
