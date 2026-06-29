@@ -931,9 +931,15 @@ def add_event_window_route():
     db = get_db()
     uid = current_user_id()
     return_to = request.form.get('return_to')
+    # End date is optional (#889) — a blank end means a single-day window
+    # (end == start). One reduced/travel day is the common case, and a volume %
+    # blankets every covered day, so the per-day fix is to make the one-day
+    # window ergonomic rather than force re-typing the same date.
+    start_raw = (request.form.get('start_date') or '').strip()
+    end_raw = (request.form.get('end_date') or '').strip()
     try:
-        start = date.fromisoformat((request.form.get('start_date') or '').strip())
-        end = date.fromisoformat((request.form.get('end_date') or '').strip())
+        start = date.fromisoformat(start_raw)
+        end = date.fromisoformat(end_raw) if end_raw else start
     except ValueError:
         flash('Enter valid start and end dates.', 'error')
         return _event_windows_redirect(return_to)

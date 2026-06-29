@@ -427,3 +427,31 @@ def test_event_windows_list_renders_volume_labels():
                    draft=None)
     assert 'Reduced volume' in html and '50%' in html
     assert 'No training' in html
+    # #889 — a single-day window renders one date + a "(1 day)" tag, never a
+    # "start → end" range that reads as multi-day.
+    assert '2026-07-03 <span class="dim">(1 day)</span>' in html
+    assert '2026-07-03 → 2026-07-03' not in html
+    # The multi-day no_training window still renders the arrow range.
+    assert '2026-07-10 → 2026-07-11' in html
+
+
+def test_event_windows_form_makes_single_day_ergonomic(monkeypatch):
+    """#889 — the end date is optional (blank = single day) and the form spells
+    out that a volume % blankets every covered day, so one reduced day inside a
+    longer trip is captured as its own one-day window."""
+    html = _render('profile/event_windows.html',
+                   windows=[], locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away',
+                                   'reduced_volume', 'no_training'),
+                   craft_catalog={}, return_to=None, return_to_label=None,
+                   draft=None)
+    # The end-date input is no longer `required` (blank means a single day).
+    end_field = html[html.index('name="end_date"'):]
+    end_input_end = end_field.index('>')
+    assert 'required' not in end_field[:end_input_end]
+    assert 'leave blank for a single day' in html
+    # The reduced-volume control names its per-day scope so the athlete knows to
+    # split a single reduced day out of a longer trip.
+    assert 'Applies to' in html and 'every' in html
+    assert 'one-day window' in html
+    assert 'style="' not in html and 'onclick=' not in html  # strict CSP

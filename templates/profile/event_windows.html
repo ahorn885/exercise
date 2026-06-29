@@ -46,7 +46,7 @@
       <tbody>
         {% for w in windows %}
         <tr>
-          <td class="mono">{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}</td>
+          <td class="mono">{% if w.start_date == w.end_date %}{{ w.start_date.isoformat() }} <span class="dim">(1 day)</span>{% else %}{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}{% endif %}</td>
           <td>
             {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
             {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
@@ -93,9 +93,9 @@
         <label class="field"><span class="lbl">Start date</span>
           <input type="date" name="start_date" class="form-control form-control-sm"
                  value="{{ d.get('start_date', '') }}" required></label>
-        <label class="field"><span class="lbl">End date (inclusive)</span>
+        <label class="field"><span class="lbl">End date <span class="dim">(inclusive — leave blank for a single day)</span></span>
           <input type="date" name="end_date" class="form-control form-control-sm"
-                 value="{{ d.get('end_date', '') }}" required></label>
+                 value="{{ d.get('end_date', '') }}"></label>
         <label class="field"><span class="lbl">Constraint</span>
           {% set ot = d.get('override_type', '') %}
           <select name="override_type" class="form-control form-control-sm" required>
@@ -140,7 +140,9 @@
             <option value="25"{{ ' selected' if vp == '25' else '' }}>25% — very light</option>
             <option value="50"{{ ' selected' if vp == '50' or not vp else '' }}>50% — half day</option>
             <option value="75"{{ ' selected' if vp == '75' else '' }}>75% — slightly reduced</option>
-          </select></label>
+          </select>
+          <span class="dim">Applies to <b>every</b> day in the window. For one reduced day inside a longer
+            trip, add it as its own one-day window (blank end date) so the rest isn't scaled too.</span></label>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
                  value="{{ d.get('notes', '') }}"
