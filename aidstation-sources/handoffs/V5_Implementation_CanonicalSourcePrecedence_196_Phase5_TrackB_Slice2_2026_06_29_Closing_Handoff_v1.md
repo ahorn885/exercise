@@ -1,6 +1,8 @@
 # V5 Implementation — #196 Phase 5 Track B Slice B2: Wellness Coalesce → Most-Complete + Read the Wellness Pin — Closing Handoff (2026-06-29)
 
-**Branch:** `claude/issue-196-implementation-aaju2n` · **Suite:** 3622 passed / 30 skipped · **PR:** pending Andy's go (commit + push + bookkeep done; do not auto-open) · **Design:** `designs/CanonicalSourcePrecedence_196_Phase5_Design_v1.md` · **Predecessor:** B1 (`…Slice1…`, PR #981 / `605f7e8`, MERGED) · **Epic:** #196 (stays OPEN — Track B continues at B3).
+**Branch:** `claude/issue-196-implementation-aaju2n` · **Suite:** 3622 passed / 30 skipped · **PR:** [#984](https://github.com/ahorn885/exercise/pull/984) — auto-merge SQUASH armed · **Design:** `designs/CanonicalSourcePrecedence_196_Phase5_Design_v1.md` · **Predecessor:** B1 (`…Slice1…`, PR #981 / `605f7e8`, MERGED) · **Epic:** #196 (stays OPEN — Track B continues at B3).
+
+> **⚠️ #196 IS NOT DONE — WE CONTINUE ON IT NEXT SESSION.** This slice (B2) is one step of Phase 5 Track B. The epic **stays OPEN**: **B3** (cardio merge + pin) and **B4** (picker UI) remain before Track B closes, and Phase 5 is the last open phase of the #196 epic. The next session picks up at **B3** — do not treat the B2 merge as closing #196.
 
 > **▶ IMMEDIATE NEXT:** **Slice B3 — cardio merge + pin** (`routes/garmin.materialize_canonical_activity`, `:812`): thread the cardio pin into the most-complete merge (the merge already IS most-complete — B3 only adds the hard-pin override), and re-materialize affected clusters on a pin change (a `apply_cardio_pin_change` analog of B2's `source_preference_apply.apply_wellness_pin_change`). Then **B4** (picker UI). Read §6 below.
 
