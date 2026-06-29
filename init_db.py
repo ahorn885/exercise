@@ -2557,6 +2557,13 @@ _PG_MIGRATIONS = [
     # 'no_training' (zeroed day, no column); volume_pct is NULL on every other
     # type. Closed-enum + range re-asserted in athlete_event_windows_repo.py.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_pct NUMERIC",
+    # Event Windows per-day volume (#889) — volume_by_date: a JSON object
+    # {ISO date: retained fraction} layering per-DATE levels onto a reduced_volume
+    # window, so one reduced travel day inside a longer window doesn't scale the
+    # rest. Stored as TEXT (json.dumps, driver-agnostic — mirrors the brought_craft
+    # CSV pattern); NULL → the window-wide volume_pct applies to every covered day
+    # (the pre-#889 behaviour). Dates/range validated in athlete_event_windows_repo.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_by_date TEXT",
     # (b) craft<->locale: a standing "this craft is kept at this locale"
     # association (a bike at the parents' place). Many-to-many, no per-row
     # attribute → a thin join table; athlete-scoped; locale app-validated against

@@ -29,7 +29,8 @@ required + must resolve to one of the athlete's `locale_profiles` rows iff
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import date
 
 from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
@@ -76,35 +77,60 @@ class EventWindow:
     # window (0 < pct < 1), athlete-set per window. None on every other type
     # ('no_training' is the discrete 0% type, not pct=0).
     volume_pct: float | None = None
+    # #889 — per-DATE volume schedule layered onto a 'reduced_volume' window:
+    # {date: retained fraction (0 < pct <= 1.0; 1.0 = no reduction that day)}.
+    # Empty/None → the window-wide `volume_pct` applies to every covered day (the
+    # pre-#889 behaviour). Lets one reduced travel day inside a longer window not
+    # scale the rest. Dates not present fall back to `volume_pct` at resolution.
+    volume_by_date: dict[date, float] = field(default_factory=dict)
+
+
+_WINDOW_COLUMNS = (
+    "id, user_id, start_date, end_date, override_type, unavailable_locale, "
+    "away_locale, brought_craft, volume_pct, volume_by_date, notes"
+)
+
+
+def _row_to_window(row) -> EventWindow:
+    """Map one `athlete_event_windows` row to an `EventWindow` (the single place
+    the stored CSV / JSON columns are decoded)."""
+    return EventWindow(
+        id=row["id"],
+        user_id=row["user_id"],
+        start_date=_as_date(row["start_date"]),
+        end_date=_as_date(row["end_date"]),
+        override_type=row["override_type"],
+        unavailable_locale=row["unavailable_locale"] or None,
+        away_locale=row["away_locale"] or None,
+        notes=row["notes"] or "",
+        brought_craft=tuple(_split_craft(row["brought_craft"])),
+        volume_pct=(
+            float(row["volume_pct"]) if row["volume_pct"] is not None else None
+        ),
+        volume_by_date=_parse_volume_by_date(row["volume_by_date"]),
+    )
 
 
 def load_event_windows(db, user_id: int) -> list[EventWindow]:
     """The athlete's event windows, ordered by `(start_date, id)` for a
     deterministic plan-span hash + render order."""
     rows = db.execute(
-        "SELECT id, user_id, start_date, end_date, override_type, "
-        "unavailable_locale, away_locale, brought_craft, volume_pct, notes "
-        "FROM athlete_event_windows "
+        f"SELECT {_WINDOW_COLUMNS} FROM athlete_event_windows "
         "WHERE user_id = ? ORDER BY start_date, id",
         (user_id,),
     ).fetchall()
-    return [
-        EventWindow(
-            id=row["id"],
-            user_id=row["user_id"],
-            start_date=_as_date(row["start_date"]),
-            end_date=_as_date(row["end_date"]),
-            override_type=row["override_type"],
-            unavailable_locale=row["unavailable_locale"] or None,
-            away_locale=row["away_locale"] or None,
-            notes=row["notes"] or "",
-            brought_craft=tuple(_split_craft(row["brought_craft"])),
-            volume_pct=(
-                float(row["volume_pct"]) if row["volume_pct"] is not None else None
-            ),
-        )
-        for row in rows
-    ]
+    return [_row_to_window(row) for row in rows]
+
+
+def load_event_window(db, user_id: int, window_id: int) -> EventWindow | None:
+    """One of the athlete's windows by id (user-scoped — a foreign id → None).
+    Backs the #889 per-day volume editor's GET render + POST validation."""
+    row = db.execute(
+        f"SELECT {_WINDOW_COLUMNS} FROM athlete_event_windows "
+        "WHERE id = ? AND user_id = ?",
+        (window_id, user_id),
+    ).fetchone()
+    return _row_to_window(row) if row is not None else None
 
 
 def resolve_weather_city(db, user_id: int, on_date: date) -> str:
@@ -241,6 +267,52 @@ def delete_event_window(db, user_id: int, window_id: int) -> None:
     )
 
 
+def update_event_window_volume_by_date(
+    db, user_id: int, window_id: int, by_date: dict[date, float] | None
+) -> None:
+    """Set (or clear) the per-DATE volume schedule on a `reduced_volume` window
+    (#889). `by_date` maps a covered date → retained fraction (0 < pct <= 1.0;
+    1.0 = a normal, unreduced day — how 'only this one day is reduced' inside a
+    longer window is expressed). An empty/None map clears the schedule, so the
+    window-wide `volume_pct` again applies to every covered day.
+
+    Raises `EventWindowError` (writing nothing) when the window isn't the
+    athlete's, isn't a `reduced_volume` window, or a date/level is out of range.
+    Caller commits."""
+    win = load_event_window(db, user_id, window_id)
+    if win is None:
+        raise EventWindowError("event window not found")
+    if win.override_type != "reduced_volume":
+        raise EventWindowError(
+            "per-day volume levels apply only to a reduced_volume window"
+        )
+    clean: dict[str, float] = {}
+    for d, pct in (by_date or {}).items():
+        dd = d if isinstance(d, date) else _as_date(d)
+        if not (win.start_date <= dd <= win.end_date):
+            raise EventWindowError(
+                f"{dd.isoformat()} is outside the window "
+                f"{win.start_date.isoformat()}..{win.end_date.isoformat()}"
+            )
+        try:
+            p = float(pct)
+        except (TypeError, ValueError):
+            raise EventWindowError(f"per-day volume {pct!r} is not a number")
+        if not 0.0 < p <= 1.0:
+            raise EventWindowError(
+                f"per-day volume must be in (0, 1] (got {p})"
+            )
+        clean[dd.isoformat()] = p
+    # Stored sorted for a deterministic CSV-equivalent digest (mirrors the
+    # brought_craft enum-order rule) → a stable compute_event_windows_hash.
+    stored = json.dumps(dict(sorted(clean.items()))) if clean else None
+    db.execute(
+        "UPDATE athlete_event_windows SET volume_by_date = ? "
+        "WHERE id = ? AND user_id = ?",
+        (stored, window_id, user_id),
+    )
+
+
 def evict_plan_caches_on_event_windows_change(db, user_id: int) -> None:
     """A window add/delete changes the date-segmented plan-gen feasibility, so
     invalidate the two synthesis entry points that consume it. Unlike the craft
@@ -266,6 +338,16 @@ def _split_craft(value) -> list[str]:
     if not value:
         return []
     return [tok.strip() for tok in str(value).split(",") if tok.strip()]
+
+
+def _parse_volume_by_date(value) -> dict[date, float]:
+    """Decode the stored per-date volume JSON (#889) into `{date: fraction}`.
+    Empty / NULL → `{}` (the window-wide `volume_pct` then covers every day). A
+    dict is accepted as-is in case a driver auto-parses the column."""
+    if not value:
+        return {}
+    raw = value if isinstance(value, dict) else json.loads(value)
+    return {_as_date(k): float(v) for k, v in raw.items()}
 
 
 def _validate_crafts(values: list[str]) -> list[str]:

@@ -12,6 +12,7 @@ exercise `_reduced_env` + `_resolve_included_feasibility` directly — no DB / L
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from types import SimpleNamespace
 
@@ -22,7 +23,9 @@ from athlete_event_windows_repo import (
     EventWindowError,
     add_event_window,
     delete_event_window,
+    load_event_window,
     load_event_windows,
+    update_event_window_volume_by_date,
 )
 from athlete_craft_locale_repo import (
     CraftLocaleError,
@@ -316,6 +319,82 @@ class TestOverlayBuilder:
             home_feasibility={},
         )
         assert segments == [] and overlapping == []
+
+
+# ─── per-date volume schedule (#889): one-day override expansion ─────────────
+
+class TestPerDateVolumeExpansion:
+    """A reduced_volume window carrying a per-DATE schedule expands into one-day
+    volume segments — each covered day at its OWN retained fraction, full (1.0)
+    days emitting nothing. A window WITHOUT a schedule stays one segment."""
+
+    def _patch(self, monkeypatch, fi, windows):
+        import layer4.orchestrator as orch
+        monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
+        monkeypatch.setattr(orch, "load_craft_locales", lambda db, uid: {})
+        monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
+
+    def _fi_home(self):
+        # D-001 fully feasible at home (trail terrain) → reduced_volume changes no
+        # feasibility, so a segment is emitted purely for its volume effect.
+        return _mk_inputs(
+            cluster=["home"],
+            terrain_by_locale={"home": {"TRN-002"}},
+            equip_by_locale={"home": set()},
+            disciplines=["D-001"],
+        )
+
+    def test_per_day_schedule_expands_to_one_day_segments(self, monkeypatch):
+        fi = self._fi_home()
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        # 6/10..6/12 window; 6/10 dialed to 0.25, 6/11 full (no reduction),
+        # 6/12 unmapped → falls back to the window-wide 0.5.
+        win = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 10), end_date=date(2026, 6, 12),
+            override_type="reduced_volume", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=0.5,
+            volume_by_date={date(2026, 6, 10): 0.25, date(2026, 6, 11): 1.0},
+        )
+        self._patch(monkeypatch, fi, [win])
+        segments, overlapping = _build_event_window_overlay(
+            None, 7, None,
+            plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        assert len(overlapping) == 1  # the single declared window feeds the hash
+        by_pct = {s.start_date: s.volume_pct for s in segments}
+        # 6/10 at its dialed 0.25; 6/12 at the window default 0.5; 6/11 (full)
+        # emits no volume segment.
+        assert by_pct == {date(2026, 6, 10): 0.25, date(2026, 6, 12): 0.5}
+        assert all(s.start_date == s.end_date for s in segments)  # one-day each
+        assert all(s.start_date != date(2026, 6, 11) for s in segments)
+
+    def test_no_schedule_stays_single_segment(self, monkeypatch):
+        # Regression: a reduced_volume window with no per-date map is one segment
+        # spanning the whole window (byte-identical to pre-#889).
+        fi = self._fi_home()
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        win = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 10), end_date=date(2026, 6, 12),
+            override_type="reduced_volume", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=0.5,
+        )
+        self._patch(monkeypatch, fi, [win])
+        segments, _ = _build_event_window_overlay(
+            None, 7, None,
+            plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        assert len(segments) == 1
+        assert segments[0].start_date == date(2026, 6, 10)
+        assert segments[0].end_date == date(2026, 6, 12)
+        assert segments[0].volume_pct == 0.5
 
 
 # ─── away windows (Slice 2): replacement env + counts-follow-away ────────────
@@ -794,7 +873,8 @@ class TestRepo:
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "indoor_only",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": None, "volume_pct": None, "notes": ""},
+             "brought_craft": None, "volume_pct": None, "volume_by_date": None,
+             "notes": ""},
         ])
         windows = load_event_windows(conn, 7)
         assert windows[0].start_date == date(2026, 6, 10)
@@ -1086,11 +1166,90 @@ class TestVolumeRepo:
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "reduced_volume",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": None, "volume_pct": 0.5, "notes": ""},
+             "brought_craft": None, "volume_pct": 0.5, "volume_by_date": None,
+             "notes": ""},
         ])
         w = load_event_windows(conn, 7)[0]
         assert w.override_type == "reduced_volume"
         assert w.volume_pct == 0.5
+        assert w.volume_by_date == {}  # #889 — no schedule → window-wide pct
+
+
+class TestPerDateVolumeRepo:
+    """#889 — the per-DATE volume schedule: load round-trip + the writer's
+    validation/persistence."""
+
+    def _row(self, **kw):
+        base = {
+            "id": 1, "user_id": 7, "start_date": "2026-06-10",
+            "end_date": "2026-06-12", "override_type": "reduced_volume",
+            "unavailable_locale": None, "away_locale": None,
+            "brought_craft": None, "volume_pct": 0.5, "volume_by_date": None,
+            "notes": "",
+        }
+        base.update(kw)
+        return base
+
+    def test_load_parses_volume_by_date_json(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row(
+            volume_by_date=json.dumps({"2026-06-10": 0.25, "2026-06-12": 1.0})
+        )])
+        w = load_event_window(conn, 7, 1)
+        assert w.volume_by_date == {date(2026, 6, 10): 0.25, date(2026, 6, 12): 1.0}
+
+    def test_writer_serializes_sorted_map(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])  # load_event_window SELECT
+        update_event_window_volume_by_date(
+            conn, 7, 1, {date(2026, 6, 12): 0.5, date(2026, 6, 10): 0.25}
+        )
+        sql, params = conn.calls[-1]
+        assert "UPDATE athlete_event_windows" in sql
+        # Stored sorted → deterministic digest.
+        assert params[0] == '{"2026-06-10": 0.25, "2026-06-12": 0.5}'
+
+    def test_writer_clears_on_empty_map(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        update_event_window_volume_by_date(conn, 7, 1, {})
+        sql, params = conn.calls[-1]
+        assert "UPDATE athlete_event_windows" in sql
+        assert params[0] is None  # cleared → window-wide pct again applies
+
+    def test_writer_rejects_date_outside_window(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        with pytest.raises(EventWindowError):
+            update_event_window_volume_by_date(
+                conn, 7, 1, {date(2026, 6, 20): 0.5}
+            )
+
+    def test_writer_rejects_level_out_of_range(self):
+        conn = _FakeConn()
+        for bad in (0.0, -0.1, 1.5):
+            conn.queue_response(rows=[self._row()])
+            with pytest.raises(EventWindowError):
+                update_event_window_volume_by_date(
+                    conn, 7, 1, {date(2026, 6, 11): bad}
+                )
+
+    def test_writer_rejects_non_reduced_window(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row(override_type="no_training",
+                                            volume_pct=None)])
+        with pytest.raises(EventWindowError):
+            update_event_window_volume_by_date(
+                conn, 7, 1, {date(2026, 6, 11): 0.5}
+            )
+
+    def test_writer_rejects_unknown_window(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[])  # load_event_window → None
+        with pytest.raises(EventWindowError):
+            update_event_window_volume_by_date(
+                conn, 7, 99, {date(2026, 6, 11): 0.5}
+            )
 
 
 class TestVolumeHash:
@@ -1112,6 +1271,32 @@ class TestVolumeHash:
         a = compute_event_windows_hash([self._win("no_training")])
         b = compute_event_windows_hash([self._win("reduced_volume", 0.5)])
         assert a != b
+
+    def test_volume_by_date_change_changes_digest(self):
+        # #889 — a per-day level edit must invalidate the overlapping synthesis,
+        # and an absent schedule stays byte-identical to the pre-#889 key.
+        plain = self._win("reduced_volume", 0.5)
+        sched_a = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="reduced_volume", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=0.5, volume_by_date={date(2026, 6, 1): 0.25},
+        )
+        sched_b = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="reduced_volume", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=0.5, volume_by_date={date(2026, 6, 1): 0.75},
+        )
+        h_plain = compute_event_windows_hash([plain])
+        h_a = compute_event_windows_hash([sched_a])
+        h_b = compute_event_windows_hash([sched_b])
+        assert h_plain != h_a != h_b and h_plain != h_b
+        # Empty schedule == no schedule (byte-identical key — regression guard).
+        empty = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="reduced_volume", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=0.5, volume_by_date={},
+        )
+        assert compute_event_windows_hash([empty]) == h_plain
 
 
 class TestWeekVolumeCapacity:

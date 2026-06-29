@@ -74,8 +74,8 @@ Vertical-slice limitations carried as forward-pointers:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from datetime import date, datetime, time
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time, timedelta
 from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
@@ -854,20 +854,33 @@ def _build_event_window_overlay(
     # branch unions the crafts kept at any locale in the destination cluster (b)
     # with the window's brought-craft (c) → the away segment's owned_crafts.
     craft_locale_map = load_craft_locales(db, user_id)
-    raw = [
-        (
-            w.start_date,
-            w.end_date,
-            EventWindowOverride(
-                w.override_type,
-                w.unavailable_locale,
-                w.away_locale,
-                brought_craft=tuple(w.brought_craft),
-                volume_pct=w.volume_pct,
-            ),
+    raw: list[tuple[date, date, EventWindowOverride]] = []
+    for w in overlapping:
+        base_ov = EventWindowOverride(
+            w.override_type,
+            w.unavailable_locale,
+            w.away_locale,
+            brought_craft=tuple(w.brought_craft),
+            volume_pct=w.volume_pct,
         )
-        for w in overlapping
-    ]
+        if w.override_type == "reduced_volume" and w.volume_by_date:
+            # #889 — a per-DATE schedule expands into one-day overrides so each
+            # covered day carries its OWN retained fraction. A full (1.0) day
+            # emits nothing (no reduction); a date with no explicit level falls
+            # back to the window-wide `volume_pct`. Everything downstream
+            # (segment_window_boundaries, the per-week capacity factor, the
+            # overlay) already consumes per-day overrides, so the per-date model
+            # collapses into the stacking that was always supported — no new
+            # plan-gen path. A window WITHOUT a schedule stays a single override
+            # → byte-identical to the pre-#889 plan.
+            d = w.start_date
+            while d <= w.end_date:
+                day_pct = w.volume_by_date.get(d, w.volume_pct)
+                if day_pct is not None and day_pct < 1.0:
+                    raw.append((d, d, replace(base_ov, volume_pct=day_pct)))
+                d += timedelta(days=1)
+        else:
+            raw.append((w.start_date, w.end_date, base_ov))
     segments: list[EventWindowSegment] = []
     for seg_start, seg_end, active in segment_window_boundaries(plan_start, plan_end, raw):
         away_ov = next((ov for ov in active if ov.override_type == "away"), None)

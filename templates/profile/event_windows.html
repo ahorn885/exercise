@@ -52,7 +52,10 @@
             {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
             {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
               {% if w.brought_craft %}<span class="dim">· with {{ w.brought_craft | join(', ') | replace('_', ' ') }}</span>{% endif %}
-            {% elif w.override_type == 'reduced_volume' %}Reduced volume <span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day)</span>
+            {% elif w.override_type == 'reduced_volume' %}Reduced volume
+              {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
+              {% else %}<span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day)</span>{% endif %}
+              {% if w.start_date != w.end_date %}<span class="dim">· <a href="{{ url_for('profile.event_window_volume_days', window_id=w.id, return_to=return_to or none) }}">Per-day levels</a></span>{% endif %}
             {% elif w.override_type == 'no_training' %}No training <span class="dim">(in transit · travel day)</span>
             {% else %}{{ w.override_type }}{% endif %}
           </td>
