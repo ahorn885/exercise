@@ -8,9 +8,9 @@
 
 ---
 
-## 0. Thread continuity — STAY ON THIS THREAD
+## 0. Thread continuity — NEXT SESSION CONTINUES #884
 
-Continuous build of #884. Slice 4b split (Andy 2026-06-28): **PR-1 = capture (merged)**, **PR-2 = cascade extension (this)**. Next: **slice 4.3** (redump retiring `craft_discipline_aliases` + equipment strip) and the **PR-3 2C feed un-starve** (split out this session — see §6). Design: `designs/Unified_GearCraft_Model_And_Feasibility_884_Design_v3.md` §6/§15.4. Plan: `plans/UnifiedGearCraft_884_Slice4_CascadeCutover_Plan_v1.md`.
+**The next session stays on #884** (tier-1 finish-the-in-flight-task — do NOT drift to another epic until #884 is done or Andy redirects). Continuous build: Slice 4b split (Andy 2026-06-28): **PR-1 = capture (merged)**, **PR-2 = cascade extension + taxonomy normalization (this, PR #983)**. **The next forward move is PR-3** — the 2C `cluster_gear_toggle_states` un-starve (needs a `gear_id → sport_specific_gear_toggles.toggle_name` bridge; closes the last #298 consumer) — **then slice 4.3** (redump retiring `craft_discipline_aliases` + the equipment strip), then slices 5–6 (design-v3 §15: 4b→PR3→4.3→5→6). Full next-step detail in §6. Design: `designs/Unified_GearCraft_Model_And_Feasibility_884_Design_v3.md` §6/§15.4. Plan: `plans/UnifiedGearCraft_884_Slice4_CascadeCutover_Plan_v1.md`.
 
 ---
 
@@ -92,7 +92,8 @@ Seeds 10 `craft_terrain_compatibility` rows (ids 29–38, `etl_version='0A-v1.9.
 ### 6.1 OWED this PR
 - **Neon apply:** trigger `layer0-apply` for `0026`+`0027`+`0028` together (one run; Andy one-taps the `production` gate) at/after merge. The live `athlete_gear` group_kind rename auto-applies on deploy (init_db). `0027` must not lag the deploy (else climbing briefly degrades to terrain-only — see §2b).
 
-### 6.2 Architect-recommended next forward move
+### 6.2 Next session — CONTINUE #884 (start here)
+The next session resumes #884 directly (after the Rule #9 sweep + the Neon apply confirm in §6.1). Start with **PR-3**, then **slice 4.3**:
 - **PR-3 — the 2C feed un-starve (#298 close-out).** Feed `cluster_gear_toggle_states` at `orchestrator.py:1119,1551` (currently `={}`) from `athlete_gear`. Needs a `gear_id → sport_specific_gear_toggles.toggle_name` bridge — the keyspaces differ (`classic_xc_ski` vs `'Classic XC ski setup'`; `mountaineering` vs `'Mountaineering'`). Define the bridge (design v3 §5.5 keyspace is the source), then map owned gear → toggle states. Self-contained, own PR.
 - **Slice 4.3 — Layer-0 redump + equipment strip.** Retire `craft_discipline_aliases` (forced redump — **heed the redump-MUST-pair-with-fold rule**, `etl/migrations/layer0/README.md`); strip `pull_buoy`/`kickboard`/`Swim fins` from `equipment_items` + EX126/EX128 `equipment_required` (0B supersede+re-insert → global cache invalidation).
 
