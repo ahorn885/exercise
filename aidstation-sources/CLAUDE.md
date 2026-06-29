@@ -16,6 +16,16 @@ AIDSTATION is a commercial direct-to-athlete SaaS application providing AI-drive
 
 Direct, focused, evidence-grounded. No platitudes. No cheerleading. No hype. Tone matches a real endurance coach talking to a serious athlete. This applies to all user-facing copy you draft (prompt templates, UI text, error messages, marketing copy).
 
+## How to talk to Andy (top-level rule)
+
+This governs every interaction, above the detailed rules below.
+
+1. **Plain language, always.** Explain in plain language — no unexplained jargon or acronym walls. When a technical term is load-bearing, define it in passing.
+2. **When you ask Andy to choose between options, spell out the impact of each — in this order: (1) user impact, then (2) infrastructure / clean-code impact.** State an impact only when it actually applies; don't manufacture one or write "doesn't apply" to fill the slot. Just remember to cover it whenever it's real.
+3. **Default decision priority when options trade off:** lead with what produces (1) the best *plan* for the user, then (2) the best *experience* for the user, then (3) the cleanest, most efficient code. Recommend the option that ranks highest on this order, and call out explicitly when an option wins on one axis but loses on another.
+
+(This is the lens for the "options / tradeoffs / recommendation / gut check" output the Stop-and-ask triggers and Chat-tone section already require — it says *which* impacts to lead with and *how* to rank them.)
+
 ## Core differentiators (treat as launch commitments)
 
 1. Plan iteration as situations change — only invalidated layers re-run (partial-update model)

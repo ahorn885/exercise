@@ -1,0 +1,44 @@
+name: Delete closed branch
+
+# Housekeeping: when a PR closes, delete its head branch so stale claude/*
+# branches don't pile up. Fires on EVERY close (merged or closed-unmerged),
+# which is the gap GitHub's native "Automatically delete head branches" leaves
+# open — that setting only deletes on merge. Cross-repo (fork) PRs are skipped
+# (we can't delete a head branch we don't own) and the default branch is never
+# touched.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-branch:
+    name: Delete head branch
+    # Only act on branches that live in this repo (skip forks).
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const head = context.payload.pull_request.head.ref;
+            const def = context.payload.repository.default_branch;
+            if (head === def) {
+              core.info(`Refusing to delete the default branch (${head}).`);
+              return;
+            }
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${head}`,
+              });
+              core.info(`Deleted branch ${head}.`);
+            } catch (e) {
+              // Already gone (e.g. native auto-delete beat us, or the branch was
+              // deleted manually) → 422 "Reference does not exist". Not an error.
+              core.info(`Did not delete ${head}: ${e.message}`);
+            }
