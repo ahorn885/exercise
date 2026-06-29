@@ -165,6 +165,44 @@ def test_telemetry_renders(monkeypatch):
     assert 'style="' not in html and 'onclick=' not in html
 
 
+class _GymEditConn(_Conn):
+    """Routes the #971 gym_profiles proposal query to a controlled row; all
+    other SQL (login hydration, etc.) falls back to the base conn."""
+
+    def execute(self, sql, *a, **k):
+        if 'FROM gym_profiles' in ' '.join(sql.split()):
+            return _Cursor(rows=[{
+                'id': 77, 'display_name': 'Hilton Downtown',
+                'category': 'hotel_gym', 'equipment': '["Barbell"]',
+                'disputed_items': (
+                    '[{"by": 2, "adds": ["Treadmill"], '
+                    '"removes": ["Barbell"], "at": "2026-06-29T12:00:00"}]'),
+            }])
+        return super().execute(sql, *a, **k)
+
+
+def test_gym_profile_edits_renders(monkeypatch):
+    """#971 Slice 3 — the crowd-sourced correction review queue renders the
+    pending proposal with approve/reject actions wired to the review route."""
+    client = _client(monkeypatch, _GymEditConn())
+    resp = client.get('/admin/gym-profile-edits')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'app-shell' in html
+    assert 'Crowd-sourced equipment corrections.' in html
+    assert 'Hilton Downtown' in html
+    assert 'Treadmill' in html  # proposed add
+    assert '/admin/gym-profile-edits/77/review' in html
+    assert 'User #2' in html
+
+
+def test_dashboard_links_to_gym_profile_edits(monkeypatch):
+    client = _client(monkeypatch, _Conn())
+    resp = client.get('/admin/')
+    assert resp.status_code == 200
+    assert '/admin/gym-profile-edits' in resp.get_data(as_text=True)
+
+
 def test_dashboard_links_to_fit_inspect(monkeypatch):
     """The relocated FIT inspector (issue #473) is reachable from the admin
     dashboard, not the user-facing Connections/Data hub."""
