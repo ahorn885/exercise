@@ -14,11 +14,11 @@ from layer4.cache import Layer4Cache
 from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
-from athlete_crafts_repo import load_craft_catalog
 from athlete_gear_repo import (
     GearSelectionError,
     evict_plan_caches_on_gear_locale_change,
     load_gear_locales,
+    load_gear_registry_grouped,
     replace_gear_locale,
 )
 
@@ -1081,11 +1081,17 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            privacy_effective=_resolve_private(privacy_category, current_opt_out),
                            terrain_choices=_terrain_choices(db),
                            active_terrain_ids=set(prior_terrain_ids),
-                           # WS-H #581 Slice 5 — craft-kept-here capture (the (b)
-                           # craft↔locale surface, relocated from event-windows).
-                           # #884 slice 5 — checked state reads off the unified
-                           # `athlete_gear_locale` store (craft gear_ids only).
-                           craft_catalog=load_craft_catalog(),
+                           # WS-H #581 Slice 5 — gear-kept-here capture (the (b)
+                           # gear↔locale surface, relocated from event-windows).
+                           # #884 slice 6b — the standing picker is generalized
+                           # from craft-only to the full unified gear registry
+                           # (all kinds), so ski/snow/climbing/alpine gear can be
+                           # stationed at a locale and resolve in the slice-5 away
+                           # overlay (orchestrator filters the union to
+                           # `_CRAFT_ALIAS_GROUP_KINDS`, which now spans every
+                           # discipline-unlocking kind). Checked state reads off
+                           # the unified `athlete_gear_locale` store.
+                           gear_registry=load_gear_registry_grouped(),
                            crafts_here=load_gear_locales(db, uid).get(locale, []))
 
 
