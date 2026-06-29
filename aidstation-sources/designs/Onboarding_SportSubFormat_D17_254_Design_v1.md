@@ -56,18 +56,21 @@ Result: for all five sports, Layer 2A silently produces disciplines with **no ph
 
 ---
 
-## 2. Decisions (proposed — require Andy ratification)
+## 2. Decisions
+
+> **Decision revision (2026-06-29, ratified by Andy) — storage model reversed from D1 (resolved-name) to the two-column model.** Implementation of slice B surfaced that `framework_sport` is consumed *as the top-level key* by the discipline-bridge + terrain machinery (`routes/race_events.py:_disciplines_for_framework_sport` and the `_race_terrain_editor.html` discipline endpoint both look it up in `sport_discipline_bridge`, which is top-level-keyed). Storing the resolved sub-format name there would return `[]` from the bridge → collapse the discipline grid + per-row terrain selects → **re-introduce the #892 data-loss bug**, and would force strip logic into *every* top-level consumer. The two-column model (originally open-Q2, rejected) is therefore now the ratified choice: it leaves all top-level consumers untouched and localizes the change to one composition point. Andy also confirmed (chat) the defaults live in **Layer 0** (D2). The original D1 row is struck through below; D2/D4 stand; D3/D5/D6 are restated for the two-column model.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D1 | **`race_events.framework_sport` stores the fully-resolved sub-format name** (e.g. `"Triathlon (Standard / Olympic)"`), not the bare parent. No new storage column on `race_events`. | Keeps the Layer 1 → Layer 2A contract **unchanged**: `framework_sport` stays a single string that is a valid PLA `sport_name`. `_strip_sub_format` already maps it back to the top-level for the SDM side. Both PLA joins (`phase_load_allocation`, `phase_load_weekly_totals`) resolve directly. Minimal blast radius. |
-| D2 | **The default sub-format is a Layer 0, data-driven fact**, surfaced via a small new reference table `layer0.sport_sub_format_map` derived in ETL from the DISTINCT PLA `sport_name`s. One row per `(parent_sport, sub_format_sport)`, with `is_default` marking exactly one per parent. | DB-is-source-of-truth (CLAUDE.md). The curator owns which sub-format is the default and the option list; onboarding reads it; no curation decision is baked into app code. |
-| D3 | **Onboarding/profile renders a second "sub-format" select**, shown only when the chosen parent sport has sub-formats. Options = the parent's `sport_sub_format_map` rows; the `is_default` row is pre-selected. Submit sets `framework_sport` = the chosen sub-format name. Parents with no sub-formats keep today's single-select behaviour. | This *is* "default + override": the default is pre-filled, the athlete may change it. Preserves the #885 invariant — every option resolves to a non-empty discipline set by construction. |
-| D4 | **Layer 2A gains a loud-failure guard.** When the resolved-but-stripped `top_level_sport` is in `_SUB_FORMAT_SPORTS` (i.e. a known sub-format parent) **and** zero PLA rows joined, emit an `unresolved_flag` (severity `error`) + `hitl_required = True` + a Rule-#15 `print` of the inputs. | Turns the current silent NULL-bands data-loss into a loud, diagnosable failure. Covers legacy rows and any future capture regression. This is the "unblock loudly" safety net folded into the real fix. |
-| D5 | **One-time backfill migration** rewrites any existing `race_events.framework_sport` holding a bare parent name (one of the five) to that parent's default sub-format, and fires the existing `evict_on_target_event_framework_sport_change` invalidation. | The app has only Andy as a test athlete (and his row is AR — unaffected), so risk is ~nil, but the migration makes the cutover deterministic rather than relying on hand-edits. |
-| D6 | **Sub-format change reuses the existing `framework_sport`-change invalidation path** (`evict_on_target_event_framework_sport_change`). No new invalidation rule. | A sub-format change *is* a `framework_sport` change under D1; the partial-update plumbing already evicts Layer 2A and downstream on that key. |
+| ~~D1~~ | ~~`race_events.framework_sport` stores the fully-resolved sub-format name.~~ **SUPERSEDED → D1′.** | Reversed — see the revision banner above (top-level consumers break). |
+| **D1′** | **Two-column storage.** `race_events.framework_sport` stays the **top-level** name (unchanged; all bridge/terrain consumers untouched). A **new `race_events.sport_sub_format` column** holds the athlete's chosen full PLA sub-format name (NULL = use the parent's curated default). The Layer-4 orchestrator **composes** the Layer 2A input: `framework_sport_for_2a = sport_sub_format or <parent default> or framework_sport`. | Smallest blast radius — one composition point vs. N strip sites; the entire existing top-level machinery is left alone; round-trips trivially on edit (two columns ↔ two selects, no name-parsing). `race_events` is *public* schema, so the column add + backfill auto-apply on deploy. |
+| D2 | **The default sub-format is a Layer 0, data-driven fact** (`layer0.sport_sub_format_map`): one row per `(parent_sport, sub_format_sport)`, `is_default` marks exactly one per parent, `display_label` = the athlete-facing short label. Onboarding reads options + default from it; no curation in app code. **Ratified ("layer 0").** | DB-is-source-of-truth (CLAUDE.md). Curator owns the default + option list. **Shipped slice A** (migration 0031 + `validate_layer0` check). |
+| D3 | **Onboarding/profile renders a second "sub-format" select**, shown only when the chosen parent has rows in `sport_sub_format_map`. Options = that parent's rows; the `is_default` row is pre-selected. Submit sets `race_events.sport_sub_format`. Parents with no sub-formats keep today's single-select behaviour. | "Default + override": default pre-filled, athlete may change it. The parent `framework_sport` select is unchanged, so the #885 non-empty-by-construction invariant holds. |
+| D4 | **Layer 2A loud-failure guard.** When `framework_sport` is exactly a `_SUB_FORMAT_SPORTS` parent **and** disciplines load but zero PLA rows joined, emit an `error` `UnresolvedFlag` + `hitl_required = True` + a Rule-#15 `print`. | Turns the silent NULL-bands data-loss into a loud failure for legacy/regression inputs. **Shipped slice 2.** |
+| D5 | **One-time backfill** sets `race_events.sport_sub_format` = the parent's default for existing rows whose `framework_sport` is one of the five parents and whose `sport_sub_format` is NULL. *Public*-schema `_PG_MIGRATIONS` → auto-applies on deploy. | Andy's own row is AR (unaffected), so risk is ~nil, but the backfill makes the cutover deterministic. |
+| D6 | **Sub-format change reuses the existing `framework_sport`-change invalidation path** (`evict_on_target_event_framework_sport_change`); the route fires it when `sport_sub_format` changes too. No new invalidation rule. | A sub-format change shifts the composed Layer 2A input, the same cache axis a `framework_sport` change already evicts. |
 
-### 2.1 Proposed defaults (D2 `is_default` — **curator decision, confirm before ETL**)
+### 2.1 Defaults (D2 `is_default`) — **ratified 2026-06-29; seeded in migration 0031**
 
 | Parent sport | Proposed default sub-format | Why |
 |---|---|---|
@@ -77,7 +80,7 @@ Result: for all five sports, Layer 2A silently produces disciplines with **no ph
 | `Canoe / Kayak Marathon` | `Canoe / Kayak Marathon (ICF Competition)` | The standardized marathon format vs. the bespoke ultra. |
 | `Open Water Marathon Swimming` | `Open Water Marathon Swimming (10km / Olympic Distance)` | The standard marathon-swim distance. |
 
-These are defensible but are genuinely the curator's call — Andy should confirm or amend each before the ETL run that populates `is_default`.
+Ratified by Andy 2026-06-29 ("approve your original suggestions"); seeded as the `is_default` rows in migration `0031_sport_sub_format_map.sql`.
 
 ### 2.2 Sub-decisions deferred to the implementation PR
 
@@ -164,15 +167,15 @@ The `_strip_sub_format` whitelist (`_SUB_FORMAT_SPORTS`) is **retained** — it 
 
 1. Athlete picks **Race event type** (parent sport) — existing select, sourced from `sport_discipline_bridge` (top-level names).
 2. If the picked parent has rows in `sport_sub_format_map`, a **Sub-format** select appears (client-side, from a parent→options JSON blob), pre-selected to `is_default`. Helper text in coaching voice, e.g. *"Pick the format that matches your race — it sets the phase-load model."*
-3. On submit: `framework_sport` = the sub-format select's value when shown, else the parent value (today's behaviour).
-4. On profile edit of an existing event: decompose the stored sub-format name back into (parent, sub-format) to repopulate both controls.
-5. Parent change clears/re-defaults the sub-format select and fires the existing terrain-rescope + `framework_sport`-change invalidation already wired in `routes/onboarding.py` / `routes/race_events.py`.
+3. On submit (two-column model, D1′): `framework_sport` = the parent value (unchanged); `sport_sub_format` = the sub-format select's value when shown, else NULL (→ default at compose time).
+4. On profile edit of an existing event: both controls repopulate directly from the two stored columns — no name-parsing.
+5. Parent change clears/re-defaults the sub-format select and fires the existing terrain-rescope + `framework_sport`-change invalidation already wired in `routes/onboarding.py` / `routes/race_events.py`; a `sport_sub_format`-only change fires the same invalidation (D6).
 
 ---
 
-## 7. Spec amendments paired with implementation (proposed — NOT applied in this design session)
+## 7. Spec amendments
 
-Per Rule #11, mechanically-applicable edits, to land **with the implementation PR after ratification**:
+§7.1–7.3 (Layer2A_Spec) **applied with slice 2** — worded "in progress" (guard shipped; capture remaining), not "closed", since capture lands in slice B. §7.4 (Onboarding spec) lands with slice B. The originally-proposed "Resolved/Closed" wording below is superseded by the actual in-progress wording in the spec.
 
 ### 7.1 `Layer2A_Spec.md` §5.1 — append after the existing v1-implementation paragraph
 
@@ -188,29 +191,26 @@ Per Rule #11, mechanically-applicable edits, to land **with the implementation P
 - old: `| 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding spec | Layer 1 race-goal capture | Tracked in `Project_Backlog.md` |`
 - new: `| 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding | Layer 1 | ✅ Closed #254 (2026-06-29) — `Onboarding_SportSubFormat_D17_254_Design_v1.md`. |`
 
-### 7.4 `Athlete_Onboarding_Data_Spec_v6.md` §H.2 — add a field row
+### 7.4 `Athlete_Onboarding_Data_Spec_v6.md` §H.2 — add a field row (lands with slice B)
 
-Add to the §H.2 field table a **Sport Sub-Format** row: closed enum per parent sport (from `layer0.sport_sub_format_map`), default = the parent's `is_default`, shown only for the five sub-format parents; stored resolved into `race_events.framework_sport`; drives the Layer 2A phase-load joins. Distinguish explicitly from the existing `race_format` periodization enum.
-
----
-
-## 8. Implementation slices (post-ratification)
-
-1. **Layer 0:** `sport_sub_format_map` extractor + table + `validate_layer0` checks + ETL re-dump (gated `layer0-apply`). Curator confirms §2.1 defaults first.
-2. **Layer 2A:** D-17 guard (D4) + tests.
-3. **Onboarding/profile:** second select + JSON option blob + round-trip decompose + submit wiring + backfill migration (D5).
-4. **Spec amendments** (§7) ride the relevant PR.
-
-Each slice is independently shippable; slice 2 (the guard) is the smallest standalone safety win if Andy wants it first.
+Add to the §H.2 field table a **Sport Sub-Format** row: closed enum per parent sport (from `layer0.sport_sub_format_map`), default = the parent's `is_default`, shown only for the five sub-format parents; stored in `race_events.sport_sub_format` (two-column model, D1′); composed with `framework_sport` to drive the Layer 2A phase-load joins. Distinguish explicitly from the existing `race_format` periodization enum.
 
 ---
 
-## 9. Open questions for Andy
+## 8. Implementation slices
 
-1. **Defaults (§2.1):** confirm or amend each of the five.
-2. **Storage model (D1):** store resolved sub-format name in `framework_sport` (recommended, contract-stable) vs. add a `sport_sub_format` column + resolve at serve time (propagates default changes, heavier). Recommend D1.
-3. **Default-change propagation trade-off (§3):** OK that existing rows keep their stored sub-format when the Layer-0 default later moves? Recommend yes.
-4. **Sequencing:** ship the loud guard (slice 2) ahead of the capture UX, or land the full set together?
+- **Slice 2 — Layer 2A guard (D4). ✅ SHIPPED** (commit on `claude/issue-254-cd81r3`): `q_layer2a` flags + HITL-gates a bare sub-format parent; tests; Layer2A_Spec §5.1/§6/§12 updated.
+- **Slice A — Layer 0 table (D2). ✅ SHIPPED (code; awaiting gated apply):** migration `0031_sport_sub_format_map.sql` (CREATE + 17 seeded rows + DO-block verify), `validate_layer0` check `sport_sub_format_map` (+ test). **Needs the gated `layer0-apply` action (Andy one-tap) to land in prod Neon**, then a `layer0-redump` to fold into the baseline.
+- **Slice B — serving/capture (D1′/D3/D5/D6). ⬜ NEXT:** add `race_events.sport_sub_format` column (`_PG_MIGRATIONS`, auto-applies on deploy) + backfill (D5); orchestrator compose of the Layer 2A input; the second select + parent→options JSON blob in the onboarding + profile templates; route submit wiring + invalidation (D6); `Athlete_Onboarding_Data_Spec_v6.md` §H.2 row (§7.4). Depends on slice A's table being applied (reads it for options/defaults).
+
+Slice ordering note: slice B's serving compose can ship before slice A is *applied* only if it tolerates the table's absence (it won't until applied), so **apply slice A first**.
+
+## 9. Resolved decisions (formerly open questions)
+
+1. **Defaults (§2.1):** ✅ ratified 2026-06-29; seeded in 0031.
+2. **Storage model:** ✅ **two-column (D1′)** — reversed from D1 after the bridge/terrain-consumer discovery (see §2 revision banner).
+3. **Default-change propagation:** ✅ existing rows keep their stored `sport_sub_format` when the Layer-0 default later moves (athlete intent wins; new events pick up the new default).
+4. **Sequencing:** ✅ guard shipped first (slice 2); Layer 0 (slice A) before serving/capture (slice B).
 
 ## 10. Gut check
 
