@@ -46,7 +46,9 @@ from flask import (
 
 import notification_prefs
 from database import get_db
-from notification_preferences_repo import build_matrix, save_from_form
+from notification_preferences_repo import (
+    build_matrix, disabled_in_app_types, save_from_form,
+)
 from routes.auth import cron_authorized, current_user_id
 
 
@@ -64,6 +66,12 @@ bp = Blueprint('nudges', __name__)
 # grace window before being reminded. Leave at 0 (default) when the
 # writer already gated insertion on a time condition (e.g., PR9's
 # cron that only inserts after 14 days of account age).
+# `notification_type` (optional, default 'account_reminders') maps the
+# nudge_type onto a `notification_prefs.NOTIFICATION_TYPES` key so the §22
+# settings matrix can gate in-app display per type (see `get_active_nudges`).
+# The onboarding/connect nudges all roll up under the catch-all
+# 'account_reminders' toggle; the #964 reminder/staleness nudges each carry
+# their own type so they can be muted independently.
 NUDGE_REGISTRY = {
     'connect_provider_14d': {
         'message': (
@@ -73,6 +81,7 @@ NUDGE_REGISTRY = {
         'cta_label': 'Connect a provider',
         'cta_endpoint': 'onboarding.connect',
         'category': 'info',
+        'notification_type': 'account_reminders',
     },
     'target_race_skipped': {
         'message': (
@@ -83,6 +92,7 @@ NUDGE_REGISTRY = {
         'cta_endpoint': 'onboarding.target_race',
         'category': 'info',
         'display_delay_days': 14,
+        'notification_type': 'account_reminders',
     },
     'route_locales_incomplete': {
         'message': (
@@ -94,8 +104,50 @@ NUDGE_REGISTRY = {
         'cta_endpoint': 'onboarding.route_locales',
         'category': 'info',
         'display_delay_days': 14,
+        'notification_type': 'account_reminders',
+    },
+    # ─── #964 reminder / staleness nudges ───────────────────────────────────
+    # Reconciled daily by `scan_reconcile_staleness`: the row is inserted while
+    # the condition holds and DELETED once it clears, so the nudge can re-fire
+    # on a later recurrence (a plain one-shot insert is blocked forever by the
+    # `UNIQUE (user_id, nudge_type)` constraint). Each maps to its own §22
+    # notification type so it can be muted independently.
+    'log_reminder': {
+        'message': (
+            "You haven't logged a workout in a few days. Keep your training "
+            'record current so your plan and progress stay accurate.'
+        ),
+        'cta_label': 'Log a workout',
+        'cta_endpoint': 'log.index',
+        'category': 'info',
+        'notification_type': 'log_reminder',
+    },
+    'body_metric_stale': {
+        'message': (
+            "Your body metrics haven't been refreshed in a while. A quick "
+            'weight / body update keeps your plan calibrated.'
+        ),
+        'cta_label': 'Update body metrics',
+        'cta_endpoint': 'body.list_entries',
+        'category': 'info',
+        'notification_type': 'body_metric_stale',
+    },
+    'injury_review': {
+        'message': (
+            "One of your injuries has been marked active for a while. Still "
+            'bothering you? Update its status or resolve it.'
+        ),
+        'cta_label': 'Review injuries',
+        'cta_endpoint': 'injuries.list_entries',
+        'category': 'info',
+        'notification_type': 'injury_review',
     },
 }
+
+# Registry knobs that are internal plumbing, stripped from the per-row overlay
+# the feed / banner templates consume (kept stable so the template context
+# surface doesn't grow as we add delay-bearing or preference-linked entries).
+_INTERNAL_REGISTRY_KEYS = ('display_delay_days', 'notification_type')
 
 
 def _past_display_delay(created_at, delay_days):
@@ -131,6 +183,12 @@ def get_active_nudges(db, uid):
     inherit the 0-delay default (display immediately) since we don't
     know the writer pattern.
 
+    Per-type in-app delivery preferences (#963/#964) are honoured: a nudge
+    whose mapped `notification_type` has been explicitly turned off for the
+    in_app channel is suppressed. The preference read fails **open** (suppress
+    nothing) on any fault, so a store hiccup never hides a nudge. Unknown
+    nudge_types roll up under the catch-all 'account_reminders' type.
+
     Empty when `uid` is falsy so the context processor is safe to call
     on logged-out pages.
     """
@@ -142,6 +200,11 @@ def get_active_nudges(db, uid):
         'ORDER BY created_at DESC',
         (uid,),
     ).fetchall()
+    try:
+        muted = disabled_in_app_types(db, uid)
+    except Exception as e:  # noqa: BLE001 — suppress nothing on a read fault
+        print(f'nudges: in_app preference gate read failed: {e}')
+        muted = set()
     out = []
     for r in rows:
         entry = NUDGE_REGISTRY.get(r['nudge_type'], {
@@ -150,13 +213,16 @@ def get_active_nudges(db, uid):
             'cta_endpoint': None,
             'category': 'info',
         })
+        if entry.get('notification_type', 'account_reminders') in muted:
+            continue
         if not _past_display_delay(r['created_at'], entry.get('display_delay_days', 0)):
             continue
         out.append({
             'id': r['id'],
             'nudge_type': r['nudge_type'],
             'created_at': r['created_at'],
-            **{k: v for k, v in entry.items() if k != 'display_delay_days'},
+            **{k: v for k, v in entry.items()
+               if k not in _INTERNAL_REGISTRY_KEYS},
         })
     return out
 
@@ -166,8 +232,8 @@ def _feed_overlay(row):
 
     Same visible-but-ugly-never-silent posture as `get_active_nudges`:
     unknown nudge_types fall back to the raw `nudge_type` as the
-    message. Strips `display_delay_days` — a banner-only implementation
-    detail the feed template has no use for.
+    message. Strips internal registry knobs (`display_delay_days`,
+    `notification_type`) — plumbing the feed template has no use for.
     """
     entry = NUDGE_REGISTRY.get(row['nudge_type'], {
         'message': row['nudge_type'],
@@ -179,7 +245,8 @@ def _feed_overlay(row):
         'id': row['id'],
         'nudge_type': row['nudge_type'],
         'created_at': row['created_at'],
-        **{k: v for k, v in entry.items() if k != 'display_delay_days'},
+        **{k: v for k, v in entry.items()
+           if k not in _INTERNAL_REGISTRY_KEYS},
     }
 
 
@@ -367,6 +434,166 @@ def scan_connect_provider_14d():
     inserted = len(cur.fetchall())
     db.commit()
     return jsonify(inserted=inserted), 200
+
+
+# ─── #964 reminder / staleness reconcile ────────────────────────────────────
+#
+# Staleness thresholds (days). Tuned conservative so the feed nudges, not nags.
+LOG_STALE_DAYS = 5            # no workout logged in this window ⇒ log_reminder
+LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
+BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
+BODY_MIN_ACCOUNT_DAYS = 14
+INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
+
+# Per-type reconcile spec. Each entry pairs the INSERT that ARMS the nudge while
+# its condition holds with the DELETE that CLEARS it once the condition lifts —
+# the delete is what lets a one-shot-`UNIQUE`-constrained row re-fire on a later
+# recurrence (e.g. log → go stale again → nudge again). `date`/`start_date` are
+# ISO-text columns, so the `TO_CHAR(... 'YYYY-MM-DD')` cutoff compares correctly
+# lexicographically. Both statements `RETURNING id` so the route can count rows.
+#
+# PG-only (TO_CHAR / INTERVAL / ON CONFLICT). The endpoint is token-gated and
+# only fires on the deployed Postgres; SQLite dev never reaches it.
+_STALENESS_RECONCILE = [
+    {
+        'nudge_type': 'log_reminder',
+        # Account past onboarding AND nothing logged (strength or cardio) in
+        # the window. A connected provider's auto-imports keep cardio_log
+        # fresh, so synced athletes are naturally excluded.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT u.id, 'log_reminder'
+            FROM users u
+            WHERE (u.created_at IS NULL
+                   OR u.created_at <= NOW() - INTERVAL '{LOG_MIN_ACCOUNT_DAYS} days')
+              AND NOT EXISTS (
+                  SELECT 1 FROM training_log tl WHERE tl.user_id = u.id
+                    AND tl.date >= TO_CHAR(NOW() - INTERVAL '{LOG_STALE_DAYS} days', 'YYYY-MM-DD')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM cardio_log cl WHERE cl.user_id = u.id
+                    AND cl.date >= TO_CHAR(NOW() - INTERVAL '{LOG_STALE_DAYS} days', 'YYYY-MM-DD')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = u.id AND an.nudge_type = 'log_reminder'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'log_reminder'
+              AND (
+                EXISTS (
+                  SELECT 1 FROM training_log tl WHERE tl.user_id = an.user_id
+                    AND tl.date >= TO_CHAR(NOW() - INTERVAL '{LOG_STALE_DAYS} days', 'YYYY-MM-DD')
+                )
+                OR EXISTS (
+                  SELECT 1 FROM cardio_log cl WHERE cl.user_id = an.user_id
+                    AND cl.date >= TO_CHAR(NOW() - INTERVAL '{LOG_STALE_DAYS} days', 'YYYY-MM-DD')
+                )
+              )
+            RETURNING id
+        ''',
+    },
+    {
+        'nudge_type': 'body_metric_stale',
+        # Only athletes who have EVER logged a body metric — this is a
+        # "refresh", not a "start tracking" nudge — and not in the last window.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT u.id, 'body_metric_stale'
+            FROM users u
+            WHERE (u.created_at IS NULL
+                   OR u.created_at <= NOW() - INTERVAL '{BODY_MIN_ACCOUNT_DAYS} days')
+              AND EXISTS (
+                  SELECT 1 FROM body_metrics bm WHERE bm.user_id = u.id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM body_metrics bm WHERE bm.user_id = u.id
+                    AND bm.date >= TO_CHAR(NOW() - INTERVAL '{BODY_STALE_DAYS} days', 'YYYY-MM-DD')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = u.id AND an.nudge_type = 'body_metric_stale'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'body_metric_stale'
+              AND EXISTS (
+                  SELECT 1 FROM body_metrics bm WHERE bm.user_id = an.user_id
+                    AND bm.date >= TO_CHAR(NOW() - INTERVAL '{BODY_STALE_DAYS} days', 'YYYY-MM-DD')
+              )
+            RETURNING id
+        ''',
+    },
+    {
+        'nudge_type': 'injury_review',
+        # An injury still flagged 'Active' whose start_date is older than the
+        # review window. Clears when the athlete resolves it (status changes)
+        # or removes it.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT DISTINCT il.user_id, 'injury_review'
+            FROM injury_log il
+            WHERE il.status = 'Active'
+              AND il.start_date <= TO_CHAR(NOW() - INTERVAL '{INJURY_REVIEW_DAYS} days', 'YYYY-MM-DD')
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = il.user_id AND an.nudge_type = 'injury_review'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'injury_review'
+              AND NOT EXISTS (
+                  SELECT 1 FROM injury_log il WHERE il.user_id = an.user_id
+                    AND il.status = 'Active'
+                    AND il.start_date <= TO_CHAR(NOW() - INTERVAL '{INJURY_REVIEW_DAYS} days', 'YYYY-MM-DD')
+              )
+            RETURNING id
+        ''',
+    },
+]
+
+
+@bp.route('/cron/nudges/reconcile', methods=['GET'])
+def scan_reconcile_staleness():
+    """Daily reconcile for the #964 reminder / staleness nudges.
+
+    For each staleness type, in one pass:
+      1. **DELETE** rows whose condition has lifted (athlete logged, refreshed,
+         or resolved). Removing the row — dismissed or not — lets the same
+         nudge fire fresh on a future recurrence; the `UNIQUE (user_id,
+         nudge_type)` constraint would otherwise block re-insertion forever.
+      2. **INSERT** one row per newly-eligible athlete (condition holds, no
+         existing row). `ON CONFLICT DO NOTHING` makes overlapping cron fires
+         idempotent.
+
+    Display still honours per-type in-app preferences at read time
+    (`get_active_nudges`), so this stays preference-agnostic — toggling a type
+    off mutes it without disturbing the reconciled rows.
+
+    Token-gated like the other cron drains. Returns JSON
+    `{inserted: {type: n, ...}, cleared: {type: n, ...}}`.
+    """
+    if not cron_authorized():
+        abort(401)
+    db = get_db()
+    inserted: dict[str, int] = {}
+    cleared: dict[str, int] = {}
+    for spec in _STALENESS_RECONCILE:
+        t = spec['nudge_type']
+        cleared[t] = len(db.execute(spec['delete']).fetchall())
+        inserted[t] = len(db.execute(spec['insert']).fetchall())
+    db.commit()
+    return jsonify(inserted=inserted, cleared=cleared), 200
 
 
 @bp.route('/nudges/<int:nudge_id>/dismiss', methods=['POST'])

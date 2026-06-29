@@ -381,6 +381,49 @@ def _find_gym_profile(db, mapbox_id):
     ).fetchone()
 
 
+def _address_fingerprint(display_name, lat, lng) -> str | None:
+    """Name + geo dedup key for crowd-sourced gym profiles (#971).
+
+    `mapbox_id` is the exact identity key, but two athletes logging the *same*
+    hotel can land on different Mapbox feature ids (a POI hit vs an address hit,
+    or an index shift between lookups), so a mapbox_id-only match misses them.
+    This coarse key catches those cases: the same hotel resolves to one shared
+    profile, so the second athlete inherits/sees the first's equipment instead
+    of starting cold — the "stable identity key" #971 (and its sibling #856)
+    call the foundation.
+
+    Key = normalized name + geo bucket. The name is lowercased with punctuation
+    collapsed to single spaces; the coordinates are snapped to a ~111 m grid (3
+    decimal places) so the small coordinate drift Mapbox returns for the same
+    feature stays in one bucket, while distinct same-name venues (rare within
+    111 m) stay apart. Returns None when the name or coordinates are missing —
+    the row then stores NULL and is simply not fingerprint-matchable (mapbox_id
+    dedup still applies)."""
+    name = re.sub(r'[^a-z0-9]+', ' ', (display_name or '').lower()).strip()
+    if not name or lat is None or lng is None:
+        return None
+    try:
+        return f'{name}|{float(lat):.3f}|{float(lng):.3f}'
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_gym_profile_by_fingerprint(db, fingerprint):
+    """#971 name+geo dedup fallback — consulted only when `_find_gym_profile`
+    (mapbox_id) misses. Private profiles are excluded exactly as in
+    `_find_gym_profile` (#446): a private profile is never surfaced to peers. On
+    the rare bucket collision the newest profile wins (id DESC) for a
+    deterministic pick. Returns the row or None."""
+    if not fingerprint:
+        return None
+    return db.execute(
+        'SELECT * FROM gym_profiles '
+        'WHERE address_fingerprint = ? AND COALESCE(private, FALSE) = FALSE '
+        'ORDER BY id DESC LIMIT 1',
+        (fingerprint,),
+    ).fetchone()
+
+
 def _shared_equipment_set(profile_row) -> set:
     """Parse gym_profiles.equipment (JSON array of layer0 canonical names) into
     a set. The picker constrains values to the active catalog, so no static
@@ -464,14 +507,25 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
         _row_has(profile_row, 'sharing_opt_out') and profile_row['sharing_opt_out']
     )
     private = _resolve_private(category, opt_out)
+    # #971 — stamp the name+geo dedup key from the locale's Mapbox name +
+    # coordinates so a later athlete whose Mapbox lookup returned a *different*
+    # feature id for the same hotel still resolves to this profile. NULL when
+    # name/coords are missing (the row stays mapbox_id-matchable only).
+    lat = profile_row['lat'] if _row_has(profile_row, 'lat') else None
+    lng = profile_row['lng'] if _row_has(profile_row, 'lng') else None
+    fingerprint = _address_fingerprint(display, lat, lng)
+    # `address_fingerprint` is appended LAST so the existing positional params
+    # (display=1, category=2, private=6) the route tests assert against are
+    # unchanged.
     row = db.execute(
         '''INSERT INTO gym_profiles
            (mapbox_id, display_name, category, equipment,
             created_by_user_id, last_confirmed_by, last_confirmed_at,
-            contribution_count, private)
-           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1, ?)
+            contribution_count, private, address_fingerprint)
+           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 1, ?, ?)
            RETURNING id''',
-        (mapbox_id, display, category, equipment_json, uid, uid, private),
+        (mapbox_id, display, category, equipment_json, uid, uid, private,
+         fingerprint),
     ).fetchone()
     return row['id'] if row else None
 
@@ -692,6 +746,21 @@ def _resolve_shared_profile(db, uid: int, profile):
             else None
         )
         shared = _find_gym_profile(db, mapbox_id)
+    if not shared:
+        # #971 — name+geo fallback when the mapbox_id lookup missed (a different
+        # feature id for the same hotel, or no mapbox_id at all). Keyed on the
+        # locale's Mapbox name + coordinates; no-ops to None when either is
+        # absent, so a coordinate-less or unnamed locale matches as before.
+        name = (
+            profile['locale_name']
+            if profile is not None and _row_has(profile, 'locale_name')
+            else None
+        )
+        lat = profile['lat'] if profile is not None and _row_has(profile, 'lat') else None
+        lng = profile['lng'] if profile is not None and _row_has(profile, 'lng') else None
+        shared = _find_gym_profile_by_fingerprint(
+            db, _address_fingerprint(name, lat, lng)
+        )
     return shared, gym_profile_id
 
 
