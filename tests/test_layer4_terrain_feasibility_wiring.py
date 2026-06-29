@@ -201,8 +201,10 @@ def test_build_craft_swap_road_bike_for_mtb(monkeypatch):
     )
     _patch_craft(
         monkeypatch,
-        craft_disc={"road_bike": ["D-006"]},
-        craft_kind={"road_bike": "bike"},
+        # #884 slice 4b — the alias table (full, as the live reader returns it)
+        # gives D-008 its gear kind. The athlete still owns only road_bike.
+        craft_disc={"road_bike": ["D-006"], "mountain_bike": ["D-008"]},
+        craft_kind={"road_bike": "bike", "mountain_bike": "bike"},
         disc_groups=_BIKE_GROUPS,
         group_kind=_BIKE_GROUP_KIND,
         craft_terrain={"road_bike": {"TRN-001", "TRN-004"}},  # no off-road terrain
@@ -239,8 +241,10 @@ def test_build_craft_strength_when_no_bike_owned(monkeypatch):
     )
     _patch_craft(
         monkeypatch,
-        craft_disc={"road_bike": ["D-006"]},
-        craft_kind={"road_bike": "bike"},
+        # D-008 gets its gear kind from the full alias table even though the
+        # athlete owns no bike (the gearless-bike strength terminal).
+        craft_disc={"road_bike": ["D-006"], "mountain_bike": ["D-008"]},
+        craft_kind={"road_bike": "bike", "mountain_bike": "bike"},
         disc_groups=_BIKE_GROUPS,
         group_kind=_BIKE_GROUP_KIND,
     )

@@ -118,6 +118,8 @@ def _mk_inputs(
         craft_terrain={},
         discipline_groups={},
         group_kind_by_group={},
+        discipline_gear_kind={},
+        craft_fidelity_rank={},
         pool_by_discipline=pool_by_discipline or {},
         gated={},
         included=[SimpleNamespace(discipline_id=d) for d in disciplines],

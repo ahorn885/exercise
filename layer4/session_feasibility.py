@@ -342,24 +342,39 @@ def resolve_terrain_feasibility(
     )
 
 
-# ─── Unified craft/terrain cascade (#586 WS-I, design §3) ────────────────────
-# Craft disciplines (modality `group_kind ∈ {bike, paddle}`) walk ONE ordered
-# cascade that composes craft ownership with terrain — replacing the old
-# two-non-composing-axes split (a craft ladder that short-circuited ahead of
-# terrain, so a craftless athlete with a trainer was sent to STRENGTH instead of
-# the INDOOR machine they own). Non-craft disciplines (foot/swim/climb) keep the
-# terrain-only `resolve_terrain_feasibility` cascade untouched.
+# ─── Unified gear/terrain cascade (#586 WS-I + #884 slice 4b, design §3/§6) ───
+# Gear-bearing disciplines walk ONE ordered cascade that composes gear ownership
+# with terrain — replacing the old two-non-composing-axes split (a craft ladder
+# that short-circuited ahead of terrain, so a craftless athlete with a trainer
+# was sent to STRENGTH instead of the INDOOR machine they own). Non-gear
+# disciplines (foot/swim) keep the terrain-only `resolve_terrain_feasibility`
+# cascade untouched.
 #
-# For each owned craft in priority order (the discipline's own craft first, then
-# same-`group_kind` proxy crafts) a terrain sub-check runs — can the craft ride a
-# required terrain that's in-cluster? then any terrain it's compatible with? —
-# before falling through to indoor → strength → reallocate. "Craftless" is not a
+# For each owned gear item in priority order (the discipline's own gear first,
+# then same-`group_kind` proxy gear) a terrain sub-check runs — can the gear ride
+# a required terrain that's in-cluster? then any terrain it's compatible with? —
+# before falling through to indoor → strength → reallocate. "Gearless" is not a
 # special branch: tiers 1–4 simply all miss and the walk lands on INDOOR (tier 5).
-# Which terrains a craft can be ridden on is read explicitly from
+# Which terrains a gear item operates on is read explicitly from
 # `layer0.craft_terrain_compatibility` (design §4) — NOT derived from the
 # discipline graph, so a road bike and a gravel bike (both aliasing road/XC
 # disciplines) differ on singletrack.
-_CRAFT_GROUP_KINDS = frozenset({"bike", "paddle"})
+#
+# #884 slice 4b generalizes the gate from {bike, paddle} to every
+# discipline-unlocking gear kind. Two seams matter:
+#   - The discipline's gear kind is read from `gear_discipline_aliases`
+#     (`discipline_gear_kind`), NOT from `modality_groups.group_kind` — the two
+#     taxonomies DIVERGE (modality 'snow'/'climb' vs gear 'ski'/'snow'/'alpine'/
+#     'climbing'), so matching on the modality kind would never find the gear.
+#     For bike/paddle the two coincide, so this is byte-identical there.
+#   - Owned same-kind gear is walked by ASCENDING `fidelity_rank` (0 = best). The
+#     D-028 ski ladder is the case that needs it: classic(0) → skate(1) →
+#     rollerskis(2, dryland). Bike/paddle gear is all rank 0 → the prior slug sort.
+# Swim gear is excluded (it drill-gates cardio drills, slice 3b — not a terrain
+# axis); it carries no `gear_discipline_aliases` row, so it never enters here.
+_CRAFT_GROUP_KINDS = frozenset(
+    {"bike", "paddle", "ski", "snow", "climbing", "alpine"}
+)
 
 
 def resolve_craft_terrain_feasibility(
@@ -369,19 +384,22 @@ def resolve_craft_terrain_feasibility(
     craft_disciplines: dict[str, list[str]],
     craft_group_kind: dict[str, str],
     discipline_groups: dict[str, list[str]],
-    group_kind: dict[str, str],
+    discipline_gear_kind: dict[str, str],
     craft_terrain: dict[str, set[str]],
+    craft_fidelity_rank: dict[str, int] | None = None,
     locale_order: list[str],
     cluster_terrain_by_locale: dict[str, set[str]],
     cluster_equipment_by_locale: dict[str, set[str]],
     discipline_exercise_ids: list[str],
     discipline_names: dict[str, str] | None = None,
 ) -> TerrainResolution | None:
-    """The unified craft/terrain cascade for one craft discipline (design §3).
+    """The unified gear/terrain cascade for one gear-bearing discipline
+    (design §3, generalized to all gear kinds in #884 slice 4b §6).
 
-    Pure. Returns None when the discipline carries no craft (its modality group's
-    `group_kind` is not bike/paddle) — the caller runs the terrain-only cascade
-    instead. Otherwise walks the 7-tier cascade (first match wins):
+    Pure. Returns None when the discipline has no gear axis — `discipline_gear_kind`
+    (read from `gear_discipline_aliases`) has no craft-kind entry for it — and the
+    caller runs the terrain-only cascade instead. Otherwise walks the 7-tier
+    cascade (first match wins):
 
       1. own the discipline's craft AND it can ride a required terrain in-cluster
       2. own the craft; ride it on an alternate terrain it's compatible with
@@ -396,16 +414,29 @@ def resolve_craft_terrain_feasibility(
 
     Args mirror `resolve_craft_feasibility`'s predecessor plus the terrain inputs
     of `resolve_terrain_feasibility`; `craft_terrain` is
-    `{craft_slug: {TRN-xxx, ...}}` from `layer0.craft_terrain_compatibility`.
+    `{gear_id: {TRN-xxx, ...}}` from `layer0.craft_terrain_compatibility`.
+    `discipline_gear_kind` is `{discipline_id: gear group_kind}` from
+    `gear_discipline_aliases` (the gear-side kind, which may differ from the
+    discipline's modality kind). `craft_fidelity_rank` is `{gear_id: rank}` (0 =
+    best) from the same table; absent/None → all rank 0 (the pre-4b ordering).
     """
     my_groups = set(discipline_groups.get(discipline_id, []))
-    my_kinds = {group_kind[g] for g in my_groups if g in group_kind}
-    target_kind = next((k for k in sorted(my_kinds) if k in _CRAFT_GROUP_KINDS), None)
-    if target_kind is None:
-        return None  # non-craft discipline — caller uses the terrain-only cascade
+    target_kind = discipline_gear_kind.get(discipline_id)
+    if target_kind not in _CRAFT_GROUP_KINDS:
+        # No gear axis for this discipline (no `gear_discipline_aliases` row, or a
+        # swim drill-gating kind) — the caller runs the terrain-only cascade.
+        return None
 
     required = required_terrains(discipline_id)
-    same_kind = [c for c in sorted(set(owned_crafts)) if craft_group_kind.get(c) == target_kind]
+    # Walk owned same-kind gear by ASCENDING fidelity_rank (0 = best), slug-
+    # breaking ties. Bike/paddle gear is all rank 0 → identical to the prior slug
+    # sort (byte-identical); the D-028 ski ladder walks classic(0) → skate(1) →
+    # rollerskis(2) best-first.
+    ranks = craft_fidelity_rank or {}
+    same_kind = sorted(
+        (c for c in set(owned_crafts) if craft_group_kind.get(c) == target_kind),
+        key=lambda c: (ranks.get(c, 0), c),
+    )
 
     def _trains(c: str) -> bool:
         """True when craft `c` is the discipline's OWN craft — directly aliased
