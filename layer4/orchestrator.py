@@ -2051,19 +2051,23 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     # gear_discipline_aliases (#884 migration 0024) — the unified gear/craft alias
     # table the feasibility + substitution cascade reads as of slice 4a. Tracked
     # so a re-seed (the D-028 ladder, gear-toggle aliases) invalidates the 0A
-    # digest. The legacy `craft_discipline_aliases` it replaced was DROPPED in
-    # slice 4.3 (migration 0030) and removed from this map; it is bridged in the
-    # drift guard's _FAMILY_MAP_EXCEPTIONS until the redump folds it out of the
-    # baseline. (Deploy-order: this map removal must ship before 0030 applies —
-    # see 0030's header.)
+    # digest. It replaced the legacy `craft_discipline_aliases`, which was DROPPED
+    # in slice 4.3 (migration 0030) and folded out of the baseline by the
+    # v1.10.0 re-dump.
     "gear_discipline_aliases": "0A",
     # craft_terrain_compatibility (#586 WS-I) is created by migration 0004, not
     # schema.sql (like terrain_gap_rules); read by the unified craft/terrain
-    # cascade. Same 0A family as its sibling craft_discipline_aliases.
+    # cascade. Same 0A family as its sibling gear_discipline_aliases.
     "craft_terrain_compatibility": "0A",
     # 0B — exercise library
     "exercises": "0B",
     "sport_exercise_map": "0B",
+    # cardio_drill_gear_requirements (#884 slice 3b, migration 0025) — the
+    # owned-gear cardio-drill gate read by compute_cardio_drill_pool_ids
+    # (EX126→pull_buoy, EX128→kickboard). 0B-versioned serving table; folded into
+    # the baseline by the v1.10.0 re-dump, so it joins the map now (a re-seed of
+    # the gate must invalidate plan-gen caches).
+    "cardio_drill_gear_requirements": "0B",
     # 0C — vocabulary / terrain / body-parts / equipment / conditions / toggles
     "body_parts": "0C",
     "health_condition_categories": "0C",

@@ -522,7 +522,7 @@ def edit():
     # historical), active/managing first, so historical injuries are editable
     # here. The full per-injury exercise-modification editor stays on /injuries.
     injuries = db.execute(
-        "SELECT id, body_part, status, severity, start_date, resolved_date, "
+        "SELECT id, body_part, side, status, severity, start_date, resolved_date, "
         "       description "
         "  FROM injury_log WHERE user_id = ? "
         " ORDER BY CASE status WHEN 'Active' THEN 0 WHEN 'Managing' THEN 1 "

@@ -21,11 +21,13 @@ Spec-vs-deployed reconciliations applied:
 - HealthConditionRecord.status is deployed as 'Active' | 'Resolved' | 'Inactive';
   spec §3 uses 'Current' | 'History'. Partition on `status == 'Active'` →
   current; else history.
-- HealthConditionRecord.system_category is deployed as the 8-value lowercase
-  enum (cardiac, respiratory, ...); spec §B.4.1 carries 11 capitalized values.
-  Matching is consistent because `layer0.exercises.contraindicated_conditions`
-  draws from the same `layer0.health_condition_categories` lookup vocab.
-  Cardiac / Neurological / Concussion gates use the lowercase values.
+- HealthConditionRecord.system_category is the canonical 11-value lowercase
+  enum (cardiac, respiratory, endocrine_metabolic, gi, ...; #255) — the
+  slug form of spec §B.4.1's 11 capitalized values. The load-bearing match is
+  Layer 2E supplement screening (athlete system_category ∈ a supplement's
+  `contraindications` tokens); `layer0.exercises.contraindicated_conditions` is
+  currently unpopulated. Cardiac / Neurological / Concussion gates here key on
+  the lowercase values, all of which survive the #255 retag unchanged.
 - BODY_PARTS in `routes/injuries.py` (24 left/right-doubled) doesn't match
   the canonical `layer0.body_parts.canonical_name` 41-vocab. v1 boundary
   normalizer `_strip_side()` collapses "Left Wrist" → "Wrist" at the
