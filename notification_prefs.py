@@ -136,6 +136,32 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app', 'push'],
         'defaults': {'in_app': True, 'push': True},
     },
+    # A plan parked at the Layer 3D review gate (`generation_status =
+    # 'needs_review'`) can never finish until the athlete resolves it. Distinct
+    # from `plan_failed` (a generation *error* event): this is a still-open plan
+    # the athlete must act on. Reconciled by the same daily cron; `warning`
+    # category since it blocks a plan from completing.
+    {
+        'key': 'plan_needs_review',
+        'label': 'Plan needs your review',
+        'description': "A reminder when a plan you started is waiting on you to "
+                       'resolve its review items before it can finish.',
+        'category': 'warning',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    # Target race within the 14-day race-week window with no race-week brief
+    # generated yet for the active plan version. A reminder to act, not a blocker
+    # (`info`), reconciled by the same daily cron.
+    {
+        'key': 'race_week_plan_due',
+        'label': 'Generate your race-week brief',
+        'description': "A reminder to generate your race-week brief once your "
+                       'target race is within two weeks.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
 ]
 
 TYPES_BY_KEY = {t['key']: t for t in NOTIFICATION_TYPES}

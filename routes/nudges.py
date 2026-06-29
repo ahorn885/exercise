@@ -142,6 +142,33 @@ NUDGE_REGISTRY = {
         'category': 'info',
         'notification_type': 'injury_review',
     },
+    # A plan parked at the Layer 3D HITL review gate (#213) never finishes until
+    # the athlete resolves it. `warning` styling — this blocks a plan, unlike the
+    # passive `info` staleness nudges above.
+    'plan_needs_review': {
+        'message': (
+            'A plan you started is waiting on your review before it can '
+            'finish. Resolve its open items to complete it.'
+        ),
+        'cta_label': 'Review your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'warning',
+        'notification_type': 'plan_needs_review',
+    },
+    # Target race inside the 14-day race-week window with no race-week brief yet
+    # on the active plan version. CTA lands on the plan list (the `view_brief`
+    # surface 404s until a brief exists, and `generate_brief` is POST-only) —
+    # one click from the [Generate race-week brief] button on the plan view.
+    'race_week_plan_due': {
+        'message': (
+            'Your target race is under two weeks out. Generate your race-week '
+            'brief for taper, fueling, kit, and pacing.'
+        ),
+        'cta_label': 'Open your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'info',
+        'notification_type': 'race_week_plan_due',
+    },
 }
 
 # Registry knobs that are internal plumbing, stripped from the per-row overlay
@@ -444,6 +471,49 @@ LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
 BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
 BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
+RACE_WEEK_DUE_DAYS = 14       # target race within this window + no brief ⇒ nudge
+
+# EXISTS-true iff the user (`re.user_id`) has an ACTIVE plan version with NO
+# race-week brief yet. "Active" mirrors `load_active_plan_version_id`
+# (generation_status='ready', not archived, not completed, most-recent wins) —
+# the version the race-week-brief orchestrator attaches its Taper overrides to,
+# so the brief-absent check must key off that exact version. Requiring an active
+# plan keeps the CTA actionable (no plan ⇒ nothing to generate a brief from);
+# the scalar subquery resolving to NULL (no active plan) makes the outer EXISTS
+# false. Reused verbatim by the `race_week_plan_due` insert + delete below.
+_ACTIVE_PLAN_NO_BRIEF = '''
+            EXISTS (
+                SELECT 1 FROM plan_versions pv
+                WHERE pv.id = (
+                    SELECT p.id FROM plan_versions p
+                    WHERE p.user_id = re.user_id
+                      AND p.generation_status = 'ready'
+                      AND p.archived_at IS NULL
+                      AND p.completed_at IS NULL
+                    ORDER BY p.created_at DESC, p.id DESC
+                    LIMIT 1
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM race_week_briefs rwb
+                    WHERE rwb.plan_version_id = pv.id
+                )
+            )'''
+# Escalating re-surface ladder for `plan_needs_review`, measured from when the
+# plan parked at the review gate (`plan_versions.created_at`). The nudge first
+# appears at rung 1 (1 day); if the athlete read or dismissed it, it RE-SURFACES
+# (floated to top, marked unread) when each later rung elapses — another day, then
+# a week — after which it stays put until the plan is resolved. All rungs are
+# day-granular so the existing DAILY cron (`vercel.json`) honours them.
+PLAN_REVIEW_RUNGS = ('1 day', '2 days', '7 days')
+# OR-clause covering the re-surface rungs (every rung past the first): a row is
+# re-surfaced when a later rung has elapsed since the plan parked AND the row was
+# last surfaced before that rung. Built off the ladder so adding a rung is a
+# one-line change to PLAN_REVIEW_RUNGS.
+_PLAN_REVIEW_RESURFACE_OR = ' OR '.join(
+    f"(NOW() >= pv.created_at + INTERVAL '{r}' "
+    f"AND an.created_at < pv.created_at + INTERVAL '{r}')"
+    for r in PLAN_REVIEW_RUNGS[1:]
+)
 
 # Per-type reconcile spec. Each entry pairs the INSERT that ARMS the nudge while
 # its condition holds with the DELETE that CLEARS it once the condition lifts —
@@ -560,6 +630,108 @@ _STALENESS_RECONCILE = [
             RETURNING id
         ''',
     },
+    {
+        'nudge_type': 'plan_needs_review',
+        # A live (non-superseded, non-archived) plan version parked at the Layer
+        # 3D review gate. Archived plans are excluded — the athlete deliberately
+        # shelved those. The first-fire delay (rung 1) keys off `created_at`
+        # (generation parks at the gate shortly after start, so it's a close
+        # proxy for "parked at"). Later rungs re-surface via `resurface` below.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT DISTINCT pv.user_id, 'plan_needs_review'
+            FROM plan_versions pv
+            WHERE pv.generation_status = 'needs_review'
+              AND pv.superseded_at IS NULL
+              AND pv.archived_at IS NULL
+              AND pv.created_at <= NOW() - INTERVAL '{PLAN_REVIEW_RUNGS[0]}'
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = pv.user_id AND an.nudge_type = 'plan_needs_review'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        # Clears once no live plan remains at the gate — the athlete resolved it
+        # (status flips off 'needs_review'), superseded it, archived it, or
+        # deleted it. The rung clauses are intentionally omitted: age only ever
+        # becomes *more* true, so it plays no part in clearing.
+        'delete': '''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'plan_needs_review'
+              AND NOT EXISTS (
+                  SELECT 1 FROM plan_versions pv WHERE pv.user_id = an.user_id
+                    AND pv.generation_status = 'needs_review'
+                    AND pv.superseded_at IS NULL
+                    AND pv.archived_at IS NULL
+              )
+            RETURNING id
+        ''',
+        # Re-surface (escalation): once a later rung has elapsed since the plan
+        # parked AND the row was last surfaced before that rung, make it fresh
+        # again — clear `dismissed_at`/`read_at` and re-stamp `created_at = NOW()`
+        # so it floats to the top of the feed and reads unread. Re-stamping is
+        # what bounds it to once per rung: after firing, `created_at` sits at/after
+        # the rung threshold, so the `created_at < park + rung` guard is false next
+        # run. Anchored to ANY of the user's parked plans via EXISTS (avoids the
+        # multi-parked-plan join ambiguity); the still-parked guard means a row
+        # whose plan just cleared is deleted above, not re-surfaced here.
+        'resurface': f'''
+            UPDATE account_nudges an
+            SET dismissed_at = NULL, read_at = NULL, created_at = NOW()
+            WHERE an.nudge_type = 'plan_needs_review'
+              AND EXISTS (
+                  SELECT 1 FROM plan_versions pv WHERE pv.user_id = an.user_id
+                    AND pv.generation_status = 'needs_review'
+                    AND pv.superseded_at IS NULL
+                    AND pv.archived_at IS NULL
+                    AND ({_PLAN_REVIEW_RESURFACE_OR})
+              )
+            RETURNING an.id
+        ''',
+    },
+    {
+        'nudge_type': 'race_week_plan_due',
+        # The athlete's target race sits inside the 14-day race-week window (still
+        # future) and they have not generated the race-week brief for their active
+        # plan version yet. `event_date` is a real DATE column, so plain date
+        # arithmetic (`CURRENT_DATE + N`) applies — no TO_CHAR ISO-text cutoff like
+        # the log/body/injury specs above (those columns are TEXT). At most one
+        # target race per athlete (partial UNIQUE index), so no DISTINCT is needed.
+        # One-shot fire — no escalation ladder (handoff §6 starting shape).
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT re.user_id, 'race_week_plan_due'
+            FROM race_events re
+            WHERE re.is_target_event = TRUE
+              AND re.event_date >= CURRENT_DATE
+              AND re.event_date <= CURRENT_DATE + {RACE_WEEK_DUE_DAYS}
+              AND {_ACTIVE_PLAN_NO_BRIEF}
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = re.user_id AND an.nudge_type = 'race_week_plan_due'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        # Clears once the athlete is no longer eligible — brief generated for the
+        # active version, race passed (`event_date` now in the past), target race
+        # removed/changed, or the active plan went away. Mirrors the insert
+        # eligibility in a NOT EXISTS, the same shape as `plan_needs_review`.
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'race_week_plan_due'
+              AND NOT EXISTS (
+                  SELECT 1 FROM race_events re
+                  WHERE re.user_id = an.user_id
+                    AND re.is_target_event = TRUE
+                    AND re.event_date >= CURRENT_DATE
+                    AND re.event_date <= CURRENT_DATE + {RACE_WEEK_DUE_DAYS}
+                    AND {_ACTIVE_PLAN_NO_BRIEF}
+              )
+            RETURNING id
+        ''',
+    },
 ]
 
 
@@ -575,25 +747,33 @@ def scan_reconcile_staleness():
       2. **INSERT** one row per newly-eligible athlete (condition holds, no
          existing row). `ON CONFLICT DO NOTHING` makes overlapping cron fires
          idempotent.
+      3. **RE-SURFACE** (optional, `plan_needs_review` only): a type with a
+         `resurface` statement re-arms an existing row when a later escalation
+         rung has elapsed — clears `dismissed_at`/`read_at` + re-stamps
+         `created_at` so a previously-seen nudge comes back fresh.
 
     Display still honours per-type in-app preferences at read time
     (`get_active_nudges`), so this stays preference-agnostic — toggling a type
     off mutes it without disturbing the reconciled rows.
 
     Token-gated like the other cron drains. Returns JSON
-    `{inserted: {type: n, ...}, cleared: {type: n, ...}}`.
+    `{inserted: {...}, cleared: {...}, resurfaced: {...}}`.
     """
     if not cron_authorized():
         abort(401)
     db = get_db()
     inserted: dict[str, int] = {}
     cleared: dict[str, int] = {}
+    resurfaced: dict[str, int] = {}
     for spec in _STALENESS_RECONCILE:
         t = spec['nudge_type']
         cleared[t] = len(db.execute(spec['delete']).fetchall())
         inserted[t] = len(db.execute(spec['insert']).fetchall())
+        if spec.get('resurface'):
+            resurfaced[t] = len(db.execute(spec['resurface']).fetchall())
     db.commit()
-    return jsonify(inserted=inserted, cleared=cleared), 200
+    return jsonify(inserted=inserted, cleared=cleared,
+                   resurfaced=resurfaced), 200
 
 
 @bp.route('/nudges/<int:nudge_id>/dismiss', methods=['POST'])
