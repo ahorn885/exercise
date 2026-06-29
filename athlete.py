@@ -27,11 +27,9 @@ PROFILE_FIELDS = (
     # (init_db.py migrations). `training_window` retired in D-73 Phase 1.2A
     # — superseded by `daily_availability_windows` (D-61 / PR12).
     'weekly_hours_target',
-    # Single free-text athlete→coach field. Merged from the legacy `notes` +
-    # `coaching_voice_preferences` pair (they said the same thing): general
-    # context the coach should know *and* voice/communication preferences.
-    # Rendered into the synthesizer's athlete context.
-    'coach_notes',
+    # #954 — the free-text `coach_notes` athlete→coach field was retired and
+    # merged into Coach memory (`coaching_preferences`): one coach-facing surface.
+    # Existing notes were migrated to a durable 'general' preference (init_db.py).
     # v5 §A.2 prefill-eligible baselines (PR6 D-51 column foundation).
     # Self-report at onboarding today; provider extractors land in PR7
     # (D2a) and write to athlete_profile_field_provenance.
@@ -104,8 +102,8 @@ PROFILE_FIELDS = (
     'sleep_deprivation_max_hrs_continuous_awake',
     'sleep_deprivation_strategy_notes',
     # #304 — self-reported Layer-4 convenience field. `experience_level` is a
-    # closed self-select band (EXPERIENCE_LEVEL_CHOICES). (The free-text
-    # coach-facing field is `coach_notes`, listed above.)
+    # closed self-select band (EXPERIENCE_LEVEL_CHOICES). (Free-text coach-facing
+    # context lives in Coach memory / `coaching_preferences` since #954.)
     'experience_level',
 )
 

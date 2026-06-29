@@ -22,8 +22,7 @@ contract in `layer4/context.py` (Layer 1 typed schemas are out of scope for
 the current implementation arc). The signature accepts a `dict[str, Any]`
 opaque pass-through matching the PR-D precedent for unmapped upstream
 shapes; the prompt body's template reads specific keys (e.g.,
-`experience_level`, `coach_notes`) and renders missing keys
-as empty strings.
+`experience_level`) and renders missing keys as empty strings.
 
 **Tool-schema fidelity choice (v1 — Andy 2026-05-17 Option 2).** The
 `record_single_session` tool schema mirrors the full `Layer4Payload`
@@ -606,9 +605,6 @@ def _render_user_prompt(
     parts.append(f"User ID: {layer3a_payload.user_id}")
     exp = layer1_payload.get("experience_level") or "unknown"
     parts.append(f"Experience level: {exp}")
-    coach_notes = layer1_payload.get("coach_notes")
-    if coach_notes:
-        parts.append(f"Coach notes: {coach_notes}")
     # #337 — measured physiological anchors so the synthesizer grounds
     # intensity_target numbers in real values (suppress-on-empty).
     physiology_lines = format_measured_physiology(layer1_payload)

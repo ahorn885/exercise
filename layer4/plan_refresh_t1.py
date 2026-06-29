@@ -210,9 +210,6 @@ def render_user_prompt(
         parts.append(f"Disciplines: {disciplines}")
     parts.append("Active injuries (hard constraints — never overridable):")
     parts.extend(_format_active_injuries(layer2_bundle))
-    coach_notes = layer1_payload.get("coach_notes")
-    if coach_notes:
-        parts.append(f"Coach notes: {coach_notes}")
     parts.append("")
 
     # === Session feasibility (#557 — terrain routing, mirrors create #540) ===

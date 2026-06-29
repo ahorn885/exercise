@@ -3157,6 +3157,29 @@ _PG_MIGRATIONS = [
         updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
         PRIMARY KEY (user_id, domain)
     )""",
+    # ── #954 — merge "Notes for the coach" into Coach Memory; retire coach_notes ─
+    # The free-text `coach_notes` field (Athlete profile tab) and Coach Memory
+    # (`coaching_preferences`) said the same thing to the synthesizer — both were
+    # rendered into every Layer 4 surface. Consolidate onto the single Coach
+    # Memory surface: migrate each athlete's non-empty `coach_notes` into one
+    # durable preference (category 'general', permanent, manually-sourced —
+    # source_feedback_id NULL, exactly like a hand-added pref) so the content is
+    # preserved and still reaches the coach, then drop the column and its Layer 1
+    # / Layer 4 plumbing. Guarded on the column's existence: the backfill runs
+    # exactly once (the DROP that follows is the idempotency latch), and both are
+    # clean no-ops on a fresh DB (column never added) and on re-deploy.
+    """DO $$
+    BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns
+                   WHERE table_name='athlete_profile' AND column_name='coach_notes') THEN
+            INSERT INTO coaching_preferences
+                       (user_id, category, content, permanent, source_feedback_id)
+            SELECT user_id, 'general', BTRIM(coach_notes), 1, NULL
+              FROM athlete_profile
+             WHERE NULLIF(BTRIM(coach_notes), '') IS NOT NULL;
+        END IF;
+    END $$;""",
+    "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coach_notes",
 ]
 
 _CLOTHING_SEEDS = [
