@@ -2454,6 +2454,34 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # #941 — retire the free-text `city` column. Weather / clothing resolution
+    # moved off the typed city onto the Mapbox-anchored `lat`/`lng` already
+    # captured on every geocoded locale (away event-window destination wins,
+    # else preferred home). The typed city was the source of the wrong-location
+    # bug: travel locales left it blank and the away window silently fell
+    # through to home weather. Manual-entry addresses now ride in `place_payload`
+    # (Mapbox-feature shape) so the list/form still render them.
+    #
+    # Backfill first (idempotent, runs before the DROP): a manual-entry row's
+    # only address was its typed `city`; lift it into `place_payload` so the
+    # address still renders after the column is gone. Guarded on the column
+    # existing so a cold start that never had `city` skips it cleanly.
+    """DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'locale_profiles' AND column_name = 'city'
+        ) THEN
+            UPDATE locale_profiles
+               SET place_payload = json_build_object(
+                       'properties', json_build_object('full_address', city)
+                   )::text
+             WHERE manual_entry = TRUE
+               AND COALESCE(city, '') <> ''
+               AND (place_payload IS NULL OR place_payload = '');
+        END IF;
+    END $$;""",
+    "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS city",
     # ── Vercel Log Drain sink (issue #350) ───────────────────────────────
     # Hard-kill backstop the plan-diag endpoint structurally can't be: a
     # gateway 504 / OOM kills the lambda before any `except` runs, so
