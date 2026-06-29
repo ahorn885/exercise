@@ -794,6 +794,17 @@ class SleepDepFuelingOverlay(_Base):
     sleep_dep_specific_flags: list[Layer2ECoachingFlag]
 
 
+class HeatAcclimState(_Base):
+    # `Plan_Management_Spec_v1.md` §3 / §5.2 — the heat-acclim half of the
+    # `PlanManagementState` contract 2E §5.8 imports. Derived at read time from
+    # `conditions_log` (never stored — Athlete_Data_Integration_Spec §2.6); the
+    # producer is `plan_management.derive_heat_acclim_state` (#221). Field
+    # names/types are locked to 2E's signature — extend, don't rename/retype.
+    level: Literal["low", "moderate", "high"]  # §5.2.3
+    days_at_temp_last_30: int = Field(ge=0)  # distinct training days >25 °C in last 30
+    last_assessment: date  # read-time derivation date
+
+
 class HeatAcclimEventAdjustment(_Base):
     event_id: str
     temp_signal: Literal["unknown", "cool", "temperate", "warm", "hot"]
