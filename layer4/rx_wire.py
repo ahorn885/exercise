@@ -51,23 +51,44 @@ _COMPOUND_PATTERNS: frozenset[str] = frozenset({
     "squat", "hinge", "push", "pull", "lunge",
 })
 
-# Category → first-exposure calibration template (spec §7).
-_FIRST_EXPOSURE_TEMPLATES: dict[str, str] = {
+# Category → first-exposure calibration template (spec §7). Each entry is a
+# `(load_qualifier, calibration_note)` pair:
+#
+#   - `load_qualifier` fills the `@`-load slot ONLY. `view.html` renders the
+#     prescription as `{sets} × {reps_per_set} @ {load_prescription}`, so this
+#     string must read as a *load* directive that stays consistent with the
+#     structured `sets × reps`. It names an effort target (RPE / reps-in-reserve)
+#     and NEVER a rep count — a rep count here collides with `reps_per_set`,
+#     producing the garbled "3 × 6 @ … RPE 6 for 8 reps" / "3 × 12 @ 3 sets ×
+#     max reps …" strings reported in #962 (am I doing 6 reps or 8?).
+#   - `calibration_note` is the longer "why" framing. It is merged into the
+#     exercise's `instructions`, which `view.html` renders on its own line, so it
+#     can never bleed into the load field.
+_FIRST_EXPOSURE_TEMPLATES: dict[str, tuple[str, str]] = {
     "compound_barbell": (
-        "Calibration set — pick a weight that feels RPE 6 for 8 reps; "
-        "log to set baseline"
+        "RPE 6 — first session, set your baseline",
+        "First time logging this lift: pick a barbell load that feels like RPE 6 "
+        "for the prescribed reps, then log it to set your baseline.",
     ),
     "compound_dumbbell": (
-        "Calibration — pick DBs that feel RPE 6 for 10 reps; log to set baseline"
+        "RPE 6 — first session, set your baseline",
+        "First time logging this lift: pick dumbbells that feel like RPE 6 for the "
+        "prescribed reps, then log them to set your baseline.",
     ),
     "accessory_dumbbell": (
-        "Calibration — pick DBs that feel RPE 7 for 12 reps; log to set baseline"
+        "RPE 7 — first session, set your baseline",
+        "First time logging this lift: pick dumbbells that feel like RPE 7 for the "
+        "prescribed reps, then log them to set your baseline.",
     ),
     "accessory_cable": (
-        "Calibration — pick a load that feels RPE 7 for 12 reps; log to set baseline"
+        "RPE 7 — first session, set your baseline",
+        "First time logging this lift: pick a load that feels like RPE 7 for the "
+        "prescribed reps, then log it to set your baseline.",
     ),
     "bodyweight": (
-        "3 sets × max reps with 2 reps in reserve; log to set baseline"
+        "2 reps in reserve — first session, set your baseline",
+        "First time logging this: work the prescribed reps keeping about 2 in "
+        "reserve, then log it to set your baseline.",
     ),
 }
 
@@ -195,6 +216,22 @@ def _parse_target_reps(reps_per_set: int | str | None) -> int | None:
             return nums[0]
         return round(sum(nums) / len(nums))  # midpoint of the prescribed range
     return None
+
+
+def _merge_calibration_note(existing: str | None, note: str) -> str:
+    """Append a first-exposure `calibration_note` to the exercise's existing
+    `instructions` as its own sentence (#962). De-duped + idempotent: rx_wire is
+    re-run on every refresh (like the `first_exposure` flag append), so a note
+    already present must not stack a second copy. Joins with a sentence break so
+    the calibration framing reads as a distinct line, not a run-on with the
+    LLM-emitted execution cue."""
+    existing = (existing or "").strip()
+    if not existing:
+        return note
+    if note in existing:
+        return existing
+    sep = " " if existing.endswith((".", "!", "?")) else ". "
+    return f"{existing}{sep}{note}"
 
 
 def _round_to_gym_increment(weight_kg: float, unit_pref: str | None) -> float:
@@ -384,12 +421,19 @@ def apply_current_rx(
 
             resolved = resolved_index.get(ex.exercise_id)
             category = _classify_category(ex, resolved)
-            template = _FIRST_EXPOSURE_TEMPLATES[category]
+            load_qualifier, calibration_note = _FIRST_EXPOSURE_TEMPLATES[category]
             new_flags = list(ex.coaching_flags)
             if _FIRST_EXPOSURE_FLAG not in new_flags:
                 new_flags.append(_FIRST_EXPOSURE_FLAG)
+            # #962 — write a load-ONLY qualifier into `load_prescription` (the
+            # `@`-load slot) and carry the longer calibration framing in
+            # `instructions` (its own rendered line), so the note can never bleed
+            # into the load field or collide with the structured sets × reps.
             new_ex = ex.model_copy(update={
-                "load_prescription": template,
+                "load_prescription": load_qualifier,
+                "instructions": _merge_calibration_note(
+                    ex.instructions, calibration_note
+                ),
                 "coaching_flags": new_flags,
             })
             new_exercises.append(new_ex)
@@ -399,7 +443,7 @@ def apply_current_rx(
                 exercise_id=ex.exercise_id,
                 path="first_exposure",
                 category=category,
-                rendered=template,
+                rendered=load_qualifier,
             ))
             if _FIRST_EXPOSURE_FLAG not in session_flags_to_add:
                 session_flags_to_add.append(_FIRST_EXPOSURE_FLAG)

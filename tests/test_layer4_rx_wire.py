@@ -437,7 +437,11 @@ class TestFirstExposure:
         new_payload, diag = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["compound_barbell"]
+        load_q, note = _FIRST_EXPOSURE_TEMPLATES["compound_barbell"]
+        # #962 — the load slot carries the load-only qualifier; the longer
+        # calibration framing lands in instructions, not the `@`-load field.
+        assert result_ex.load_prescription == load_q
+        assert note in result_ex.instructions
         assert "first_exposure" in result_ex.coaching_flags
         assert diag.outcomes[0].category == "compound_barbell"
 
@@ -450,7 +454,7 @@ class TestFirstExposure:
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["compound_dumbbell"]
+        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["compound_dumbbell"][0]
 
     def test_accessory_dumbbell_template(self):
         # No compound pattern in the resolved entry → accessory.
@@ -462,7 +466,7 @@ class TestFirstExposure:
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["accessory_dumbbell"]
+        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["accessory_dumbbell"][0]
 
     def test_accessory_cable_template(self):
         ex = _strength_ex("EX-004", name="Cable Row")
@@ -473,7 +477,7 @@ class TestFirstExposure:
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["accessory_cable"]
+        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["accessory_cable"][0]
 
     def test_bodyweight_template_via_tier(self):
         """Layer2C tier 0/3 → bodyweight category regardless of name."""
@@ -485,7 +489,7 @@ class TestFirstExposure:
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["bodyweight"]
+        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["bodyweight"][0]
 
     def test_first_exposure_flag_idempotent(self):
         """An exercise that already carries `first_exposure` doesn't get
@@ -513,7 +517,57 @@ class TestFirstExposure:
         new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
 
         result_ex = new_payload.sessions[0].strength_exercises[0]
-        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["bodyweight"]
+        assert result_ex.load_prescription == _FIRST_EXPOSURE_TEMPLATES["bodyweight"][0]
+
+
+class TestFirstExposureRender:
+    """#962 — the first-exposure write must not garble the rendered
+    `{sets} × {reps} @ {load_prescription}` string: the load slot carries a
+    load-only qualifier with NO rep count, and the calibration framing lands in
+    instructions on its own line."""
+
+    def test_load_qualifier_has_no_rep_count(self):
+        # The load slot must not name a rep count (it would collide with the
+        # structured `reps_per_set` — "3 × 6 @ ... RPE 6 for 8 reps").
+        for category, (load_q, _note) in _FIRST_EXPOSURE_TEMPLATES.items():
+            assert "rep" not in load_q.lower() or "reserve" in load_q.lower(), (
+                f"{category} load qualifier names reps: {load_q!r}"
+            )
+
+    def test_calibration_note_goes_to_instructions_not_load(self):
+        ex = _strength_ex("EX-001", name="Back Squat", reps_per_set=6)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb()  # first exposure
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        result_ex = new_payload.sessions[0].strength_exercises[0]
+        load_q, note = _FIRST_EXPOSURE_TEMPLATES["compound_barbell"]
+        assert result_ex.load_prescription == load_q
+        # The note is in instructions, NOT bleeding into the load field.
+        assert note in result_ex.instructions
+        assert note not in result_ex.load_prescription
+        # The original LLM execution cue is preserved alongside the note.
+        assert "Standard execution." in result_ex.instructions
+        # The full rendered prescription reads cleanly — the load slot adds no
+        # second rep count after the structured "3 × 6".
+        rendered = f"{result_ex.sets} × {result_ex.reps_per_set} @ {result_ex.load_prescription}"
+        assert rendered == "3 × 6 @ RPE 6 — first session, set your baseline"
+
+    def test_note_merge_idempotent_on_rerun(self):
+        # rx_wire re-runs on refresh; the calibration note must not stack twice.
+        ex = _strength_ex("EX-001", name="Back Squat")
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX-001", "Back Squat", patterns=["Squat"])])
+        db = _FakeDb()
+
+        once, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+        twice, _ = apply_current_rx(once, db, 1, {"home": l2c})
+
+        _load_q, note = _FIRST_EXPOSURE_TEMPLATES["compound_barbell"]
+        instr = twice.sessions[0].strength_exercises[0].instructions
+        assert instr.count(note) == 1
 
 
 class TestClassifyCategory:
