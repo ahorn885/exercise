@@ -1564,14 +1564,18 @@ class InjuryRecord(_Base):
 
 class HealthConditionRecord(_Base):
     condition_id: int
+    # Canonical 11-category set (#255) — mirrors athlete.KNOWN_SYSTEM_CATEGORIES.
     system_category: Literal[
         "cardiac",
         "respiratory",
-        "metabolic",
+        "endocrine_metabolic",
+        "gi",
         "neurological",
-        "gi_immune",
+        "cognitive_mental_health",
         "musculoskeletal",
-        "endocrine",
+        "skin",
+        "thermoregulation",
+        "immune_autoimmune",
         "other",
     ]
     condition_name: str

@@ -17,7 +17,13 @@
         <input type="date" name="start_date" class="form-control form-control-sm" required value="{{ entry.start_date if entry else '' }}"></label>
       <label class="field col"><span class="lbl">Body part</span>
         <select name="body_part" id="body_part" class="form-select form-select-sm">
-          {% for b in body_parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+          {% for region, parts in body_part_groups %}<optgroup label="{{ region }}">
+          {% for b in parts %}<option value="{{ b }}" {% if entry and entry.body_part == b %}selected{% endif %}>{{ b }}</option>{% endfor %}
+          </optgroup>{% endfor %}
+        </select></label>
+      <label class="field col"><span class="lbl">Side</span>
+        <select name="side" class="form-select form-select-sm">
+          {% for s in sides %}<option value="{{ s }}" {% if (entry and entry.side == s) or (not entry and s == 'N/A') %}selected{% endif %}>{{ s }}</option>{% endfor %}
         </select></label>
     </div>
     <div class="row">
@@ -74,9 +80,10 @@
 
 {% block log_scripts %}
 {# Narrow the movement-constraint checkboxes to those relevant for the
-   selected body part. body_part values double Left/Right, so strip the
-   prefix before lookup. Already-checked constraints stay visible so an
-   edit never silently hides a saved value. #}
+   selected body part. The picker is side-less canonical now (#255), so the
+   value keys straight into the map — no prefix stripping. An unmapped value
+   (e.g. a legacy row) fails open (shows all). Already-checked constraints stay
+   visible so an edit never silently hides a saved value. #}
 <script nonce="{{ csp_nonce() }}">
   (function () {
     const MAP = {{ body_part_constraints | tojson }};
@@ -84,18 +91,13 @@
     const container = document.getElementById('movement-constraints');
     if (!bp || !container) return;
 
-    function canonical(value) {
-      if (value && value.indexOf('Left ') === 0) return value.slice(5);
-      if (value && value.indexOf('Right ') === 0) return value.slice(6);
-      return value || '';
-    }
-
     function applyFilter() {
-      const allowed = new Set(MAP[canonical(bp.value)] || []);
+      const mapped = MAP[bp.value];
+      const allowed = mapped ? new Set(mapped) : null;  // null = fail open
       container.querySelectorAll('.mc-cell').forEach(function (cell) {
         const c = cell.getAttribute('data-constraint');
         const box = cell.querySelector('input[type="checkbox"]');
-        const keep = allowed.has(c) || (box && box.checked);
+        const keep = !allowed || allowed.has(c) || (box && box.checked);
         cell.style.display = keep ? '' : 'none';
       });
     }
