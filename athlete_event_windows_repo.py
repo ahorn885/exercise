@@ -33,8 +33,6 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 
-from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
-
 # Override types. Kept here (not a DB CHECK) so the capture form + this repo are
 # the single closed set the validator asserts. Slice 2 adds 'away'; Slice 6
 # (#593) adds the two VOLUME types — 'reduced_volume' (the day carries a reduced
@@ -46,12 +44,6 @@ from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
 OVERRIDE_TYPES: tuple[str, ...] = (
     "indoor_only", "locale_unavailable", "away", "reduced_volume", "no_training",
 )
-
-# Slice 4 (#581 WS-H) — the closed craft enum brought-craft is validated against
-# (the same set athlete_crafts_repo offers). Emitted in this order for a stable
-# stored CSV → deterministic compute_event_windows_hash.
-_CRAFT_SLUGS: tuple[str, ...] = (*BIKE_TYPES, *PADDLE_CRAFT_TYPES)
-
 
 class EventWindowError(ValueError):
     """A submitted event window failed an app-layer constraint."""
@@ -69,9 +61,13 @@ class EventWindow:
     unavailable_locale: str | None
     away_locale: str | None
     notes: str
-    # Slice 4 (#581 WS-H) — craft brought to an 'away' window (the (c) surface);
+    # Slice 4 (#581 WS-H) — gear brought to an 'away' window (the (c) surface);
     # empty tuple on non-away windows / when nothing is brought. Fed (unioned with
-    # the standing craft<->locale set) as the away cluster's owned_crafts.
+    # the standing gear<->locale set) as the away cluster's owned_crafts. #884
+    # slice 6b — generalized from craft-only to all gear kinds (ski/snow/climb/
+    # alpine), so the stored gear_ids may be any registry kind. (Attribute name
+    # kept `brought_craft`; the `brought_craft`→`brought_gear` column/field rename
+    # rides 6c's legacy-column retirement.)
     brought_craft: tuple[str, ...] = ()
     # Slice 6 (#593) — the retained capacity fraction for a 'reduced_volume'
     # window (0 < pct < 1), athlete-set per window. None on every other type
@@ -239,9 +235,9 @@ def add_event_window(
                 f"away_locale {away!r} is not one of your saved locales"
             )
         unavail = None
-        # Brought-craft is only meaningful on an away window (the destination's
-        # env replaces home); validate against the closed enum, emit in enum
-        # order for a stable stored CSV.
+        # Brought gear is only meaningful on an away window (the destination's
+        # env replaces home); validate against the unified registry, emit in
+        # registry order for a stable stored CSV.
         crafts = _validate_crafts(brought_craft or [])
     elif override_type == "reduced_volume":
         # Volume window — carries no locale; requires a retained fraction in (0,1).
@@ -367,15 +363,29 @@ def _parse_volume_by_date(value) -> dict[date, float]:
 
 
 def _validate_crafts(values: list[str]) -> list[str]:
-    """De-dupe + reject unknown slugs; emit in `_CRAFT_SLUGS` order for a stable
-    stored CSV. Mirrors `athlete_crafts_repo._validate`."""
+    """De-dupe + reject unknown gear_ids; emit in registry order for a stable
+    stored CSV → deterministic `compute_event_windows_hash`.
+
+    #884 slice 6b — generalized from the craft-only `_CRAFT_SLUGS` (bike/paddle)
+    to the full unified gear registry, so ski/snow/climbing/alpine gear can be
+    brought to an away window (the away overlay already filters brought∪standing
+    to `_CRAFT_ALIAS_GROUP_KINDS`, which spans every discipline-unlocking kind).
+    Validation + order both come from `load_gear_registry()` — the same catalog
+    the brought picker offers (swim excluded; `_GEAR_IDS` order) — so the picker,
+    validator, and stored CSV share one source. Lazy import avoids the layer4
+    package-init cycle (this repo is imported at layer4 init time, like the
+    `layer4.cache` import in `evict_plan_caches_on_event_windows_change`)."""
+    from athlete_gear_repo import load_gear_registry
+
+    order = [entry["gear_id"] for entry in load_gear_registry()]
+    valid = set(order)
     chosen = {v for v in values if v}
-    unknown = chosen - set(_CRAFT_SLUGS)
+    unknown = chosen - valid
     if unknown:
         raise EventWindowError(
-            f"unknown brought craft(s): {', '.join(sorted(unknown))}"
+            f"unknown brought gear: {', '.join(sorted(unknown))}"
         )
-    return [s for s in _CRAFT_SLUGS if s in chosen]
+    return [g for g in order if g in chosen]
 
 
 def _locale_exists(db, user_id: int, locale: str) -> bool:

@@ -53,7 +53,6 @@ from athlete_discipline_weighting_repo import (
 from athlete_crafts_repo import (
     CraftSelectionError,
     evict_layer1_on_crafts_change,
-    load_craft_catalog,
     replace_athlete_crafts,
 )
 from athlete_gear_repo import (
@@ -944,10 +943,13 @@ def event_windows():
         windows=windows,
         locales=locales,
         override_types=OVERRIDE_TYPES,
-        # Slice 4 (#581 WS-H) — away-craft capture: the brought-craft (c) picker
-        # catalog. (The standing craft↔locale (b) capture moved to the per-locale
-        # edit page in Slice 5.)
-        craft_catalog=load_craft_catalog(),
+        # Slice 4 (#581 WS-H) — away-gear capture: the brought-gear (c) picker
+        # catalog. (The standing gear↔locale (b) capture moved to the per-locale
+        # edit page in Slice 5.) #884 slice 6b — generalized from craft-only
+        # (`load_craft_catalog`) to the full unified gear registry (all kinds),
+        # so ski/snow/climbing/alpine gear can be brought to an away window; the
+        # away overlay resolves it in that segment only (design §17).
+        gear_registry=load_gear_registry_grouped(),
         # Slice 5b (#581 WS-H) — when the athlete reached this page from the
         # plan-gen review panel (#608 item 1) or onboarding setup (#608 item 3),
         # thread the origin path through so the add/delete forms preserve it and
