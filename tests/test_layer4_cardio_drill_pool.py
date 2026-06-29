@@ -188,15 +188,30 @@ def test_render_applies_gear_gate_in_lockstep():
 
 def test_gear_requirement_map_matches_migration_seed():
     """The hard-coded runtime gate map must stay in lockstep with the canonical
-    layer0.cardio_drill_gear_requirements seed (migration 0025)."""
+    layer0.cardio_drill_gear_requirements active seed (migration 0025, folded into
+    the baseline snapshot by the v1.10.0 re-dump). Reads the newest baseline (like
+    the TestLayer0TableFamilyMap drift guard) so it survives future migration
+    folds instead of pinning to a migration file that gets archived."""
     import pathlib
     import re
 
-    sql = pathlib.Path("etl/migrations/layer0/0025_cardio_drill_gear_requirements.sql").read_text()
-    # VALUES rows: (id, 'EX###', 'gear_id', '0B-v…', now())
+    baseline = max(
+        pathlib.Path("etl/output").glob("layer0_etl_v*.sql"),
+        key=lambda p: tuple(
+            int(x) for x in re.search(r"v(\d+)\.(\d+)\.(\d+)", p.name).groups()
+        ),
+    ).read_text()
+    # Active column-insert rows: INSERT … VALUES (id, 'EX###', 'gear_id', …, NULL);
+    # — the trailing ", NULL);" is superseded_at IS NULL (active set only).
     seeded: dict[str, set[str]] = {}
-    for ex_id, gear_id in re.findall(r"\(\s*\d+,\s*'(EX\d+)',\s*'(\w+)'", sql):
-        seeded.setdefault(ex_id, set()).add(gear_id)
+    for line in baseline.splitlines():
+        if "INSERT INTO layer0.cardio_drill_gear_requirements" not in line:
+            continue
+        if not line.rstrip().endswith(", NULL);"):
+            continue
+        m = re.search(r"VALUES \(\s*\d+,\s*'(EX\d+)',\s*'(\w+)'", line)
+        if m:
+            seeded.setdefault(m.group(1), set()).add(m.group(2))
     runtime = {ex: set(req) for ex, req in _CARDIO_DRILL_GEAR_REQUIREMENTS.items()}
     assert runtime == seeded
 
