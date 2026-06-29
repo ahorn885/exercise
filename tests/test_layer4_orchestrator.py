@@ -115,6 +115,13 @@ _USER_ID = 42
 # overrides these to assert the real wiring + the `no_active_plan` gate.
 _ACTIVE_PLAN_VERSION_ID = 7
 
+# #1024 — the shared cone resolves the running plan's origin (the `plan_create`
+# row's scope start) via `load_current_plan_start` for the refresh / race-week
+# paths, feeding `derive_current_phase`. Default it module-wide so the existing
+# pipeline tests don't need to queue a `plan_versions` row on `_FakeConn`; the
+# `TestCurrentPhaseDerivation` class overrides it to assert the §5.1 wiring.
+_PLAN_START = date(2026, 4, 1)
+
 
 # The orchestrator lazy-imports these from `plan_sessions_repo` (avoids a
 # circular import), so patches must target the repo module, not
@@ -128,6 +135,10 @@ def _default_active_plan(monkeypatch):
     monkeypatch.setattr(
         "plan_sessions_repo.load_scheduled_sessions_for_window",
         lambda db, user_id, *, start, end: [],
+    )
+    monkeypatch.setattr(
+        "plan_sessions_repo.load_current_plan_start",
+        lambda db, user_id, on_or_before: _PLAN_START,
     )
 
 
@@ -526,6 +537,7 @@ def _fake_layer3b_payload(
     *,
     event_date: date = _EVENT_DATE,
     start_phase: str = "Taper",
+    time_to_event_weeks: int = 1,
 ) -> Layer3BPayload:
     return Layer3BPayload(
         user_id=_USER_ID,
@@ -556,7 +568,7 @@ def _fake_layer3b_payload(
         event_date=event_date,
         event_locale_id="home",
         race_format="single_day",
-        time_to_event_weeks=1,
+        time_to_event_weeks=time_to_event_weeks,
     )
 
 
@@ -724,8 +736,11 @@ class TestHappyPath:
             assert m.call_count == 1
 
         # Layer 2E receives `current_phase` (inside the §3 PlanManagementState
-        # contract) from 3B's `start_phase` — verifies the 2A/2B/2D/2C → 3A → 3B
-        # → 2E ordering decision.
+        # contract) — now the §5.1 phase active today (#1024), derived from the
+        # resolved plan origin (`_PLAN_START`) + today via `derive_current_phase`.
+        # Here the 3B shape is a 1-week Taper-start plan, so today resolves to
+        # Taper either way (the wiring is exercised end-to-end; the behaviour
+        # change vs `start_phase` is asserted in `TestCurrentPhaseDerivation`).
         l2e_kwargs = m_l2e.call_args.kwargs
         assert l2e_kwargs["plan_management_state"].current_phase == "Taper"
         assert l2e_kwargs["framework_sport"] == "AR"
@@ -3223,6 +3238,129 @@ def _fake_plan_create_layer4_payload(
         ],
         notable_observations=[],
     )
+
+
+class TestCurrentPhaseDerivation:
+    """#1024 — the shared cone wires `derive_current_phase` (§5.1) so 2E's
+    `current_phase` is the periodization phase active TODAY, not always the
+    plan's first block (`start_phase`).
+
+    Anchoring numbers (all tests share one Base-start, 16-week standard 3B
+    shape): the §6.1 standard split over 16 weeks is Base 8 / Build 4 / Peak 2
+    / Taper 2. From the plan origin `_PLAN_START` (2026-04-01) that is
+    Base 04-01..05-26, Build 05-27..06-23, Peak 06-24..07-07, Taper 07-08..07-21.
+    `_TODAY` (2026-06-01) falls in Build."""
+
+    def _l3b_override(self, *, start_phase: str):
+        return patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
+            return_value=_fake_layer3b_payload(
+                start_phase=start_phase, time_to_event_weeks=16
+            ),
+        )
+
+    def test_refresh_derives_phase_active_today_not_start_phase(self):
+        """plan_refresh: a Base-start plan begun weeks ago resolves to Build
+        today (the plan origin is read from `plan_versions` → `_PLAN_START`)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload(plan_version_id=2)
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Build"
+
+    def test_create_anchors_at_first_block(self):
+        """plan_create is a no-op for the change: the plan starts today, so
+        today is week 0 → the first block. The SAME Base-start 16-week shape
+        that resolves to Build on refresh stays Base here (origin = plan_start,
+        handed in directly because the plan isn't on disk yet)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_create_layer4_payload(plan_version_id=3)
+        stack = _plan_create_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=_TODAY,
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Base"
+
+    def test_falls_back_to_start_phase_when_no_origin(self, monkeypatch):
+        """No `plan_create` row on disk → conservative fallback to the 3B
+        `start_phase` (derivation skipped). Proven by contrast: with the origin
+        present this same shape would resolve to Build (see the refresh test),
+        but here it stays Base."""
+        monkeypatch.setattr(
+            "plan_sessions_repo.load_current_plan_start",
+            lambda db, user_id, on_or_before: None,
+        )
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload(plan_version_id=2)
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Base"
 
 
 class TestOrchestratePlanCreateHappyPath:
