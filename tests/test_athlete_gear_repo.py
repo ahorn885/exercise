@@ -12,6 +12,7 @@ import athlete_gear_repo as agr
 from athlete_gear_repo import (
     GEAR_REGISTRY,
     GEAR_TOGGLE_LABELS,
+    GEAR_TOGGLE_NAMES,
     GearSelectionError,
     _GEAR_TOGGLE_KINDS,
     delete_gear_locale,
@@ -19,6 +20,7 @@ from athlete_gear_repo import (
     get_owned_gear_toggles,
     load_gear_locales,
     load_gear_toggle_catalog,
+    owned_gear_toggle_states,
     parse_gear_toggle_form,
     replace_athlete_gear,
     replace_gear_locale,
@@ -251,6 +253,44 @@ class TestGearToggleCapture:
         conn = _FakeConn()
         conn.queue_response(rows=[])
         assert get_owned_gear_toggles(conn, 1) == []
+
+
+class TestGearToggleNameBridge:
+    """#884 slice 4b PR-3 — the gear_id→toggle_name bridge + state derivation
+    that feeds Layer 2C's `cluster_gear_toggle_states` (closes the last #298
+    consumer)."""
+
+    def test_bridge_pins_the_section_5_5_toggle_names(self):
+        # Pinned against the live `sport_specific_gear_toggles.toggle_name`
+        # strings (design v3 §5.5). A toggle rename in Layer 0 must update this.
+        assert GEAR_TOGGLE_NAMES == {
+            "classic_xc_ski": "Classic XC ski setup",
+            "skate_xc_ski": "Skate XC ski setup",
+            "snowshoes": "Snowshoeing setup",
+            "climbing_gear": "Climbing gear",
+            "mountaineering": "Mountaineering",
+            "skimo_at": "Skimo / AT setup",
+        }
+
+    def test_bridge_keys_are_toggle_kind_gear_ids_minus_rollerskis(self):
+        # Every bridged gear_id is a discipline-unlocking toggle slug, and
+        # rollerskis is deliberately absent (new gear, Decision 10 — no toggle
+        # row; its D-028 feasibility is the cascade's job, not a 2C toggle).
+        toggle_slugs = {g for g, k in GEAR_REGISTRY.items() if k in _GEAR_TOGGLE_KINDS}
+        assert set(GEAR_TOGGLE_NAMES) == toggle_slugs - {"rollerskis"}
+        assert "rollerskis" not in GEAR_TOGGLE_NAMES
+
+    def test_owned_states_maps_bridged_gear_to_on(self):
+        # owned gear → {toggle_name: True}; unbridged (rollerskis) and craft
+        # (road_bike) gear contribute no key (treated as OFF by the 2C consumer).
+        states = owned_gear_toggle_states(
+            ["road_bike", "rollerskis", "climbing_gear", "snowshoes"]
+        )
+        assert states == {"Climbing gear": True, "Snowshoeing setup": True}
+
+    def test_owned_states_empty_when_no_bridged_gear(self):
+        assert owned_gear_toggle_states([]) == {}
+        assert owned_gear_toggle_states(["road_bike", "rollerskis"]) == {}
 
 
 # ─── load_gear_locales ───────────────────────────────────────────────────────
