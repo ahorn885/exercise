@@ -87,6 +87,9 @@ class _FakeConn:
     def commit(self):
         pass
 
+    def rollback(self):
+        pass
+
 
 class _FakeForm:
     """`request.form`-shaped fake — supports `getlist(key)`."""
@@ -518,6 +521,22 @@ def _seed_edit_layer0_equipment(conn, names=('Barbell',)):
     ])
 
 
+def _patch_craft_save(monkeypatch, locales_mod, *, prior=None, calls=None):
+    """Neutralise the #953 inline craft save in equipment-path tests that don't
+    seed its repo queries: `load_craft_locales` returns `prior` (default: none
+    kept here), `replace_craft_locale` records `(uid, locale, crafts)` into
+    `calls`, and the craft cache eviction is a no-op."""
+    monkeypatch.setattr(locales_mod, 'load_craft_locales',
+                        lambda *_a, **_k: dict(prior or {}))
+
+    def _replace(_db, uid, locale, crafts):
+        if calls is not None:
+            calls.append((uid, locale, list(crafts)))
+    monkeypatch.setattr(locales_mod, 'replace_craft_locale', _replace)
+    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+                        lambda *_a, **_k: None)
+
+
 class TestEditLocaleTerrainPersists:
     """Track 1 — the unified `_edit_locale` POST persists `locale_terrain_ids`
     via the INSERT ... ON CONFLICT upsert (param index 4) on the build path
@@ -539,6 +558,7 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         profile = _FakeRow({'locale_terrain_ids': []})
         with app.test_request_context(
@@ -547,7 +567,6 @@ class TestEditLocaleTerrainPersists:
             data={
                 'equipment': [],
                 'notes': '',
-                'city': '',
                 'locale_terrain_ids': ['TRN-002', 'TRN-003', 'TRN-016'],
             },
         ):
@@ -560,10 +579,12 @@ class TestEditLocaleTerrainPersists:
         ]
         assert upsert, 'expected an INSERT ... ON CONFLICT for locale_profiles'
         sql, params = upsert[0]
-        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
+        # Params: (uid, locale, notes, sharing_opt_out, new_terrain_ids).
+        # #941 dropped the free-text `city` column from the upsert.
         assert params[0] == 1
         assert params[1] == 'horn_s_house'
-        assert params[5] == ['TRN-002', 'TRN-003', 'TRN-016']
+        assert params[4] == ['TRN-002', 'TRN-003', 'TRN-016']
+        assert 'city' not in sql
         # Defensive `::text[]` cast on the array placeholder forces explicit
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
@@ -587,12 +608,13 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         # No 'category' key → categoryless (legacy 'home' slug shape).
         profile = _FakeRow({'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/home/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'home', profile)
@@ -629,6 +651,7 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         profile = _FakeRow({
             'mapbox_id': 'mb_chisenhall',
@@ -657,8 +680,9 @@ class TestEditLocaleTerrainPersists:
             and 'locale_terrain_ids' in sql
         ]
         assert upsert, 'expected INSERT ... ON CONFLICT for locale_profiles'
-        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
-        assert upsert[0][1][5] == ['TRN-002', 'TRN-003']
+        # Params: (uid, locale, notes, sharing_opt_out, new_terrain_ids).
+        # #941 dropped the free-text `city` column from the upsert.
+        assert upsert[0][1][4] == ['TRN-002', 'TRN-003']
         # Inherit path writes per-athlete override deltas (canonical names),
         # not a direct gym_profiles equipment edit.
         assert _sql_indices(conn.calls, 'DELETE FROM locale_equipment_overrides')
@@ -668,6 +692,62 @@ class TestEditLocaleTerrainPersists:
         ]
         # Submitted {'Squat rack'} on a shared base of {'Barbell'} → add 'Squat rack'.
         assert any('Squat rack' in p and 'add' in p for p in ovr_inserts)
+
+
+# ─── #953 — craft kept here folded into the single location save ────────────
+
+
+class TestEditLocaleSavesCraftInline:
+    """#953 — the unified editor save persists "craft kept here" in the same
+    POST as equipment/terrain (folded off its standalone form/button so editing
+    both no longer bounces back to the list), and evicts the craft plan caches
+    only when the kept set actually changes."""
+
+    def _post(self, monkeypatch, *, craft_slugs, prior_crafts):
+        app = _make_app()
+        conn = _FakeConn()
+        _seed_edit_layer0_equipment(conn)
+        conn.queue_response(row={'gym_profile_id': None})  # locale_effective_tags
+        conn.queue_response(rows=[])                        # overrides
+        conn.queue_response(row={'preferred': 1})           # _ensure_home
+        conn.queue_response(row={'id': 7})                  # _create_gym_profile RETURNING
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+        craft_calls: list = []
+        _patch_craft_save(monkeypatch, locales_mod,
+                          prior={'cabin': prior_crafts}, calls=craft_calls)
+        evicted: list = []
+        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+                            lambda *_a, **_k: evicted.append(True))
+
+        profile = _FakeRow({'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/cabin/edit', method='POST',
+            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+                  'locale_terrain_ids': [], 'craft_slug': craft_slugs},
+        ):
+            _edit_locale(conn, 1, 'cabin', profile)
+        return craft_calls, evicted
+
+    def test_post_replaces_craft_and_evicts_on_change(self, monkeypatch):
+        craft_calls, evicted = self._post(
+            monkeypatch, craft_slugs=['kayak', 'mountain_bike'], prior_crafts=[])
+        # The submitted craft set is replace-all'd in the same POST...
+        assert craft_calls == [(1, 'cabin', ['kayak', 'mountain_bike'])]
+        # ...and the craft plan caches evict because the kept set changed.
+        assert evicted, 'craft cache must evict when the kept set changes'
+
+    def test_post_skips_craft_eviction_when_unchanged(self, monkeypatch):
+        craft_calls, evicted = self._post(
+            monkeypatch, craft_slugs=['kayak'], prior_crafts=['kayak'])
+        # Still replace-all'd (idempotent), but no cache churn on a no-op change.
+        assert craft_calls == [(1, 'cabin', ['kayak'])]
+        assert not evicted, 'unchanged craft set must not evict the plan caches'
 
 
 # ─── #446 — explicit privacy override (private/shared) ──────────────────────
@@ -737,6 +817,7 @@ class TestEditPrivacyOverride:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
     def test_opt_out_forces_shareable_build_private(self, monkeypatch):
         app = _make_app()
@@ -752,18 +833,19 @@ class TestEditPrivacyOverride:
         profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/joe_s_garage/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'private': '1', 'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'joe_s_garage', profile)
 
-        # sharing_opt_out lands TRUE in the locale_profiles upsert (index 4).
+        # sharing_opt_out lands TRUE in the locale_profiles upsert (index 3 after
+        # #941 dropped the free-text `city` column).
         upsert = [
             params for sql, params in conn.calls
             if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
         ]
         assert upsert, 'expected locale_profiles upsert with sharing_opt_out'
-        assert upsert[0][4] is True
+        assert upsert[0][3] is True
 
         # The built gym_profiles row is private despite the shareable category.
         gym_insert = [
@@ -788,7 +870,7 @@ class TestEditPrivacyOverride:
         profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/joe_s_gym/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'joe_s_gym', profile)
@@ -797,7 +879,7 @@ class TestEditPrivacyOverride:
             params for sql, params in conn.calls
             if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
         ]
-        assert upsert[0][4] is False
+        assert upsert[0][3] is False
         gym_insert = [
             params for sql, params in conn.calls
             if 'INSERT INTO gym_profiles' in sql

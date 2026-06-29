@@ -1,0 +1,51 @@
+{# Per-day volume editor (#889). A reduced_volume event window scales EVERY
+   covered day by its single % — which over-reduces a longer trip where only one
+   day is light. This page dials each covered DATE independently (100% = a
+   normal, unreduced day). Reached from the windows list; strict CSP forbids a
+   JS-generated grid, so the per-day rows are server-rendered. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Per-day volume — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> ·
+  <a href="{{ url_for('profile.event_windows') }}">Event windows</a> ·
+  <b>Per-day volume</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Training · event windows</p>
+    <h1 class="page-title">Per-day volume.</h1>
+    <p class="page-sub">This reduced-volume window runs
+      <b class="mono">{{ window.start_date.isoformat() }} → {{ window.end_date.isoformat() }}</b>.
+      Set how light <b>each</b> day is — leave a day at <b>100%</b> for a normal,
+      unreduced day, so one light travel day in a longer trip doesn't scale the rest.</p>
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card card-pad">
+    <p class="eyebrow">● Day-by-day levels</p>
+    <form method="post"
+          action="{{ url_for('profile.save_event_window_volume_days', window_id=window.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      <div class="pf-grid pf-windows">
+        {% for day in days %}
+        <label class="field"><span class="lbl mono">{{ day.iso }}</span>
+          <select name="vol_{{ day.iso }}" class="form-control form-control-sm">
+            {% for c in choices %}
+            <option value="{{ c }}"{{ ' selected' if c == day.pct else '' }}>{{ c }}%{% if c == 100 %} — normal{% endif %}</option>
+            {% endfor %}
+          </select></label>
+        {% endfor %}
+      </div>
+      <div class="pf-save">
+        <span class="pf-saved mono">100% = a normal day (no reduction) · the plan scales each day by its own level</span>
+        <button type="submit" class="btn btn-primary">Save per-day levels</button>
+      </div>
+    </form>
+  </div>
+
+  <p class="acct-hint"><a href="{{ url_for('profile.event_windows', return_to=return_to or none) }}">← Back to event windows</a></p>
+</div>
+{% endblock %}

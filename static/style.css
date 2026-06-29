@@ -1266,6 +1266,8 @@ body.bulk-mode { padding-bottom: 80px; }
   margin: 28px 0 6px; padding-bottom: 8px; border-bottom: 1px solid var(--hairline);
 }
 .app .day-group { margin-top: 16px; }
+/* Clear the 56px sticky topbar when a day/session is reached via deep-link (#956). */
+.app .day-group, .app .sess-card { scroll-margin-top: 72px; }
 .app .day-group .day-label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
 .app .day-group .day-label .dow { font-family: var(--mono); font-size: 11px; color: var(--fg-3); }
 .app .sess-card { padding: 14px 16px; }
@@ -1775,6 +1777,10 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .nf-meta { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
 .app .nf-cta { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .app .nf-dismiss { margin: 0; flex-shrink: 0; }
+.app .nf-row-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; align-items: flex-end; }
+.app .nf-mark { margin: 0; }
+.app .nf-readall { margin: 0; display: inline-block; }
+.app .nf-unread .nf-msg { font-weight: 700; }
 .app .nf-list-muted .nf-msg { font-weight: 500; color: var(--fg-2); }
 .app .nf-earlier { margin-top: 6px; }
 .app .nf-earlier .eyebrow { margin-bottom: 8px; }
@@ -1783,11 +1789,26 @@ body.bulk-mode { padding-bottom: 80px; }
 
 @media (max-width: 859.98px) {
   .app .nf-row { flex-wrap: wrap; }
-  .app .nf-dismiss { width: 100%; margin-top: 8px; }
+  .app .nf-row-actions { flex-direction: row; width: 100%; margin-top: 8px; justify-content: flex-end; }
 }
 
-/* §22 Notification settings (read-only) */
+/* §22 Notification settings — per-type × per-channel delivery matrix (#963) */
 .app .ns-wrap { max-width: 760px; }
+.app .ns-matrix-scroll { overflow-x: auto; margin-top: 12px; }
+.app .ns-matrix { width: 100%; border-collapse: collapse; }
+.app .ns-matrix th, .app .ns-matrix td { text-align: left; padding: 12px 10px; vertical-align: top; border-top: 1px solid var(--hairline-2); }
+.app .ns-matrix thead th { border-top: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+.app .ns-matrix-ch { white-space: nowrap; }
+.app .ns-matrix-cell { white-space: nowrap; }
+.app .ns-matrix-type { min-width: 200px; }
+.app .ns-row-label { display: block; font-size: 14px; font-weight: 600; }
+.app .ns-row-desc { display: block; font-size: 12px; color: var(--fg-3); margin-top: 3px; line-height: 1.4; font-weight: 400; }
+.app .ns-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+.app .ns-toggle-text { color: var(--fg-2); }
+.app .ns-toggle-pending { opacity: 0.78; }
+.app .ns-na { color: var(--fg-3); }
+.app .ns-actions { margin-top: 16px; }
+/* §22 channel notes */
 .app .ns-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
 .app .ns-channel { border: 1px solid var(--hairline-2); border-radius: 10px; padding: 14px; }
 .app .ns-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -1872,8 +1893,10 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .loc-form { display: flex; flex-direction: column; gap: 18px; }
 .app .loc-eq-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
 .app .loc-eq-cat { border: 0; margin: 0; padding: 0; min-width: 0; }
-.app .loc-eq-cat legend, .app .loc-terrain legend { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); margin-bottom: 8px; float: none; width: auto; padding: 0; }
-.app .loc-terrain { border: 0; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--hairline-2); }
+.app .loc-eq-cat legend, .app .loc-terrain legend, .app .loc-craft > legend { font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); margin-bottom: 8px; float: none; width: auto; padding: 0; }
+/* #953 — craft kept here folded into the equipment form; mirror the terrain
+   section's top-hairline divider so it reads as a peer block, not a boxed fieldset. */
+.app .loc-terrain, .app .loc-craft { border: 0; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--hairline-2); }
 .app .loc-terrain-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 18px; }
 .app .loc-hint { font-size: 12px; color: var(--fg-3); margin: 6px 0 0; line-height: 1.5; }
 .app .loc-hint a { color: var(--accent); }

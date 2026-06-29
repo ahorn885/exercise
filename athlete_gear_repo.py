@@ -217,6 +217,44 @@ def get_owned_gear_toggles(db, user_id: int) -> list[str]:
     ]
 
 
+# #884 slice 4b PR-3 — the `gear_id → sport_specific_gear_toggles.toggle_name`
+# bridge (design v3 §5.5 is the source). The two keyspaces differ — the unified
+# store keys on stable snake_case `gear_id` (GEAR_REGISTRY) while Layer 2C's
+# `cluster_gear_toggle_states` / `toggle_defs` key on the catalog's free-text
+# `toggle_name` — so the 2C gear-toggle gate can't read `athlete_gear` without
+# this map. Covers exactly the discipline-unlocking toggles that have a live
+# `sport_specific_gear_toggles` row; `rollerskis` is intentionally absent (new
+# gear, Decision 10 — no toggle row; its D-028 feasibility is the cascade's job
+# via `gear_discipline_aliases`, and it gates nothing in 2C). Pinned by the repo
+# test against the live catalog's toggle_name strings.
+GEAR_TOGGLE_NAMES: dict[str, str] = {
+    "classic_xc_ski": "Classic XC ski setup",
+    "skate_xc_ski": "Skate XC ski setup",
+    "snowshoes": "Snowshoeing setup",
+    "climbing_gear": "Climbing gear",
+    "mountaineering": "Mountaineering",
+    "skimo_at": "Skimo / AT setup",
+}
+
+
+def owned_gear_toggle_states(owned_gear_ids) -> dict[str, bool]:
+    """Map the athlete's owned gear_ids → `{toggle_name: True}` for Layer 2C's
+    `cluster_gear_toggle_states` (#884 slice 4b PR-3 — closes the last #298
+    consumer).
+
+    Pure derivation off `Layer1Payload.owned_gear` (no new query — rides the
+    layer1_hash, like the cascade's gear read). Only owned gear-toggle gear_ids
+    bridged by `GEAR_TOGGLE_NAMES` contribute a key; the 2C consumer treats every
+    absent toggle as OFF, so unowned/unbridged gear (incl. rollerskis, bike/paddle
+    crafts) is correctly omitted. Owned gear is always ON (the store has no
+    explicit-False rows — an unchecked box is simply not stored)."""
+    return {
+        GEAR_TOGGLE_NAMES[gid]: True
+        for gid in owned_gear_ids
+        if gid in GEAR_TOGGLE_NAMES
+    }
+
+
 def parse_gear_toggle_form(form) -> dict[str, str]:
     """Coerce a POST form into `{gear_id: 'own'}` for the checked gear toggles.
 

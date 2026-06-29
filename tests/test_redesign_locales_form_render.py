@@ -39,9 +39,9 @@ def _form_ctx(**kw):
     base = dict(
         mode='legacy', locale='home',
         profile={'locale_name': None, 'chain_name': None, 'category': None,
-                 'notes': '', 'city': ''},
+                 'notes': ''},
         equipment_categories=_EQUIP, active={'db'},
-        notes='', city='', is_manual=False, is_mapbox_anchored=False,
+        notes='', is_manual=False, is_mapbox_anchored=False,
         is_deletable=False, display_address='',
         privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
         terrain_choices=_TERRAIN, active_terrain_ids={'trail'},
@@ -61,7 +61,7 @@ def test_form_legacy_renders():
     # Field names preserved for the POST handler.
     assert 'name="equipment"' in html
     assert 'name="locale_terrain_ids"' in html
-    assert 'name="city"' in html          # legacy-only field present
+    assert 'name="city"' not in html      # #941 — free-text city field retired
     assert 'name="notes"' in html
     assert 'Dumbbells' in html and 'Trail' in html
     # Terrain `notes` render as a hover tooltip on the label (issue #444).
@@ -75,7 +75,7 @@ def test_form_shared_inherit_shows_override_chips():
     html = _render('locales/form.html', **_form_ctx(
         mode='shared_inherit',
         profile={'locale_name': 'Planet Fitness', 'chain_name': 'Planet Fitness',
-                 'category': None, 'notes': '', 'city': ''},
+                 'category': None, 'notes': ''},
         active={'db'}, shared_tags={'bb'}, adds={'db'}, removes=set(),
         shared={'last_confirmed_at': '2026-05-01', 'contribution_count': 3},
         is_mapbox_anchored=True,
@@ -97,15 +97,21 @@ def test_form_deletable_shows_delete():
 
 
 def test_form_renders_craft_kept_here():
-    """WS-H #581 Slice 5 — the (b) standing craft↔locale capture, relocated off the
-    event-windows page onto the per-locale edit page (craft kept at a place is a
-    property of the place), posting to the locale-scoped `save_locale_crafts`."""
+    """#953 — the (b) standing craft↔locale capture (WS-H #581 Slice 5) is now
+    folded into the single equipment editor form: one Save covers equipment +
+    craft, no separate `save_locale_crafts` round-trip that bounced out. The
+    craft checkboxes render inside the main form, not a second one."""
     html = _render('locales/form.html', **_form_ctx())
     assert 'Craft you keep here' in html
     assert 'name="craft_slug"' in html
-    assert '/locales/home/crafts' in html          # locale-scoped save route
     assert 'Mountain bike' in html and 'Kayak' in html
     assert 'id="kept_kayak"' in html               # crafts_here drives checked state
+    # The craft surface no longer posts to its own route — it shares the
+    # unified location save (#953).
+    assert '/locales/home/crafts' not in html
+    # Exactly one form carries the toggles + save (plus the separate delete
+    # form when deletable); there is no second craft-only save button.
+    assert 'Save craft kept here' not in html
     # Hidden when no catalog (e.g. pre-Slice-5 callers) — guarded render.
     bare = _render('locales/form.html', **_form_ctx(craft_catalog=None))
     assert 'Craft you keep here' not in bare
@@ -115,22 +121,10 @@ def test_form_renders_craft_kept_here():
 # ─── locales/new.html ───────────────────────────────────────────────────
 
 def _new_ctx(**kw):
-    base = dict(manual=False, query='', acked=True, results=[], error=None,
-                manual_categories=[('home', 'Home gym')],
-                residential_categories=['home_gym', 'other_residence'],
+    base = dict(query='', acked=True, results=[], error=None,
                 disclosure_version='v1', upgrade_slug='', upgrade_locale=None)
     base.update(kw)
     return base
-
-
-def test_new_manual_renders():
-    html = _render('locales/new.html', **_new_ctx(manual=True))
-    assert 'app-shell' in html
-    assert 'name="locale_name"' in html
-    assert 'name="address"' in html
-    assert 'name="category"' in html
-    assert '/locales/new/manual' in html
-    assert 'style="' not in html
 
 
 def test_new_disclosure_gate_renders():
@@ -138,6 +132,9 @@ def test_new_disclosure_gate_renders():
     assert 'Place lookup uses Mapbox' in html
     assert '/locales/new/acknowledge' in html
     assert 'Acknowledge' in html
+    # #941 — the manual-entry escape hatch is retired; every location is
+    # Mapbox-anchored, so the gate no longer offers a manual fallback.
+    assert 'manual' not in html.lower()
     assert 'style="' not in html
 
 
@@ -149,6 +146,8 @@ def test_new_search_results_render():
     assert 'Planet Fitness' in html
     assert 'name="mapbox_id"' in html          # per-result save form
     assert 'Save this' in html
+    # No manual-entry path anywhere in the add-location flow (#941).
+    assert '/locales/new/manual' not in html
     assert 'style="' not in html and 'onclick=' not in html
 
 
@@ -301,6 +300,7 @@ def _ew(start, end, override_type, **kw):
         away_locale=kw.get('away_locale'),
         brought_craft=kw.get('brought_craft', ()),
         volume_pct=kw.get('volume_pct'),
+        volume_by_date=kw.get('volume_by_date', {}),
         notes=kw.get('notes', ''),
     )
 
@@ -427,3 +427,73 @@ def test_event_windows_list_renders_volume_labels():
                    draft=None)
     assert 'Reduced volume' in html and '50%' in html
     assert 'No training' in html
+    # #889 — a single-day window renders one date + a "(1 day)" tag, never a
+    # "start → end" range that reads as multi-day.
+    assert '2026-07-03 <span class="dim">(1 day)</span>' in html
+    assert '2026-07-03 → 2026-07-03' not in html
+    # The multi-day no_training window still renders the arrow range.
+    assert '2026-07-10 → 2026-07-11' in html
+
+
+def test_event_windows_form_makes_single_day_ergonomic(monkeypatch):
+    """#889 — the end date is optional (blank = single day) and the form spells
+    out that a volume % blankets every covered day, so one reduced day inside a
+    longer trip is captured as its own one-day window."""
+    html = _render('profile/event_windows.html',
+                   windows=[], locales=['home'],
+                   override_types=('indoor_only', 'locale_unavailable', 'away',
+                                   'reduced_volume', 'no_training'),
+                   craft_catalog={}, return_to=None, return_to_label=None,
+                   draft=None)
+    # The end-date input is no longer `required` (blank means a single day).
+    end_field = html[html.index('name="end_date"'):]
+    end_input_end = end_field.index('>')
+    assert 'required' not in end_field[:end_input_end]
+    assert 'leave blank for a single day' in html
+    # The reduced-volume control names its per-day scope so the athlete knows to
+    # split a single reduced day out of a longer trip.
+    assert 'Applies to' in html and 'every' in html
+    assert 'one-day window' in html
+    assert 'style="' not in html and 'onclick=' not in html  # strict CSP
+
+
+def test_event_windows_list_links_to_per_day_editor_for_multiday_reduced():
+    """#889 — a MULTI-day reduced_volume window offers a 'Per-day levels' link to
+    the per-date editor; a single-day one doesn't (nothing to spread)."""
+    html = _render('profile/event_windows.html',
+                   windows=[
+                       _ew('2026-07-03', '2026-07-07', 'reduced_volume',
+                           id=1, volume_pct=0.5),
+                       _ew('2026-07-10', '2026-07-10', 'reduced_volume',
+                           id=2, volume_pct=0.5),
+                   ],
+                   locales=['home'],
+                   override_types=('reduced_volume', 'no_training'),
+                   craft_catalog={}, return_to=None, return_to_label=None,
+                   draft=None)
+    assert 'Per-day levels' in html
+    assert '/event-windows/1/volume-days' in html
+    assert '/event-windows/2/volume-days' not in html  # single day → no link
+
+
+def test_event_window_volume_days_editor_renders_per_day_selects():
+    """#889 — the per-day editor renders one percent select per covered date,
+    pre-selected from the schedule, offering 100% as a normal (unreduced) day."""
+    win = _ew('2026-07-03', '2026-07-05', 'reduced_volume', id=3, volume_pct=0.5)
+    days = [
+        {'iso': '2026-07-03', 'pct': 25},
+        {'iso': '2026-07-04', 'pct': 100},
+        {'iso': '2026-07-05', 'pct': 50},
+    ]
+    html = _render('profile/event_window_volume_days.html',
+                   window=win, days=days, default_pct=50,
+                   choices=(25, 50, 75, 100), return_to=None)
+    assert 'app-shell' in html
+    assert 'name="vol_2026-07-03"' in html
+    assert 'name="vol_2026-07-04"' in html
+    assert 'name="vol_2026-07-05"' in html
+    # Saved levels round-trip; 100% is labelled the normal day.
+    assert '<option value="25" selected>25%</option>' in html
+    assert '<option value="100" selected>100% — normal</option>' in html
+    assert 'action="/profile/event-windows/3/volume-days"' in html
+    assert 'style="' not in html and 'onclick=' not in html  # strict CSP

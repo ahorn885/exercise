@@ -2454,6 +2454,34 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # #941 — retire the free-text `city` column. Weather / clothing resolution
+    # moved off the typed city onto the Mapbox-anchored `lat`/`lng` already
+    # captured on every geocoded locale (away event-window destination wins,
+    # else preferred home). The typed city was the source of the wrong-location
+    # bug: travel locales left it blank and the away window silently fell
+    # through to home weather. Manual-entry addresses now ride in `place_payload`
+    # (Mapbox-feature shape) so the list/form still render them.
+    #
+    # Backfill first (idempotent, runs before the DROP): a manual-entry row's
+    # only address was its typed `city`; lift it into `place_payload` so the
+    # address still renders after the column is gone. Guarded on the column
+    # existing so a cold start that never had `city` skips it cleanly.
+    """DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'locale_profiles' AND column_name = 'city'
+        ) THEN
+            UPDATE locale_profiles
+               SET place_payload = json_build_object(
+                       'properties', json_build_object('full_address', city)
+                   )::text
+             WHERE manual_entry = TRUE
+               AND COALESCE(city, '') <> ''
+               AND (place_payload IS NULL OR place_payload = '');
+        END IF;
+    END $$;""",
+    "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS city",
     # ── Vercel Log Drain sink (issue #350) ───────────────────────────────
     # Hard-kill backstop the plan-diag endpoint structurally can't be: a
     # gateway 504 / OOM kills the lambda before any `except` runs, so
@@ -2557,6 +2585,13 @@ _PG_MIGRATIONS = [
     # 'no_training' (zeroed day, no column); volume_pct is NULL on every other
     # type. Closed-enum + range re-asserted in athlete_event_windows_repo.py.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_pct NUMERIC",
+    # Event Windows per-day volume (#889) — volume_by_date: a JSON object
+    # {ISO date: retained fraction} layering per-DATE levels onto a reduced_volume
+    # window, so one reduced travel day inside a longer window doesn't scale the
+    # rest. Stored as TEXT (json.dumps, driver-agnostic — mirrors the brought_craft
+    # CSV pattern); NULL → the window-wide volume_pct applies to every covered day
+    # (the pre-#889 behaviour). Dates/range validated in athlete_event_windows_repo.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_by_date TEXT",
     # (b) craft<->locale: a standing "this craft is kept at this locale"
     # association (a bike at the parents' place). Many-to-many, no per-row
     # attribute → a thin join table; athlete-scoped; locale app-validated against
@@ -2760,6 +2795,31 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
     "ON plan_versions (user_id) "
     "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
+    # ── Notification delivery preferences (#963) ─────────────────────────
+    # Per-(user × notification_type × channel) opt-in overrides behind the §22
+    # settings matrix. Registry (`notification_prefs.py`) owns the defaults; a
+    # row here is a user's deviation from one. Absent row ⇒ resolve to default,
+    # so a new user needs no seeding. `channel` includes 'push' even though it's
+    # undeliverable until a native app ships — the preference is stored now and
+    # delivery lands later (#963 scope: "wire the preference now, deliver
+    # later"). Composite PK is the upsert conflict target
+    # (notification_preferences_repo.set_pref). PG-only — SQLite dev has no such
+    # table; the repo's hot-path reads fail open to defaults so its absence is
+    # deploy-safe.
+    """CREATE TABLE IF NOT EXISTS notification_preferences (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        notification_type TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, notification_type, channel)
+    )""",
+    # Read/unread state for the §21 notifications feed (#963). Orthogonal to
+    # `dismissed_at` (dismiss = resolved/archived; read = merely seen): an
+    # undismissed nudge can be unread (read_at NULL) or read. Nullable; legacy
+    # rows read as unread until stamped. The feed's "Mark read"/"Mark all read"
+    # actions and unread styling key off it.
+    "ALTER TABLE account_nudges ADD COLUMN IF NOT EXISTS read_at TIMESTAMP",
     # ── Layer 3D HITL gate (#213, Slice 1) ───────────────────────────────
     # The 3D gate aggregates the human-review items the upstream nodes already
     # emit (2A/2D/2E/3B) and parks a plan at `needs_review` instead of advancing

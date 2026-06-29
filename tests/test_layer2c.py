@@ -865,6 +865,35 @@ class TestCoachingFlags:
         assert f.metadata == {"toggle_name": "Climbing — roped"}
         assert "Climbing — roped" in f.message
 
+    def test_toggle_on_suppresses_gated_discipline_flag(self):
+        """#884 slice 4b PR-3 — when the athlete OWNS the gear (the orchestrator
+        now feeds `{toggle_name: True}` from `athlete_gear` instead of `{}`), the
+        spurious 'toggle off for discipline' flag is suppressed for the
+        disciplines it gates — keeping 2C consistent with the cascade's gear
+        gating (PR-2)."""
+        conn = _FakeConn()
+        conn.queue(
+            _toggle_row(
+                "Climbing gear",
+                paired_equipment_categories=[],
+                gated_discipline_ids=["D-012"],
+            ),
+        )
+        conn.queue(_sdb_row("D-012", "Rock Climbing", "Climbing"))
+        conn.queue()
+        payload = q_layer2c_equipment_mapper_payload(
+            conn,
+            locale_id="home",
+            locale_equipment_pool=["Barbell"],
+            cluster_locale_ids=["home"],
+            cluster_gear_toggle_states={"Climbing gear": True},
+            included_discipline_ids=["D-012"],
+            etl_version_set=_DEFAULT_ETL,
+        )
+        assert not any(
+            f.flag_type == "toggle_off_for_discipline" for f in payload.coaching_flags
+        )
+
     def test_toggle_off_flag_skipped_when_discipline_not_included(self):
         """The flag only fires for disciplines actually in
         `included_discipline_ids`."""

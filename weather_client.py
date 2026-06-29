@@ -43,12 +43,30 @@ class ExpectedConditions:
     sample_days: int
     sample_years: int
 
-    def summary_line(self) -> str:
+    def summary_line(self, unit_pref: str | None = None) -> str:
+        """Athlete-facing one-liner, rendered in the athlete's temperature unit.
+
+        Canonical storage is °C (Open-Meteo's native unit). Imperial athletes
+        see °F so the weather display honors the same unit toggle as the rest
+        of the app (issue #946). `unit_pref` of None means canonical metric —
+        the LLM-prompt caller reasons in °C and is unaffected; only an explicit
+        athlete preference flips the rendering.
+        """
+        from units import IMPERIAL, c_to_f, normalize_unit_preference
+
+        imperial = (
+            unit_pref is not None
+            and normalize_unit_preference(unit_pref) == IMPERIAL
+        )
+        if imperial:
+            high, low, unit = c_to_f(self.temp_max_c), c_to_f(self.temp_min_c), "°F"
+        else:
+            high, low, unit = self.temp_max_c, self.temp_min_c, "°C"
         return (
             f"Climate normals near the race date "
             f"({self.sample_years}-yr historical, n={self.sample_days} days): "
-            f"typical high ~{self.temp_max_c:.0f}°C, "
-            f"low ~{self.temp_min_c:.0f}°C, "
+            f"typical high ~{high:.0f}{unit}, "
+            f"low ~{low:.0f}{unit}, "
             f"~{self.wet_day_probability_pct}% of days saw measurable precipitation."
         )
 
