@@ -355,15 +355,25 @@ def index():
 
     weather = _get_weather(db)
 
-    # Cardio sessions in the last 7 days with no conditions log entry.
-    # canonical_cardio_feed (#196 Slice 4b): a cross-source ride prompts for
-    # conditions once (against the feed's primary copy id), not N times; the
-    # conditions_log join still resolves on that primary copy's id.
+    # Cardio sessions in the last 7 days with no conditions log entry (#955):
+    # once conditions are logged for the event, the "Log conditions" nudge is
+    # suppressed. canonical_cardio_feed (#196 Slice 4b) shows a cross-source ride
+    # once (its primary copy id), so the suppression must resolve across the whole
+    # cluster: conditions linked to ANY copy of the ride (e.g. a non-primary
+    # provider copy chosen from the conditions-form dropdown) count as conditioned
+    # for that event, not just the primary copy id the nudge links to.
     unconditioned_cardio = db.execute(
         '''SELECT cl.id, cl.date, cl.activity, cl.activity_name, cl.duration_min
            FROM canonical_cardio_feed cl
-           LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id
-           WHERE cl.user_id = ? AND cl.date >= ? AND cond.id IS NULL
+           WHERE cl.user_id = ? AND cl.date >= ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM conditions_log cond
+                 LEFT JOIN cardio_log m ON m.id = cond.cardio_log_id
+                 WHERE cond.user_id = cl.user_id
+                   AND (cond.cardio_log_id = cl.id
+                        OR (cl.cluster_id IS NOT NULL
+                            AND m.cluster_id = cl.cluster_id))
+             )
            ORDER BY cl.date DESC''',
         (uid, week_ago)
     ).fetchall()

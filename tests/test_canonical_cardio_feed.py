@@ -136,7 +136,11 @@ class TestDisplayConsumersReadFeed:
         # cardio_total stat + recent-cardio strip + unconditioned-cardio nudge
         assert src.count("FROM canonical_cardio_feed") >= 3
         assert "SELECT COUNT(*) FROM canonical_cardio_feed" in src
-        assert "LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id" in src
+        # #955: the unconditioned-cardio nudge suppresses once conditions are
+        # logged for the event — resolved across the whole cluster (any copy),
+        # not just the feed's primary copy id.
+        assert "FROM conditions_log cond" in src
+        assert "m.cluster_id = cl.cluster_id" in src
         # the raw cardio_log reads for these three surfaces are gone
         assert "SELECT COUNT(*) FROM cardio_log WHERE user_id = ?" not in src
         assert "FROM cardio_log cl\n" not in src
