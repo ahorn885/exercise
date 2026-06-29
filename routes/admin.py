@@ -24,8 +24,11 @@ from evidence_repo import (
     resolve_curation_flag,
 )
 from routes.locales import (
+    _delete_photo_blob,
     _list_pending_profile_edits,
+    _list_pending_profile_photos,
     _review_profile_edit,
+    _review_profile_photo,
 )
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
@@ -824,3 +827,62 @@ def review_gym_profile_edit(gym_profile_id):
         return redirect(url_for('admin.gym_profile_edits'))
     flash(f'Profile #{gym_profile_id} correction {action}d.', 'success')
     return redirect(url_for('admin.gym_profile_edits'))
+
+
+# ─── #971 Slice 2: crowd-sourced gym-profile photo review ────────────────────
+
+
+@bp.route('/gym-profile-photos')
+def gym_profile_photos():
+    """Review queue for athlete-uploaded photos of shared gym/hotel profiles
+    (#971 Slice 2). Each upload is pending until an operator approves it (then
+    every inheritor of that profile sees it) or rejects it (the photo + its blob
+    are deleted). Admin-only."""
+    _require_admin()
+    db = get_db()
+    return render_template(
+        'admin/gym_profile_photos.html',
+        pending=_list_pending_profile_photos(db),
+    )
+
+
+@bp.route('/gym-profile-photos/<int:photo_id>/review', methods=['POST'])
+def review_gym_profile_photo(photo_id):
+    """Approve or reject one pending profile photo (#971 Slice 2).
+
+    `action`:
+    - `approve` — make the photo visible to every athlete at that location.
+    - `reject`  — delete the photo row and its blob.
+
+    Audited in the same transaction as the DB mutation (mirrors
+    `review_gym_profile_edit`); the blob delete on reject runs after commit
+    (best-effort)."""
+    _require_admin()
+    db = get_db()
+    action = (request.form.get('action') or '').strip()
+    if action not in ('approve', 'reject'):
+        flash('Unknown action.', 'danger')
+        return redirect(url_for('admin.gym_profile_photos'))
+    try:
+        reviewed = _review_profile_photo(
+            db, photo_id, approve=(action == 'approve'),
+            reviewer_uid=current_user_id())
+        if reviewed is None:
+            flash('That photo is no longer pending.', 'warning')
+            return redirect(url_for('admin.gym_profile_photos'))
+        db.execute(
+            'INSERT INTO admin_audit '
+            '(actor_user_id, action, details) VALUES (?,?,?)',
+            (current_user_id(), 'review_gym_profile_photo',
+             f"{action} photo {photo_id} on profile "
+             f"{reviewed.get('gym_profile_id')}"),
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — surface the fault to the operator
+        db.rollback()
+        flash(f'Could not review photo: {e}', 'danger')
+        return redirect(url_for('admin.gym_profile_photos'))
+    if action == 'reject':
+        _delete_photo_blob(reviewed.get('blob_url'))
+    flash(f'Photo #{photo_id} {action}d.', 'success')
+    return redirect(url_for('admin.gym_profile_photos'))

@@ -1,0 +1,60 @@
+{# #971 Slice 2 — Admin · crowd-sourced gym/hotel profile photo review.
+   Athlete-uploaded photos are pending until approved here: approve makes the
+   photo visible to every athlete at that location; reject deletes it (row +
+   blob). Mirrors the equipment-correction queue (gym_profile_edits.html). #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Gym photo reviews — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>Gym photo reviews</b>{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.gym_profile_edits') }}">Gym profile reviews</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.dashboard') }}">Back to users</a>
+{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · gym photo reviews</p>
+    <h1 class="page-title">Crowd-sourced location photos.</h1>
+    <p class="page-sub">
+      Athletes upload photos of a shared gym/hotel location. <b>Approve</b>
+      makes a photo visible to every athlete at that location; <b>reject</b>
+      deletes it. {{ pending|length }} photo{{ '' if pending|length == 1 else 's' }}
+      awaiting review.
+    </p>
+  </div>
+</div>
+
+{% if pending %}
+<div class="loc-photo-strip adm-photo-queue">
+  {% for ph in pending %}
+  <figure class="loc-photo">
+    <img src="{{ ph.url }}" alt="Pending location photo" loading="lazy">
+    <figcaption>
+      <b>{{ ph.display_name or 'Profile #' ~ ph.gym_profile_id }}</b>
+      <span class="chip solid">{{ (ph.category or 'uncategorized').replace('_', ' ') }}</span>
+      <br>
+      <span class="dim mono">by
+        <a class="link" href="{{ url_for('admin.user_detail', user_id=ph.uploaded_by_user_id) }}">User #{{ ph.uploaded_by_user_id }}</a>
+        · {{ (ph.created_at|string)[:19] }}</span>
+    </figcaption>
+    <div class="loc-photo-actions">
+      <form method="post" action="{{ url_for('admin.review_gym_profile_photo', photo_id=ph.id) }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="approve">
+        <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+      </form>
+      <form method="post" action="{{ url_for('admin.review_gym_profile_photo', photo_id=ph.id) }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="reject">
+        <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
+      </form>
+    </div>
+  </figure>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card card-pad adm-none-card">No photos awaiting review. 🎉</div>
+{% endif %}
+{% endblock %}
