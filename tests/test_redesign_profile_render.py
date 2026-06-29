@@ -135,8 +135,10 @@ def test_profile_gear_skills_tab(monkeypatch):
     html = resp.get_data(as_text=True)
     assert 'Race-day skills' in html
     assert '/profile/skills' in html        # skills save action
-    assert 'Gear you own' in html
-    assert '/profile/crafts' in html        # owned-craft save action
+    # #884 slice 6a — the unified "Your gear" surface replaces the two pickers.
+    assert 'Your gear' in html
+    assert '/profile/gear' in html          # consolidated gear save action
+    assert 'Have access' in html            # the own/have-access control
     assert 'Pack-load experience' in html
     assert '/profile/pack-load/add' in html  # pack-load add action
     assert 'style="' not in html

@@ -53,15 +53,16 @@ from athlete_discipline_weighting_repo import (
 from athlete_crafts_repo import (
     CraftSelectionError,
     evict_layer1_on_crafts_change,
-    get_athlete_crafts,
     load_craft_catalog,
     replace_athlete_crafts,
 )
 from athlete_gear_repo import (
     GearSelectionError,
     evict_layer1_on_gear_change,
-    get_owned_gear_toggles,
-    load_gear_toggle_catalog,
+    get_gear_access_map,
+    load_gear_registry,
+    load_gear_registry_grouped,
+    parse_gear_registry_form,
     parse_gear_toggle_form,
     replace_owned_gear_for_kinds,
     _GEAR_TOGGLE_KINDS,
@@ -482,17 +483,12 @@ def edit():
     discipline_catalog = load_discipline_catalog(db)
     discipline_weighting = get_discipline_weighting(db, uid)
 
-    # 2c.2b (#540) — owned-craft picker (Athlete tab). Catalog = the closed
-    # bike/paddle craft enums; current = the athlete's saved crafts.
-    craft_catalog = load_craft_catalog()
-    athlete_crafts = get_athlete_crafts(db, uid)
-
-    # #884 slice 4b — owned gear-toggle picker (Gear & skills tab). Catalog = the
-    # discipline-unlocking ski/snow/climbing/alpine slugs; current = the athlete's
-    # owned toggles. Writes `athlete_gear` (un-starves the cascade's gear gate,
-    # #298); nothing reads the toggle kinds until the cascade extension lands.
-    gear_toggle_catalog = load_gear_toggle_catalog()
-    owned_gear_toggles = get_owned_gear_toggles(db, uid)
+    # #884 slice 6a — the unified "Your gear" picker (Gear & skills tab). One
+    # grouped-by-group_kind surface folding the owned-craft + gear-toggle pickers,
+    # each row own/have-access. `gear_registry` is the grouped catalog;
+    # `gear_access` is the athlete's current `{gear_id: access}` (checked state).
+    gear_registry = load_gear_registry_grouped()
+    gear_access = get_gear_access_map(db, uid)
 
     # #469 — body weight is stored canonical kg; render it in the athlete's
     # chosen display unit so the form field round-trips cleanly. `profile` is
@@ -576,10 +572,8 @@ def edit():
         skill_toggle_states=skill_toggle_states,
         discipline_catalog=discipline_catalog,
         discipline_weighting=discipline_weighting,
-        craft_catalog=craft_catalog,
-        athlete_crafts=athlete_crafts,
-        gear_toggle_catalog=gear_toggle_catalog,
-        owned_gear_toggles=owned_gear_toggles,
+        gear_registry=gear_registry,
+        gear_access=gear_access,
         # Used by the template to render an "Expired" badge without
         # round-tripping the timestamp through a Jinja-only comparison.
         now_iso=_dt.utcnow().isoformat(timespec='seconds'),
@@ -758,6 +752,47 @@ def save_gear_toggles():
     evict_layer1_on_gear_change(db, uid)
     # Rule #15 — the decision this path made (which toggles the athlete now owns).
     print(f"[gear-toggle-capture] uid={uid} owned={sorted(owned)}")
+    flash('Gear saved.', 'success')
+    return redirect(url_for('profile.edit', tab='gear'))
+
+
+@bp.route('/gear', methods=['POST'])
+def save_gear():
+    """Persist the unified "Your gear" form (Gear & skills tab) — #884 slice 6a.
+
+    One grouped-by-group_kind surface replacing the separate owned-craft +
+    gear-toggle forms. Each row carries an own/have-access value; the consolidated
+    write splits by kind: crafts (bike/paddle) go through `replace_athlete_crafts`
+    (baseline CSVs hold the full available set + per-craft access syncs to
+    `athlete_gear`), gear toggles (ski/snow/climb/alpine) through
+    `replace_owned_gear_for_kinds`. Both replace-all within their kinds (an
+    unselected row = not owned); swim gear isn't in the registry so it's preserved.
+    Both writes invalidate Layer 1 — one eviction covers it.
+    """
+    db = get_db()
+    uid = current_user_id()
+    chosen = parse_gear_registry_form(request.form)  # {gear_id: access}
+    # Classify each chosen gear_id by the registry (authoritative source).
+    by_id = {e['gear_id']: e for e in load_gear_registry()}
+    bikes = [g for g in chosen if by_id[g]['group_kind'] == 'bike']
+    paddles = [g for g in chosen if by_id[g]['group_kind'] == 'paddle']
+    craft_access = {g: a for g, a in chosen.items() if by_id[g]['source'] == 'craft'}
+    toggle_access = {g: a for g, a in chosen.items() if by_id[g]['source'] == 'toggle'}
+    try:
+        replace_athlete_crafts(
+            db, uid, bike_types=bikes, paddle_crafts=paddles,
+            access_by_slug=craft_access,
+        )
+        replace_owned_gear_for_kinds(db, uid, toggle_access, _GEAR_TOGGLE_KINDS)
+    except (CraftSelectionError, GearSelectionError) as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('profile.edit', tab='gear'))
+    db.commit()
+    # Crafts feed the baseline CSVs + the unified store; toggles feed owned_gear.
+    # Both are Layer-1 inputs → one Layer-1 eviction covers the whole save.
+    evict_layer1_on_gear_change(db, uid)
+    # Rule #15 — the decision this path made (the athlete's gear + access).
+    print(f"[your-gear-capture] uid={uid} chosen={dict(sorted(chosen.items()))}")
     flash('Gear saved.', 'success')
     return redirect(url_for('profile.edit', tab='gear'))
 
