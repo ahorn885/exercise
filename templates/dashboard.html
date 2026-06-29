@@ -380,8 +380,8 @@
             <tr>
               <td class="mono dim num">{{ e.date }}</td>
               <td class="wk-name">{{ e.activity }}</td>
-              <td class="num">{{ e.duration_min or '—' }}{% if e.duration_min %}m{% endif %}</td>
-              <td class="num">{{ e.distance_mi or '—' }}{% if e.distance_mi %}mi{% endif %}</td>
+              <td class="num">{{ e.duration_min|duration_mmss if e.duration_min else '—' }}</td>
+              <td class="num">{{ e.distance_mi|distance_hundredths if e.distance_mi else '—' }}{% if e.distance_mi %}mi{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
