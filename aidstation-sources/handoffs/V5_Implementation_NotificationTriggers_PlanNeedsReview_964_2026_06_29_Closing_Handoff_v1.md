@@ -3,7 +3,7 @@
 **Branch:** `claude/notification-triggers-staleness-76ptlf` · **PR:** not yet opened (push + bookkeep + wait for Andy's go) · **Issue:** [#964](https://github.com/ahorn885/exercise/issues/964) (type:feature, priority:med, area:notifications) · **Epic:** #259 (notifications subsystem) · **Suite:** full `tests/` **3783 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
 **Context:** Continuation of the #964 thread. The first slice (PR #1006, merged) shipped 3 reminder/staleness triggers + the reconciling cron framework. **Andy chose (AskUserQuestion 2026-06-29) the plan-attention nudge** as the next slice (over race-week-14d / hold-for-#939 / a recurring-mechanism design). This builds the "incomplete plan / plan requiring attention" checklist item.
 
-> **▶ IMMEDIATE NEXT: STAY ON THE #964 THREAD.** The race-week-14d reminder is the next clean reconcile-pattern addition *if Andy greenlights building ahead of #939* (see §5). No schema/DDL in this slice → **no Neon/layer0 apply owed** (rides the existing public-schema cron; `account_nudges` + `plan_versions` are live).
+> **▶ IMMEDIATE NEXT: build the race-week-14d reminder (`race_week_plan_due`).** Andy greenlit building it ahead of #939 (2026-06-29) — see §6 for the full build recipe. It's another reconcile-spec addition riding the existing cron. No schema/DDL in *this* slice → **no Neon/layer0 apply owed** (rides the existing public-schema cron; `account_nudges` + `plan_versions` are live).
 
 ---
 
@@ -47,11 +47,19 @@ No new infrastructure. Added one `{nudge_type, insert, delete, resurface}` entry
 - **Conditions advisory** (rain / freezing / >100°) — overlaps **#289** (Layer-5 conditions advisor).
 - **Race-week-plan reminder (14d out)** / **race-day-plan reminder (7d out)** / **share-with-crew (2–3d before)** — depend on **#939**. **Buildability re-checked this session:** only the **14d race-week** reminder is buildable today — `race_events` (DATE `event_date`, `is_target_event`) + `race_week_briefs` both exist, so the trigger is "target race 14d out, no brief yet," cleared on brief-gen or race-pass, a pure reconcile-spec addition. **`race_day_plan_due` (7d) is NOT buildable** — there is no race-day-plan artifact or generator yet (only "future race-day plan" placeholder references in `layer5/`); nudging to generate something that doesn't exist is a dead CTA. **`share_with_crew` is NOT buildable** — needs #939's crew-sharing feature.
 
-## 6. NEXT — keep working the #964 thread
+## 6. NEXT — race-week-14d reminder (DECIDED — build it next)
 
-1. **Race-week-14d reminder (`race_week_plan_due`):** the next clean reconcile-pattern addition — register a notification type + a `NUDGE_REGISTRY` entry + a `_STALENESS_RECONCILE` `{insert, delete}` spec keyed on `race_events` (target race, `event_date` within 14d) + a `race_week_briefs` non-existence check. **Decision needed:** build now vs. hold for the #939 race-planning epic. (Skip `race_day_plan_due` + `share_with_crew` — genuinely blocked, see §5.)
-2. **Recurring time-of-day mechanism** — design a recurring-send scheduler (supplements AM/PM, next-day workouts, literal daily log ping). Larger; new infra; its own design doc.
-3. **Conditions advisory** → coordinate with / fold into **#289**.
+**The next session continues the #964 thread by building the race-week-14d reminder.** Andy greenlit building it ahead of the #939 epic (2026-06-29). This is the immediate next step, not an open question.
+
+1. **Race-week-14d reminder (`race_week_plan_due`) — NEXT:** another clean reconcile-pattern addition reusing this slice's framework. Build:
+   - a `notification_prefs` type `race_week_plan_due` (channels `['in_app', 'push']`, email non-applicable — same posture);
+   - a `NUDGE_REGISTRY['race_week_plan_due']` entry → CTA the race-week brief surface (`routes/race_week_brief.py` — confirm the endpoint name at build time);
+   - a `_STALENESS_RECONCILE` `{insert, delete}` spec keyed on `race_events` (the athlete's `is_target_event` race, `event_date` within 14 days of `NOW()` and still future) **AND** no `race_week_briefs` row yet for that athlete's current plan version. **DELETE** clears once the brief is generated or the race passes.
+   - It **rides the existing `/cron/nudges/reconcile`** — no new cron endpoint, so no `app.py`/`vercel.json` change. A simple one-shot fire (no escalation ladder) is the right starting shape; revisit if Andy wants re-surfacing.
+   - **Skip `race_day_plan_due` + `share_with_crew`** — genuinely blocked on #939 (no race-day-plan artifact exists; no crew-sharing), see §5.
+   - Grounding to confirm first: the exact `race_week_briefs` ↔ plan-version key (`race_week_brief_repo.py` upserts on `plan_version_id`), how to resolve the athlete's "current" plan version, and the race-week-brief CTA endpoint name.
+2. *(Later)* **Recurring time-of-day mechanism** — design a recurring-send scheduler (supplements AM/PM, next-day workouts, literal daily log ping). Larger; new infra; its own design doc.
+3. *(Later)* **Conditions advisory** → coordinate with / fold into **#289**.
 
 The reconcile framework stays reusable — a new condition nudge is: a notification type, a `NUDGE_REGISTRY` entry (with `notification_type`), and an `{insert, delete}` spec appended to `_STALENESS_RECONCILE`. Only add an `app.py` auth-exempt entry if you introduce a *new* cron endpoint (the race-week reminder can ride the existing `/cron/nudges/reconcile`).
 
