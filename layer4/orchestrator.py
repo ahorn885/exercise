@@ -135,7 +135,7 @@ from layer4.single_session import SingleSessionRequest
 from layer4.validator import skill_gated_disciplines
 import locations
 from athlete_event_windows_repo import load_event_windows
-from athlete_craft_locale_repo import load_craft_locales
+from athlete_gear_repo import GEAR_REGISTRY, load_gear_locales
 from race_events_repo import load_target_race_event_payload
 
 
@@ -877,10 +877,15 @@ def _build_event_window_overlay(
         )
         return [], overlapping
 
-    # Slice 4 (#581 WS-H) — the standing craft↔locale map, loaded once. The away
-    # branch unions the crafts kept at any locale in the destination cluster (b)
-    # with the window's brought-craft (c) → the away segment's owned_crafts.
-    craft_locale_map = load_craft_locales(db, user_id)
+    # #884 slice 5 — the standing gear↔locale map, loaded once off the UNIFIED
+    # `athlete_gear_locale` store (the cutover replaced the legacy craft-locale
+    # read; routes/locales.py now writes the gear store). The away branch unions
+    # the gear kept at any locale in the destination cluster (b) with the window's
+    # brought gear (c), then filters to the craft cascade kinds → the away
+    # segment's owned_crafts. Byte-identical for bike/paddle (the store is
+    # backfilled 1:1); ski/snow/climb/alpine gear kept at a destination now feeds
+    # the away cascade once the slice-6 picker captures those kinds.
+    gear_locale_map = load_gear_locales(db, user_id)
     raw: list[tuple[date, date, EventWindowOverride]] = []
     for w in overlapping:
         base_ov = EventWindowOverride(
@@ -924,14 +929,22 @@ def _build_event_window_overlay(
             away_cluster = locations.cluster_locale_ids(
                 db, user_id, anchor_locale=away_ov.away_locale
             )
-            # Slice 4 (#581 WS-H): away craft = brought-craft on this window (c) ∪
-            # standing craft kept at any locale in the destination cluster (b).
+            # #884 slice 5: away gear = brought gear on this window (c) ∪ standing
+            # gear kept at any locale in the destination cluster (b), filtered to
+            # the craft cascade kinds (GEAR_REGISTRY group_kind ∈
+            # _CRAFT_ALIAS_GROUP_KINDS — same filter `_collect_athlete_crafts`
+            # applies at home), so swim/other gear can't leak into owned_crafts.
             # Empty union → byte-identical to the Slice-2a owned_crafts=[] path.
+            # (Brought stays the brought_craft (c) field — craft slugs ARE gear_ids;
+            # the brought-gear picker generalizes in slice 6.)
             brought = set(away_ov.brought_craft)
             standing = {
-                c for loc in away_cluster for c in craft_locale_map.get(loc, ())
+                g for loc in away_cluster for g in gear_locale_map.get(loc, ())
             }
-            away_crafts = sorted(brought | standing)
+            away_crafts = sorted(
+                g for g in (brought | standing)
+                if GEAR_REGISTRY.get(g) in _CRAFT_ALIAS_GROUP_KINDS
+            )
             reduced = _resolve_included_feasibility(
                 fi,
                 locale_order=away_cluster,
