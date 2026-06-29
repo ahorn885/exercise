@@ -205,15 +205,19 @@ def test_refresh_confirm_renders_diff():
 
 
 def test_event_windows_capture_renders_away_create_link():
-    catalog = {
-        'cycling': [{'slug': 'mountain_bike', 'label': 'Mountain bike'}],
-        'paddling': [{'slug': 'packraft', 'label': 'Packraft'}],
-    }
+    registry = [
+        {'group_kind': 'bike', 'label': 'Bikes',
+         'rows': [{'gear_id': 'mountain_bike', 'label': 'Mountain bike'}]},
+        {'group_kind': 'paddle', 'label': 'Paddle craft',
+         'rows': [{'gear_id': 'packraft', 'label': 'Packraft'}]},
+        {'group_kind': 'climb', 'label': 'Climbing',
+         'rows': [{'gear_id': 'climbing_gear', 'label': 'Climbing gear'}]},
+    ]
     html = _render('profile/event_windows.html',
                    windows=[],
                    locales=['home', 'belfast-hotel'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog=catalog)
+                   gear_registry=registry)
     assert 'app-shell' in html
     # 2a — pick-existing destination dropdown.
     assert 'name="away_locale"' in html
@@ -235,10 +239,12 @@ def test_event_windows_capture_renders_away_create_link():
     assert hidden_default < new_loc_submit
     # No draft on a fresh visit → date/notes fields render an empty value.
     assert 'value=""' in html
-    # Slice 4 (WS-H #581): brought-craft (c) on the away window, fed from the
-    # closed craft catalog.
+    # Slice 4 (WS-H #581): brought-gear (c) on the away window, fed from the
+    # unified gear registry. The form field stays `brought_craft` (the column
+    # rename rides 6c); #884 slice 6b generalized the catalog to all kinds.
     assert 'name="brought_craft"' in html
     assert 'Packraft' in html and 'Mountain bike' in html
+    assert 'Climbing gear' in html and 'value="climbing_gear"' in html
     # Slice 5: the standing craft↔locale (b) capture moved to the per-locale edit
     # page — this page now only links there, no in-page craft_slug form.
     assert 'name="craft_slug"' not in html
@@ -258,7 +264,7 @@ def test_event_windows_renders_plan_gen_round_trip_when_return_to_set():
                    windows=[],
                    locales=['home'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog={'cycling': [], 'paddling': []},
+                   gear_registry=[],
                    return_to='/plans/v2/new')
     assert 'Back to plan generation' in html
     assert 'href="/plans/v2/new"' in html
@@ -279,7 +285,8 @@ def test_event_windows_form_repopulates_from_draft():
                    windows=[],
                    locales=['home', 'belfast-hotel'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog={'paddling': [{'slug': 'packraft', 'label': 'Packraft'}]},
+                   gear_registry=[{'group_kind': 'paddle', 'label': 'Paddle craft',
+                                   'rows': [{'gear_id': 'packraft', 'label': 'Packraft'}]}],
                    draft={
                        'start_date': '2026-07-03',
                        'end_date': '2026-07-05',
