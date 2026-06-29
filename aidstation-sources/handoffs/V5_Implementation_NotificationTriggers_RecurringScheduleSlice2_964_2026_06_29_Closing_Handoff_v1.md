@@ -41,12 +41,16 @@ Slice 1's handoff §6 anchor table swept clean against on-disk state:
 - **Static copy** is a deliberate non-goal-to-fix this slice — `account_nudges` has no per-row content column, so `next_day_workouts` reads "Here's a look at tomorrow's training — open your plan" and deep-links the live plan rather than enumerating tomorrow's sessions. Dynamic per-send content would need a content column; deferred (design §3).
 - **Per-row loop, not one set-based UPSERT** — the design (§4) and Rule #15 want each fire individually logged, so the route iterates the due-select result and logs per row.
 
-## 5. NEXT — still #964, then off it
+## 5. NEXT (DECIDED — Andy 2026-06-29): #964 conditions advisory, coordinating with #289
 
-- **Still #964:** **conditions advisory** — coordinate with **#289**.
-- **Blocked on #939:** race-day-7d + share-with-crew (no race-day-plan artifact/generator; no crew-sharing). Not buildable until #939 ships those.
-- The **recurring-send arc is COMPLETE** (Slice 1 storage+capture + Slice 2 delivery). No more clean reconcile-spec or schedule low-hanging fruit on #964 beyond the two blocked/coordinated items above.
-- **After #964:** the standing **#884** arc (slice 5/6 — away overlay / capture UX) remains a live thread.
+The recurring-send arc is **COMPLETE** (Slice 1 storage+capture + Slice 2 delivery both shipped). Of the two #964 triggers left, **Andy chose the conditions advisory next** — the race-day-7d + share-with-crew pair stays **blocked on #939** (no race-day-plan artifact/generator, no crew-sharing) and isn't buildable until #939 ships those.
+
+**The work — conditions advisory (#964 × #289):**
+- **Coordinate with #289 first** — read where #289 stands before scoping. The advisory is a notification *surface* over the conditions/weather data #289 owns; the two need to agree on the producer→consumer contract (what conditions signal exists, on what cadence, keyed how) before this becomes a clean slice. Don't assume the shape — open #289, see what's built vs. specced, and surface the contract decision to Andy if it's a Trigger #3 cross-layer surface (likely).
+- **Likely shape (to validate against #289, not to build blind):** a reconcile-spec or schedule-driven nudge that fires when a relevant conditions signal crosses a threshold for the athlete's upcoming training/race — reusing the same `account_nudges` surface + `notification_prefs` type pattern the rest of #964 uses. Whether it's a one-shot *condition* nudge (reconcile-spec, like `race_week_plan_due`) or a recurring *send* (schedule, like this slice) depends on what #289 exposes.
+- **Open question for Andy / #289:** is there a conditions/weather signal already persisted and queryable (Rule #14 — don't infer it), or does this advisory need #289 to land a producer first? If the latter, this is blocked-on-#289, not buildable-now — flag it rather than building a nudge with no data behind it.
+
+**After #964:** the standing **#884** arc (slice 5/6 — away overlay / capture UX) and **#971** slice 2 (photos / Vercel Blob) remain live threads.
 
 ### §6 anchor table (Rule #10 — next session's Rule #9 input)
 
