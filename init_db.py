@@ -2454,6 +2454,35 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # #582 — purge the auto-created legacy enum slot rows (home/hotel/partner/
+    # airport) the retired LOCALES force-render left behind in locale_profiles.
+    # Now that the list is driven purely off real rows, these bare slots are the
+    # reason the legacy locations still render in prod — the code retirement
+    # removed the force-render but nothing cleaned up the rows the old
+    # auto-create-on-save seeded. Scope is deliberately tight so genuine athlete
+    # data survives untouched: only a categoryless slot with no geocoding
+    # (mapbox_id/lat), no linked gym, that is NOT the preferred home, has no
+    # manual-entry address, no athlete-set name/notes/terrain, and no
+    # equipment/toggle overrides is removed. Dependent override rows cascade;
+    # event-window references (event_locale_id) SET NULL. Idempotent.
+    """
+    DELETE FROM locale_profiles lp
+     WHERE lp.locale IN ('home', 'hotel', 'partner', 'airport')
+       AND lp.category IS NULL
+       AND lp.mapbox_id IS NULL
+       AND lp.lat IS NULL
+       AND lp.gym_profile_id IS NULL
+       AND lp.place_payload IS NULL
+       AND COALESCE(lp.manual_entry, FALSE) = FALSE
+       AND COALESCE(lp.preferred, FALSE) = FALSE
+       AND COALESCE(lp.locale_name, '') = ''
+       AND COALESCE(lp.notes, '') = ''
+       AND COALESCE(array_length(lp.locale_terrain_ids, 1), 0) = 0
+       AND NOT EXISTS (SELECT 1 FROM locale_equipment_overrides o
+                        WHERE o.user_id = lp.user_id AND o.locale = lp.locale)
+       AND NOT EXISTS (SELECT 1 FROM locale_toggle_overrides t
+                        WHERE t.user_id = lp.user_id AND t.locale = lp.locale)
+    """,
     # #941 — retire the free-text `city` column. Weather / clothing resolution
     # moved off the typed city onto the Mapbox-anchored `lat`/`lng` already
     # captured on every geocoded locale (away event-window destination wins,
