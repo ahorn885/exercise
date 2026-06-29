@@ -235,6 +235,38 @@
 
     </div>
   </section>
+
+  {# Source precedence (#196 P5 B4) — when more than one device feeds the same
+     day or workout we merge them, picking the most complete record. A pin
+     overrides that primary pick when the chosen source has data. #}
+  <section>
+    <p class="eyebrow conn-sec-label">Preferred sources</p>
+    <p class="pv-meta">When more than one device records the same day or workout, we merge
+      them and pick the most complete record. Pin a preferred source to make it the primary
+      whenever it has data — otherwise leave it on Automatic.</p>
+    <form method="post" action="{{ url_for('connections.source_precedence') }}" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="fit-source">
+        <span>Wellness <span class="dim">— sleep · HRV · resting HR</span></span>
+        <select name="pin_wellness" class="form-select form-select-sm">
+          {% for o in source_precedence.wellness %}
+          <option value="{{ o.value }}"{{ ' selected' if o.selected else '' }}>{{ o.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="fit-source">
+        <span>Activities <span class="dim">— workouts · power · GPS</span></span>
+        <select name="pin_cardio" class="form-select form-select-sm">
+          {% for o in source_precedence.cardio %}
+          <option value="{{ o.value }}"{{ ' selected' if o.selected else '' }}>{{ o.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div>
+        <button type="submit" class="btn btn-primary btn-sm">Save preferred sources</button>
+      </div>
+    </form>
+  </section>
 </div>
 
 {# ════════════════════════ FILES ════════════════════════ #}

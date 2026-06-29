@@ -15,14 +15,21 @@ eviction: its key includes `integration_bundle_hash`, which is derived from
 §9.2). The downstream L4 / 3B rows are keyed on `layer3a_hash` and are cleared here
 as hygiene so a stale plan/state isn't served before they natural-miss.
 
+Cardio (B3): re-materialize every `canonical_activity` cluster the user owns — each
+cluster re-picks its primary under the current pin (a copy from the pinned provider
+when present, else most-complete) + per-field gap-fill — then evict the SAME Layer-3A-
+dependent caches. The cardio merge feeds the 3A integration bundle too (recent-workouts
++ ACWR read `canonical_cardio_feed`, a view over `canonical_activity`), so a
+re-materialized cluster natural-misses the 3A row via `integration_bundle_hash`.
+
 Transaction: the re-materialize writes run in the caller's `db` transaction — the
 caller commits. The cache backend is a separate store; its eviction is committed by
 the backend. Re-materialize THEN evict (order is not load-bearing — the recompute
 is lazy on the next read, by which point the caller has committed).
 
 Design: `aidstation-sources/designs/CanonicalSourcePrecedence_196_Phase5_Design_v1.md`
-(§5 cross-layer cache implication). B3 will add the cardio analog
-(`apply_cardio_pin_change` → re-materialize affected clusters + evict).
+(§5 cross-layer cache implication). The B4 picker route calls these right after
+`source_preferences_repo.set/clear_source_preference`.
 """
 from __future__ import annotations
 
@@ -47,5 +54,32 @@ def apply_wellness_pin_change(db: Any, cache: Any, uid: int) -> int:
     print(  # Rule #15 — pin-change fan-out is diagnosable from /admin/logs
         f"[source-pref] user={uid} wellness pin applied: "
         f"re-materialized {n_days} day(s), evicted {evicted} cache row(s)"
+    )
+    return evicted
+
+
+def apply_cardio_pin_change(db: Any, cache: Any, uid: int) -> int:
+    """Re-derive + evict after the cardio source pin for `uid` changed.
+
+    Re-materializes every `canonical_activity` cluster the user owns (idempotent;
+    each cluster re-picks its primary under the current pin, then per-field gap-fill)
+    in the caller's transaction, then evicts the user's Layer-3A-dependent caches.
+    Returns the evicted-row count. Caller commits `db`. Safe on a clear too (the
+    re-merge falls back to the automatic most-complete pick)."""
+    # Lazy imports: routes.garmin pulls in the Flask blueprint graph, and the cache
+    # backend isn't needed until B4 wires a real eviction — keep both off the module
+    # import path (mirrors apply_wellness_pin_change).
+    from layer4.cache_invalidation import evict_on_layer_change
+    from routes.garmin import materialize_canonical_activity
+
+    clusters = db.execute(
+        "SELECT id FROM activity_clusters WHERE user_id = ?", (uid,)
+    ).fetchall()
+    for c in clusters:
+        materialize_canonical_activity(db, uid, c["id"])
+    evicted = evict_on_layer_change(cache, uid, "layer3a")
+    print(  # Rule #15 — pin-change fan-out is diagnosable from /admin/logs
+        f"[source-pref] user={uid} cardio pin applied: "
+        f"re-materialized {len(clusters)} cluster(s), evicted {evicted} cache row(s)"
     )
     return evicted

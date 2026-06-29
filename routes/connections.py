@@ -27,10 +27,26 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    flash)
 
 from database import get_db
+from layer4.cache import Layer4Cache
+from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
 from routes.profile import load_connections
+from source_preference_apply import (
+    apply_cardio_pin_change, apply_wellness_pin_change)
+from source_preferences_repo import (
+    CARDIO, VALID_PROVIDERS, WELLNESS, SourcePreferenceError,
+    clear_source_preference, get_source_preferences, set_source_preference)
 
 bp = Blueprint('connections', __name__, url_prefix='/connections')
+
+# Display label per provider for the source-precedence picker (#196 P5 B4). The
+# option VALUES are the provider names validated by `set_source_preference`
+# against `VALID_PROVIDERS`; these are presentation-only.
+_SOURCE_PRECEDENCE_LABELS = {
+    'garmin': 'Garmin', 'whoop': 'Whoop', 'oura': 'Oura', 'polar': 'Polar',
+    'coros': 'COROS', 'wahoo': 'Wahoo', 'rwgps': 'Ride With GPS',
+    'strava': 'Strava',
+}
 
 # Providers whose OAuth start endpoint isn't wired yet (webhook stubs). Shown
 # as "not available yet" rather than a dead CONNECT button (grounding: don't
@@ -90,10 +106,39 @@ def _strength_row(s):
     }
 
 
+def _precedence_options(domain, current):
+    """Dropdown options for a source-precedence domain (#196 P5 B4): the
+    'Automatic' default (no pin) first, then every provider valid for the domain
+    (sorted, deterministic), with the athlete's current pin marked selected."""
+    opts = [{'value': '', 'label': 'Automatic (most complete)',
+             'selected': not current}]
+    for p in sorted(VALID_PROVIDERS[domain]):
+        opts.append({'value': p,
+                     'label': _SOURCE_PRECEDENCE_LABELS.get(p, p.title()),
+                     'selected': p == current})
+    return opts
+
+
+def _precedence_flash(changed):
+    """Coaching-voice confirmation for the saved pins — one clause per domain
+    that actually changed."""
+    parts = []
+    for domain, choice in changed:
+        dom = 'Wellness' if domain == WELLNESS else 'Activity'
+        if choice:
+            parts.append(
+                f"{dom} source set to "
+                f"{_SOURCE_PRECEDENCE_LABELS.get(choice, choice.title())}")
+        else:
+            parts.append(f"{dom} source back to automatic")
+    return "; ".join(parts) + "."
+
+
 def _hub_context(db, uid, tab, **extra):
     """Shared render context for both the GET hub and the POST inspector."""
     oauth_providers = load_connections(
         db, uid, return_to=url_for('connections.hub'))
+    source_pins = get_source_preferences(db, uid)
     garmin_auth = {'authenticated': False, 'username': None}
     try:
         from garmin_connect import get_auth_status
@@ -149,6 +194,10 @@ def _hub_context(db, uid, tab, **extra):
         activity_count=activity_count,
         just_connected_label=just_connected_label,
         oauth_error_label=oauth_error_label,
+        source_precedence={
+            'wellness': _precedence_options(WELLNESS, source_pins.get(WELLNESS)),
+            'cardio': _precedence_options(CARDIO, source_pins.get(CARDIO)),
+        },
     )
     ctx.update(extra)
     return ctx
@@ -162,3 +211,42 @@ def hub():
     if tab not in VALID_TABS:
         tab = 'sources'
     return render_template('connections/hub.html', **_hub_context(db, uid, tab))
+
+
+@bp.route('/source-precedence', methods=['POST'])
+def source_precedence():
+    """Save the athlete's preferred-source pins (#196 P5 B4 — Track B picker).
+
+    One dropdown per domain (wellness / cardio); '' = Automatic (clear the pin).
+    For each domain that actually changed, set/clear the pin then re-derive the
+    affected canonical layer + evict the Layer-3A-dependent caches via the B2/B3
+    apply helpers (`apply_wellness_pin_change` / `apply_cardio_pin_change`).
+    Commits only when something changed; the apply helpers run in this request's
+    transaction so the new pin and the re-materialized rows land together."""
+    db = get_db()
+    uid = current_user_id()
+    current = get_source_preferences(db, uid)
+    cache = Layer4Cache(PostgresCacheBackend(lambda: db))
+    changed = []
+    try:
+        for domain, apply_fn in ((WELLNESS, apply_wellness_pin_change),
+                                 (CARDIO, apply_cardio_pin_change)):
+            choice = (request.form.get(f'pin_{domain}') or '').strip()
+            if choice == (current.get(domain) or ''):
+                continue  # unchanged — no re-materialize, no evict
+            if choice:
+                set_source_preference(db, uid, domain, choice)
+            else:
+                clear_source_preference(db, uid, domain)
+            apply_fn(db, cache, uid)
+            changed.append((domain, choice))
+    except SourcePreferenceError as e:
+        # Defensive: the dropdown only offers valid providers, so a violation
+        # means a hand-crafted POST. Nothing is committed → the partial write is
+        # discarded when the request connection closes uncommitted.
+        flash(str(e), 'danger')
+        return redirect(url_for('connections.hub', tab='sources'))
+    if changed:
+        db.commit()
+        flash(_precedence_flash(changed), 'info')
+    return redirect(url_for('connections.hub', tab='sources'))

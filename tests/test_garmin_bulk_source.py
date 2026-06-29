@@ -441,15 +441,20 @@ class _CanonConn:
     `FROM cardio_log WHERE cluster_id` SELECT; every (sql, params) is recorded so a
     test can assert the upserted canonical row + provenance writes."""
 
-    def __init__(self, members):
+    def __init__(self, members, cardio_pin=None):
         self.calls = []
         self._members = members
+        self._cardio_pin = cardio_pin
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
         cur = _FakeCursor()
         if "FROM cardio_log WHERE cluster_id" in sql:
             rows = self._members
+            cur.fetchall = lambda: rows  # noqa: B023
+        elif "FROM user_source_preferences" in sql:      # B3 cardio pin read
+            pin = self._cardio_pin
+            rows = [{"domain": "cardio", "preferred_provider": pin}] if pin else []
             cur.fetchall = lambda: rows  # noqa: B023
         return cur
 
@@ -570,6 +575,41 @@ class TestMaterializeCanonical:
         g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
         assert conn.did("DELETE FROM canonical_activity WHERE cluster_id")
         assert _canon_insert(conn) is None
+
+
+class TestCardioHardPin:
+    """#196 P5 B3 — a cardio source pin overrides the most-complete PRIMARY pick
+    when the cluster has a copy from the pinned provider; per-field gap-fill stays
+    completeness-ordered, so a richer non-pinned copy still fills the fields the
+    pinned primary lacks."""
+
+    def test_pin_makes_pinned_copy_primary_over_richer_copy(self):
+        # Wahoo copy is richer (power, tier 3) but the athlete pinned Strava → the
+        # Strava copy is primary; the richer Wahoo copy still gap-fills power.
+        wahoo = _member(id=73, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                        avg_power=210, avg_hr=150, wahoo_workout_id="w1")
+        strava = _member(id=74, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                         elev_gain_ft=900.0, strava_activity_id="s1")
+        conn = _CanonConn([wahoo, strava], cardio_pin="strava")
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        row = _canon_insert(conn)
+        assert row["primary_cardio_log_id"] == 74    # pinned Strava wins primary
+        assert row["elev_gain_ft"] == 900.0          # from Strava itself
+        assert row["avg_power"] == 210               # gap-filled from richer Wahoo
+        prov = _prov_rows(conn)
+        assert prov["elev_gain_ft"] == (74, "strava")
+        assert prov["avg_power"] == (73, "wahoo")
+
+    def test_pin_absent_from_cluster_falls_through_to_most_complete(self):
+        # Pinned provider (COROS) has no copy in the cluster → automatic merge: the
+        # richer Wahoo copy is primary, exactly as with no pin.
+        wahoo = _member(id=73, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                        avg_power=210, wahoo_workout_id="w1")
+        strava = _member(id=74, activity="cycling", duration_min=30.0, distance_mi=12.0,
+                         strava_activity_id="s1")
+        conn = _CanonConn([wahoo, strava], cardio_pin="coros")
+        g.materialize_canonical_activity(conn, uid=1, cluster_id=7)
+        assert _canon_insert(conn)["primary_cardio_log_id"] == 73   # Wahoo richer
 
     def test_cluster_attach_triggers_rematerialization(self):
         # cluster_activity must re-merge on a MATCH (late arrival): the canonical
