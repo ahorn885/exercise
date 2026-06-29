@@ -1021,6 +1021,13 @@ def save_manual_locale():
     if not locale_name:
         flash('Locale name is required.', 'danger')
         return redirect(url_for('locales.new_locale', manual=1))
+    # A manual locale must record *where* it is — an address-less row has no
+    # coordinates and no place, so it can never resolve weather/clothing and
+    # shows up as an empty location. Require the address (the Mapbox path
+    # already guarantees a place via lat/lng).
+    if not address:
+        flash('An address is required so we know where this location is.', 'danger')
+        return redirect(url_for('locales.new_locale', manual=1))
     base_slug = _slugify(locale_name)
     if not base_slug:
         flash('Locale name needs at least one letter or number.', 'danger')
