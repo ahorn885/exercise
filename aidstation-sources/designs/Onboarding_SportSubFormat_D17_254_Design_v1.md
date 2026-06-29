@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Date:** 2026-06-29
-**Status:** Design — decisions proposed, **awaiting Andy ratification before any code.** Approach pre-selected by Andy (AskUserQuestion 2026-06-29): **"Default sub-format + override."**
+**Status:** **Ratified by Andy 2026-06-29** — approach "Default sub-format + override" (AskUserQuestion); all §2 decisions, the five §2.1 defaults, the D1 storage model, the §3 default-propagation trade-off, and guard-first sequencing **approved**. Implementation in progress.
 **Issue:** [#254](https://github.com/ahorn885/exercise/issues/254) — "Onboarding: map a race goal to the correct sport sub-format." Parent epic #246 (onboarding & athlete data capture, Layer 1).
 **Backlog row:** D-17 (Sheet 3 / Sheet 5 naming mismatch).
 **Affects:**
