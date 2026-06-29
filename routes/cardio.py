@@ -103,6 +103,18 @@ def activity_fit(entry_id):
     )
 
 
+def _safe_next(default_endpoint):
+    """Resolve a post-action redirect target. Honors a local `next` form value
+    so a delete returns to the list it was triggered from (e.g. the federated
+    Workouts feed at /training, not just /cardio) — keeping the delete controls
+    on screen without a manual refresh. Falls back to `default_endpoint`.
+    Only same-origin relative paths are accepted (open-redirect defense)."""
+    nxt = (request.form.get('next') or '').strip()
+    if nxt.startswith('/') and not nxt.startswith('//'):
+        return nxt.rstrip('?') or url_for(default_endpoint)
+    return url_for(default_endpoint)
+
+
 @bp.route('/cardio/<int:entry_id>/delete', methods=['POST'])
 def delete_entry(entry_id):
     db = get_db()
@@ -112,7 +124,7 @@ def delete_entry(entry_id):
     )
     db.commit()
     flash('Entry deleted.', 'warning')
-    return redirect(url_for('cardio.list_entries'))
+    return redirect(_safe_next('cardio.list_entries'))
 
 
 def _load_plan_items(db):

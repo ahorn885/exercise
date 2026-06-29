@@ -13,6 +13,18 @@ bp = Blueprint('training', __name__)
 _MODALITIES = ('strength', 'cardio')
 
 
+def _safe_next(default_endpoint):
+    """Resolve a post-action redirect target. Honors a local `next` form value
+    so a delete returns to the list it was triggered from (preserving any feed
+    filters) — keeping the delete controls on screen without a manual refresh.
+    Falls back to `default_endpoint`. Only same-origin relative paths are
+    accepted (open-redirect defense)."""
+    nxt = (request.form.get('next') or '').strip()
+    if nxt.startswith('/') and not nxt.startswith('//'):
+        return nxt.rstrip('?') or url_for(default_endpoint)
+    return url_for(default_endpoint)
+
+
 @bp.route('/training')
 def list_entries():
     """Federated workouts feed — one row per session (strength + cardio).
@@ -191,7 +203,7 @@ def session_delete(session_id):
     )
     db.commit()
     flash('Session deleted.', 'success')
-    return redirect(url_for('training.list_entries'))
+    return redirect(_safe_next('training.list_entries'))
 
 
 @bp.route('/training/new', methods=['GET'])
