@@ -592,23 +592,31 @@ def _load_profile_edits(db, gym_profile_id: int) -> list:
 
 def _record_profile_edit(db, gym_profile_id: int, proposer_uid: int,
                          shared_tags: set, athlete_tags: set,
-                         valid_names: set, *, now: str | None = None) -> None:
-    """Upsert this peer's proposed correction to a shared profile. The proposal
-    is the diff of the peer's submitted set vs. the shared base; an empty diff
-    (the peer's view matches the shared profile) withdraws any prior proposal.
-    One open proposal per (profile, peer) — re-saving replaces it. Caller owns
-    the transaction boundary."""
-    adds = sorted(t for t in (athlete_tags - shared_tags) if t in valid_names)
-    removes = sorted(t for t in (shared_tags - athlete_tags) if t in valid_names)
+                         valid_names: set, *, report: bool,
+                         now: str | None = None) -> None:
+    """Upsert this peer's proposed correction to a shared profile.
+
+    The peer must **explicitly flag** the shared profile as wrong (`report`)
+    for a proposal to be recorded — a routine personal override (`report`
+    falsy) only withdraws any prior proposal, so personal edits don't flood
+    the admin queue. When flagged, the proposal is the diff of the peer's
+    submitted set vs. the shared base; a flagged-but-empty diff (their view
+    already matches the shared profile) also withdraws. One open proposal per
+    (profile, peer) — re-flagging replaces it. Caller owns the transaction
+    boundary."""
+    adds, removes = [], []
+    if report:
+        adds = sorted(t for t in (athlete_tags - shared_tags) if t in valid_names)
+        removes = sorted(t for t in (shared_tags - athlete_tags) if t in valid_names)
     proposals = [p for p in _load_profile_edits(db, gym_profile_id)
                  if p.get('by') != proposer_uid]
     if adds or removes:
         stamp = now or datetime.now(timezone.utc).isoformat(timespec='seconds')
         proposals.append({'by': proposer_uid, 'adds': adds,
                           'removes': removes, 'at': stamp})
-    # Instrument (Rule #15): the inputs the dedup decided on + the outcome.
+    # Instrument (Rule #15): the flag + inputs the decision used + the outcome.
     print(f'_record_profile_edit: profile={gym_profile_id} peer={proposer_uid} '
-          f'adds={adds} removes={removes} '
+          f'report={bool(report)} adds={adds} removes={removes} '
           f'-> {"recorded" if (adds or removes) else "withdrawn"} '
           f'({len(proposals)} open)')
     db.execute(
@@ -991,11 +999,13 @@ def _edit_locale(db, uid: int, locale: str, profile):
                 _link_gym_profile(db, uid, locale, shared['id'])
                 _touch_gym_profile_confirmation(db, uid, shared['id'])
             _save_overrides(db, uid, locale, shared_tags, submitted, valid_names)
-            # #971 Slice 3 — the same delta is a crowd-sourced correction
-            # proposal for admin review; record (or withdraw) it on the shared
-            # profile. No-ops to nothing pending when the peer's view matches.
+            # #971 Slice 3 — the peer's delta becomes a crowd-sourced correction
+            # proposal for admin review ONLY when they explicitly flag the
+            # shared profile as wrong; an unflagged save just keeps the edit
+            # personal (and withdraws any prior proposal).
+            report_correction = request.form.get('report_correction') == '1'
             _record_profile_edit(db, shared['id'], uid, shared_tags, submitted,
-                                  valid_names)
+                                  valid_names, report=report_correction)
         # #953 — replace the craft kept here in the same transaction as the
         # equipment/terrain save so a single submit covers both surfaces.
         # `edit_profile` already verified the locale exists; an invalid slug
@@ -1024,6 +1034,11 @@ def _edit_locale(db, uid: int, locale: str, profile):
     # chips).
     adds, removes = _load_overrides(db, uid, locale)
     mode = 'shared_inherit' if inherit else 'legacy'
+    # #971 Slice 3 — pre-check the "report as wrong" box when this peer already
+    # has a correction pending admin review, so re-saving doesn't silently
+    # withdraw it.
+    reported = bool(inherit and shared and any(
+        p.get('by') == uid for p in _load_profile_edits(db, shared['id'])))
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
     is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
     # #446 — privacy state for the form chip + opt-out toggle. The backing
@@ -1048,6 +1063,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            shared_tags=shared_tags,
                            adds=adds, removes=removes,
                            shared=shared,
+                           reported=reported,
                            notes=(profile['notes'] if profile and profile['notes'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,

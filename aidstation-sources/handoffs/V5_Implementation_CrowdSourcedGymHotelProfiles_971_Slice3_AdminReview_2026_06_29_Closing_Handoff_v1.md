@@ -4,7 +4,7 @@
 **Date:** 2026-06-29
 **Predecessor handoff:** `handoffs/V5_Implementation_CrowdSourcedGymHotelProfiles_971_Slice1_NameGeoDedup_2026_06_29_Closing_Handoff_v1.md` (#971 Slice 1 — name+geo dedup; merged PR #1009).
 **Branch:** `claude/971-name-geo-dedup-hfnko6`
-**Status:** 4 code/template substantive files + 2 test files (one edit is a 1-line dashboard nav link). PR **not yet opened** — awaiting Andy's go per the PR-gated operating model. Full suite green locally (3773 passed, 30 skipped).
+**Status:** 5 code/template substantive files + 3 test files (one edit is a 1-line dashboard nav link; the explicit "report as wrong" flag was added mid-review at Andy's request — §7 #2). PR **not yet opened** — awaiting Andy's go per the PR-gated operating model. Full suite green locally (3775 passed, 30 skipped).
 
 ---
 
@@ -30,7 +30,7 @@ Verified Slice 1 actually landed before opening Slice 3 (it's the precondition t
 
 **Key grounding finding (shaped the design).** Two things: (1) peer edits to a shared profile today only write **personal** `locale_equipment_overrides` — there was **no** mechanism for a peer to propose a change to the *shared* profile, so crowd-sourced corrections never propagated. (2) `disputed_items` is **dormant** (declared at D-60 §5 for exactly this, never written/read — the same shape of move as Slice 1's dormant `address_fingerprint`). So Slice 3 = activate `disputed_items` as the proposal store + build the admin review loop the D-60 design deferred.
 
-**The capture insight.** The inherit path already computes the peer's shared-vs-submitted delta (for `_save_overrides`). That same delta **is** the crowd-sourced correction. So capture is a one-liner addition next to `_save_overrides` — no new form UI, no separate "dispute" affordance — recording the delta as a proposal on the shared profile.
+**The capture insight + the explicit-flag amendment.** The inherit path already computes the peer's shared-vs-submitted delta (for `_save_overrides`); that same delta **is** the crowd-sourced correction. The first cut recorded it automatically on any divergence. **Andy reviewed and asked for an explicit flag (2026-06-29)** so routine personal overrides don't flood the admin queue — the original D-60 design's instinct (it separated "personal override" from "dispute" for exactly this reason). Final behavior: the inherit-mode form carries a **"the shared profile is wrong — submit for review" checkbox**; the delta becomes a proposal **only when it's ticked**. An unflagged save (or a view that matches the shared base) withdraws any prior proposal; the box is pre-checked when the peer already has one pending, so re-saving doesn't silently retract it.
 
 **Cross-layer line held.** The D-60 design also calls for plan-gen to treat disputed items as not-available (a Layer-2C change). That's a **cross-layer surface change (stop-and-ask trigger #3)** — explicitly **deferred** to a follow-up slice. Approving a proposal in this slice updates the shared `equipment` set, which flows to every inheritor through the **existing** `_shared_equipment_set` resolution — so approvals take effect entirely through the already-shipped contract, touching no inter-layer surface.
 
@@ -43,10 +43,10 @@ Verified Slice 1 actually landed before opening Slice 3 (it's the precondition t
 - **import** `from datetime import datetime, timezone` (proposal timestamp).
 - **`_parse_profile_edits(payload)`** (new): tolerant JSON→`list[dict]` parse of `disputed_items` (NULL/empty/malformed → `[]`).
 - **`_load_profile_edits(db, gym_profile_id)`** (new): current proposals for one profile.
-- **`_record_profile_edit(db, gym_profile_id, proposer_uid, shared_tags, athlete_tags, valid_names, *, now=None)`** (new): the capture. Diff = `athlete_tags` vs `shared_tags` (filtered to `valid_names`); upserts one proposal per (profile, peer) as `{by, adds, removes, at}`; empty diff withdraws any prior proposal; writes `disputed_items` whole (NULL when none remain). Rule #15 `print()` of inputs + outcome.
+- **`_record_profile_edit(db, gym_profile_id, proposer_uid, shared_tags, athlete_tags, valid_names, *, report, now=None)`** (new): the capture. Records a proposal **only when `report` is truthy** (the peer ticked the flag); an unflagged save records nothing and withdraws any prior proposal. When flagged: diff = `athlete_tags` vs `shared_tags` (filtered to `valid_names`); upserts one proposal per (profile, peer) as `{by, adds, removes, at}`; a flagged-but-empty diff also withdraws; writes `disputed_items` whole (NULL when none remain). Rule #15 `print()` of flag + inputs + outcome.
 - **`_list_pending_profile_edits(db, limit=500)`** (new): admin queue — non-private profiles with non-empty `disputed_items`, each with shared equipment + parsed proposals; skips rows whose proposals don't parse.
 - **`_review_profile_edit(db, gym_profile_id, proposer_uid, approve)`** (new): approve folds `adds`/`removes` into the shared `equipment` set (`(shared ∪ adds) − removes`) + advances `last_confirmed_by`/`_at` to the proposer; reject leaves equipment untouched; either way removes the proposal. Returns the applied proposal or `None` (no such open proposal / missing profile). Rule #15 `print()`.
-- **`_edit_locale`** (modified): in the inherit branch, after `_save_overrides`, calls `_record_profile_edit(db, shared['id'], uid, shared_tags, submitted, valid_names)`.
+- **`_edit_locale`** (modified): inherit branch reads `report_correction = request.form.get('report_correction') == '1'` and calls `_record_profile_edit(..., report=report_correction)` after `_save_overrides`; the GET path computes `reported` (does this peer have a pending proposal on `shared['id']`?) and passes it to the template so the checkbox reflects pending state.
 
 ### 3.2 `routes/admin.py` (modified)
 
@@ -62,12 +62,16 @@ Mirrors `curation_flags.html` (extends `base.html`, redesign shell). One card pe
 
 One-line nav link "Gym profile reviews" → `admin.gym_profile_edits`, between "Curation gaps" and "Evidence sources".
 
+### 3.5 `templates/locales/form.html` (modified)
+
+Inherit-mode only (`{% if mode == 'shared_inherit' %}`), after the Notes field: the **"the shared profile is wrong — submit my changes for review"** checkbox (`name="report_correction"`, `value="1"`), pre-checked when `reported`. Copy makes the default ("leave unchecked to keep your edits to yourself") explicit.
+
 ---
 
 ## 4. Code / tests
 
-**`tests/test_locales.py` (+10 → 62 passing in the file):**
-- `TestRecordProfileEdit` (4): records delta as proposal; empty delta withdraws; upsert replaces same-peer + keeps others; invalid names dropped.
+**`tests/test_locales.py` (+12 → 64 passing in the file):**
+- `TestRecordProfileEdit` (6): records delta as proposal **when flagged**; **unflagged edit records nothing**; **unflagged save withdraws a prior proposal**; flagged-but-empty delta withdraws; upsert replaces same-peer + keeps others; invalid names dropped.
 - `TestListPendingProfileEdits` (2): SQL shape excludes private + parses shared tags + proposals; skips rows with empty/malformed proposals.
 - `TestReviewProfileEdit` (4): approve folds into shared equipment (`(Barbell,Squat rack ∪ Treadmill) − Squat rack` → `[Barbell, Treadmill]`) + clears + `last_confirmed_by`=proposer; reject leaves equipment untouched; unknown proposal → `None`; missing profile → `None`.
 
@@ -77,7 +81,9 @@ Imports added: `_list_pending_profile_edits`, `_record_profile_edit`, `_review_p
 - `test_gym_profile_edits_renders`: `_GymEditConn` routes the `FROM gym_profiles` query to a seeded proposal; asserts the queue page renders the proposal + the `/admin/gym-profile-edits/77/review` actions + `User #2`.
 - `test_dashboard_links_to_gym_profile_edits`: the dashboard nav link resolves.
 
-**Verification:** `python -m pytest tests/test_locales.py tests/test_routes_admin.py tests/test_redesign_admin_render.py` → 101 passed; **full `tests/` → 3773 passed, 30 skipped** (skips are API-key-gated real-LLM). `import routes.admin, routes.locales` clean (no circular-import regression from the new cross-module import).
+**`tests/test_redesign_locales_form_render.py` (+1 assertion):** `test_form_shared_inherit_shows_override_chips` now also asserts `name="report_correction"` renders in inherit mode.
+
+**Verification:** **full `tests/` → 3775 passed, 30 skipped** (skips are API-key-gated real-LLM). `import routes.admin, routes.locales` clean (no circular-import regression from the new cross-module import).
 
 ---
 
@@ -86,9 +92,10 @@ Imports added: `_list_pending_profile_edits`, `_record_profile_edit`, `_review_p
 Exercisable on Vercel once ≥2 accounts exist:
 
 1. Account A: add a hotel, log equipment, save (creates a shared `gym_profiles` row).
-2. Account B: add the **same** hotel (resolves to A's shared profile via mapbox_id or the Slice-1 name+geo fallback), inherit it, then save a **changed** equipment view (add one item, remove one).
-3. Admin (`/admin` → "Gym profile reviews" → `/admin/gym-profile-edits`): B's proposal shows (proposer, +adds, −removes). **Approve** → A's shared profile equipment updates (A and every other inheritor now resolve the corrected set). **Reject** → shared set unchanged, proposal cleared.
-4. Negative: B re-saves a view that **matches** the (current) shared profile → B's proposal **withdraws** (disappears from the queue).
+2. Account B: add the **same** hotel (resolves to A's shared profile via mapbox_id or the Slice-1 name+geo fallback), inherit it, change the equipment view (add one item, remove one), **tick the "the shared profile is wrong — submit for review" box**, and save.
+3. Negative-A: B makes the same edit but **leaves the box unchecked** → it's a personal override only; **no** proposal appears in the admin queue.
+4. Admin (`/admin` → "Gym profile reviews" → `/admin/gym-profile-edits`): B's flagged proposal shows (proposer, +adds, −removes). **Approve** → A's shared profile equipment updates (A and every other inheritor now resolve the corrected set). **Reject** → shared set unchanged, proposal cleared.
+5. Negative-B: B re-saves a view that **matches** the (current) shared profile, or saves again with the box **unchecked** → B's proposal **withdraws** (disappears from the queue). Re-opening the editor with a proposal pending shows the box **pre-checked**.
 
 (Recorded in `CARRY_FORWARD.md` under the #971 entry as an owed live exercise.)
 
@@ -100,7 +107,7 @@ Exercisable on Vercel once ≥2 accounts exist:
 **#971 Slice 2 — photos** (the only remaining slice). `gym_profile_photos` table (FK to `gym_profiles`, uploader `user_id`, storage ref, created_at) + capture/display in `templates/locales/form.html` + `routes/locales._edit_locale`. **Storage backend (Vercel Blob vs a URL field) is an Andy decision** — decide it before building. This slice was deliberately picked over Slice 2 to avoid pre-empting that call.
 
 ### 6.2 Alternative pivots
-- **#971 Slice 3 follow-ups** (this slice's deferrals): (a) the cross-layer **plan-gen "disputed item ⇒ not-available" treatment** (D-60 §5) — a Layer-2C slice that derives disputed *tags* from open proposals' `removes`; (b) an explicit per-item "dispute" **opt-in affordance** in `form.html` (replacing the current auto-record-any-divergence capture).
+- **#971 Slice 3 follow-up** (this slice's one remaining deferral): the cross-layer **plan-gen "disputed item ⇒ not-available" treatment** (D-60 §5) — a Layer-2C slice that derives disputed *tags* from open proposals' `removes`. *(The explicit "report as wrong" opt-in affordance, previously listed here as deferred, was built this session at Andy's request.)*
 - Back to **#884** (gear/craft) if Andy redirects — see that thread's predecessor handoff.
 
 ### 6.3 Operating notes for next session
@@ -113,7 +120,7 @@ Exercisable on Vercel once ≥2 accounts exist:
 | # | Decision | Picked by | Rationale |
 |---|---|---|---|
 | 1 | Ship **Slice 3 (admin review)**, not Slice 2 (photos), this session | Claude (under "continue", AskUserQuestion failed) | Slice 2 is blocked on a storage-backend Andy decision; Slice 3 is self-contained + mirrors an existing pattern + needs no new infra decision. Reversible — Slice 2 still open. |
-| 2 | **Auto-record any peer divergence** as a correction proposal (no separate opt-in affordance) | Claude (grounded) | For objective equipment-presence at a shared physical location a divergence *is* a correction worth reviewing; nothing auto-applies (admin gates it); avoids touching `form.html`. Upsert (one open per peer) keeps the queue legible. The explicit opt-in affordance is a documented follow-up if the auto-capture proves noisy. |
+| 2 | **Explicit "report as wrong" flag** required for a peer edit to become a proposal | **Andy (2026-06-29)** | First cut auto-recorded any divergence; Andy asked for the flag so routine personal overrides don't flood the queue. The flag separates "this is a factual correction to the shared truth" from "this is my personal tweak" — the D-60 design's original instinct. Inherit-mode checkbox, pre-checked when a proposal is pending; unflagged save (or matching view) withdraws. |
 | 3 | **Reuse the dormant `disputed_items` column**, enriched from "array of tags" to proposal objects `{by, adds, removes, at}` | Claude (grounded) | No migration (column already exists, never read → no back-compat). Forward-compatible with the D-60 plan-gen intent: a future "disputed tag ⇒ not-available" slice derives disputed *tags* from open proposals' `removes`. |
 | 4 | **Defer the cross-layer plan-gen treatment** (disputed ⇒ not-available, D-60 §5) | Claude | It's a Layer-2C inter-layer change (stop-and-ask trigger #3). Approvals already take effect through the existing shared-equipment contract, so this slice ships value without crossing that surface. |
 | 5 | Approve folds into shared `equipment` + advances `last_confirmed_by`; **does not** bump `contribution_count` | Claude | The proposer already bumped `contribution_count` on inherit (`_touch_gym_profile_confirmation`); bumping again on approve would double-count. `last_confirmed_by`=proposer is the right provenance for "their correction is now the confirmed state." |
@@ -125,6 +132,7 @@ Exercisable on Vercel once ≥2 accounts exist:
 | Check | Result |
 |---|---|
 | `_record_profile_edit` / `_list_pending_profile_edits` / `_review_profile_edit` present | ✅ grep `routes/locales.py` |
+| `_record_profile_edit` gated on `report` flag; `report_correction` read from form; `name="report_correction"` in `form.html` | ✅ grep `routes/locales.py` + `templates/locales/form.html` |
 | `_edit_locale` inherit branch calls `_record_profile_edit` | ✅ `routes/locales.py` inherit branch |
 | `/admin/gym-profile-edits` GET + `/review` POST present; audited | ✅ `routes/admin.py` |
 | `templates/admin/gym_profile_edits.html` exists; dashboard nav link added | ✅ both templates |
@@ -136,15 +144,17 @@ Exercisable on Vercel once ≥2 accounts exist:
 
 ## 9. Files shipped this session
 
-**Substantive (4 code/template + 2 test):**
+**Substantive (5 code/template + 3 test):**
 1. `routes/locales.py`
 2. `routes/admin.py`
 3. `templates/admin/gym_profile_edits.html` (new)
 4. `templates/admin/dashboard.html` (1-line nav link)
-5. `tests/test_locales.py`
-6. `tests/test_redesign_admin_render.py`
+5. `templates/locales/form.html` (report-as-wrong checkbox — added in the explicit-flag amendment)
+6. `tests/test_locales.py`
+7. `tests/test_redesign_admin_render.py`
+8. `tests/test_redesign_locales_form_render.py` (1 assertion)
 
-A hair over the ~5 soft ceiling on a single cohesive slice (one edit is a 1-line nav link, two are test files) — noted, not split.
+Over the ~5 soft ceiling (one edit is a 1-line nav link, three are test files; the explicit-flag amendment added the `form.html` surface + its render assertion mid-review at Andy's request) — noted, not split.
 
 **Bookkeeping (3 files, outside the count):**
 - `aidstation-sources/CURRENT_STATE.md`
@@ -155,7 +165,7 @@ A hair over the ~5 soft ceiling on a single cohesive slice (one edit is a 1-line
 
 ## 10. Carry-forward updates
 
-`## #971` section in `CARRY_FORWARD.md` updated: Slices 1 + 3 DONE, Slice 2 (photos) the only remaining slice (storage backend = Andy decision); Slice-3 deferred follow-ups (plan-gen disputed treatment + explicit opt-in affordance) recorded; the Slice-3 §5.0 two-account walkthrough recorded as an owed live exercise.
+`## #971` section in `CARRY_FORWARD.md` updated: Slices 1 + 3 DONE, Slice 2 (photos) the only remaining slice (storage backend = Andy decision); the one Slice-3 deferred follow-up (plan-gen disputed treatment) recorded (the explicit opt-in affordance was built this session, so it's no longer deferred); the Slice-3 §5.0 walkthrough — now including the flagged-vs-unflagged paths — recorded as an owed live exercise.
 
 ---
 

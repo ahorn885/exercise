@@ -1053,28 +1053,50 @@ def _last_disputed_write(conn):
 
 class TestRecordProfileEdit:
     """`_record_profile_edit` stashes a peer's shared-vs-submitted delta as a
-    correction proposal on `gym_profiles.disputed_items`."""
+    correction proposal on `gym_profiles.disputed_items` — but ONLY when the
+    peer explicitly flags the shared profile as wrong (`report=True`)."""
 
-    def test_records_delta_as_proposal(self):
+    def test_records_delta_as_proposal_when_flagged(self):
         conn = _FakeConn()
         conn.queue_response(row={'disputed_items': None})  # _load_profile_edits
         _record_profile_edit(
             conn, 77, 42, {'Barbell', 'Squat rack'}, {'Barbell', 'Treadmill'},
-            {'Barbell', 'Squat rack', 'Treadmill'}, now='2026-06-29T12:00:00+00:00')
+            {'Barbell', 'Squat rack', 'Treadmill'}, report=True,
+            now='2026-06-29T12:00:00+00:00')
         proposals = _last_disputed_write(conn)
         assert proposals == [{
             'by': 42, 'adds': ['Treadmill'], 'removes': ['Squat rack'],
             'at': '2026-06-29T12:00:00+00:00',
         }]
 
-    def test_empty_delta_withdraws_proposal(self):
+    def test_unflagged_edit_records_nothing(self):
         conn = _FakeConn()
-        # An existing proposal by this peer is on file...
+        conn.queue_response(row={'disputed_items': None})
+        # A real delta, but the peer did NOT flag the shared profile → personal
+        # override only, no proposal lands in the admin queue.
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell'}, {'Barbell', 'Treadmill'},
+            {'Barbell', 'Treadmill'}, report=False, now='t')
+        assert _last_disputed_write(conn) is None
+
+    def test_unflagged_save_withdraws_prior_proposal(self):
+        conn = _FakeConn()
+        # The peer flagged a correction before, then saves again unflagged...
         conn.queue_response(row={'disputed_items': _json.dumps(
             [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}])})
-        # ...but the peer's view now matches the shared base → withdraw it.
-        _record_profile_edit(conn, 77, 42, {'Barbell'}, {'Barbell'}, {'Barbell'})
-        assert _last_disputed_write(conn) is None  # nothing pending → NULL
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell'}, {'Barbell', 'Treadmill'},
+            {'Barbell', 'Treadmill'}, report=False)
+        assert _last_disputed_write(conn) is None  # their report is retracted
+
+    def test_flagged_empty_delta_withdraws_proposal(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': _json.dumps(
+            [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}])})
+        # Flagged, but the peer's view now matches the shared base → withdraw.
+        _record_profile_edit(conn, 77, 42, {'Barbell'}, {'Barbell'},
+                             {'Barbell'}, report=True)
+        assert _last_disputed_write(conn) is None
 
     def test_upsert_replaces_same_peer_keeps_others(self):
         conn = _FakeConn()
@@ -1084,7 +1106,7 @@ class TestRecordProfileEdit:
         ])})
         _record_profile_edit(
             conn, 77, 42, {'Barbell'}, {'Barbell', 'Dumbbells'},
-            {'Barbell', 'Dumbbells'}, now='t2')
+            {'Barbell', 'Dumbbells'}, report=True, now='t2')
         proposals = _last_disputed_write(conn)
         assert {p['by'] for p in proposals} == {42, 99}
         p42 = next(p for p in proposals if p['by'] == 42)
@@ -1095,7 +1117,8 @@ class TestRecordProfileEdit:
         conn = _FakeConn()
         conn.queue_response(row={'disputed_items': None})
         _record_profile_edit(
-            conn, 77, 42, set(), {'Barbell', 'Bogus'}, {'Barbell'}, now='t')
+            conn, 77, 42, set(), {'Barbell', 'Bogus'}, {'Barbell'},
+            report=True, now='t')
         proposals = _last_disputed_write(conn)
         assert proposals[0]['adds'] == ['Barbell']  # 'Bogus' rejected
 
