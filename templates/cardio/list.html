@@ -77,6 +77,7 @@
            title="Download Activity FIT" data-confirm="Generate and download an activity FIT file for this session?">FIT</a>
         <form method="post" action="{{ url_for('cardio.delete_entry', entry_id=e.id) }}" data-confirm="Delete this entry?">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
           <button class="btn btn-outline-danger btn-sm">Del</button>
         </form>
       </td>
