@@ -115,10 +115,7 @@
         <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if conditions and conditions.days else 'Generate' }}</button>
       </form>
     </div>
-    {% if conditions and conditions.days %}
-    {% for n in conditions.notes %}<p class="rail-note">{{ n }}</p>{% endfor %}
-    <p class="rail-note">Typical high/low, rain chance and what to wear appear on each outdoor training day below.</p>
-    {% else %}
+    {% if not (conditions and conditions.days) %}
     <p class="rail-note">Conditions haven't been generated for this plan yet — they need at least one session at a locale with coordinates.</p>
     {% endif %}
   </div>
