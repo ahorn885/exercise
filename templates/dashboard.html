@@ -355,7 +355,7 @@
             {% if e.kind == 'strength' %}
               {{ e.detail }}{% if e.progressed %} <span class="chip good">{{ e.progressed }} ↑</span>{% endif %}
             {% else %}
-              {{ e.duration_min|int ~ 'm' if e.duration_min else '—' }}{% if e.distance_mi %} · {{ e.distance_mi }} mi{% endif %}
+              {{ e.duration_min|duration_mmss if e.duration_min else '—' }}{% if e.distance_mi %} · {{ e.distance_mi|distance_hundredths }} mi{% endif %}
             {% endif %}
           </td>
         </tr>

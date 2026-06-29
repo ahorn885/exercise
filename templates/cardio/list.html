@@ -55,8 +55,8 @@
       <td class="text-nowrap">{{ e.date }}</td>
       <td class="text-nowrap">{{ e.activity }}</td>
       <td class="text-nowrap dim">{{ e.activity_name or '' }}</td>
-      <td class="text-nowrap">{{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}</td>
-      <td class="text-nowrap">{{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}</td>
+      <td class="text-nowrap">{{ e.duration_min|duration_mmss if e.duration_min else '—' }}</td>
+      <td class="text-nowrap">{{ e.distance_mi|distance_hundredths if e.distance_mi else '—' }}{% if e.distance_mi %} mi{% endif %}</td>
       <td class="text-nowrap">
         {%- if e.activity in BIKE and e.avg_speed -%}{{ e.avg_speed }} mph
         {%- elif e.avg_pace -%}{{ e.avg_pace }}/mi
