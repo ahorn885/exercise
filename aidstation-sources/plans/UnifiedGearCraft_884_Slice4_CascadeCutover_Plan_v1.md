@@ -132,3 +132,81 @@ Repoint the three readers onto the new store, keeping bike/paddle behavior ident
   backfill owed; capture starts going forward. Crafts (bikes/paddles) repoint to write athlete_gear.
 
 **End of plan v1.**
+
+---
+
+## Slice 4b execution addendum (2026-06-28)
+
+Written while picking the next #884 build after #196 Phase 4 Slice 2 merged. Grounds the
+remaining 4b work in on-disk + on-`main` state and records two findings that reshape how 4b
+must be sub-sliced. **No 4b code shipped this session** — 4b is Andy's-go-gated (cross-layer +
+over-ceiling-as-one-unit); this addendum is the spec-first "propose splitting before starting"
+step (5-file-ceiling rule).
+
+### Status reconciliation (on `main`)
+- **4.1a (read cutover) + 4.2 (craft write-sync) are MERGED** — PR **#937**, commit `e70e520` on
+  `main`. (CARRY_FORWARD's slice-4 PROGRESS line was written pre-merge and still said
+  "DONE+pushed / PR gated"; reconciled this session.)
+- **Remaining 4b** = the gear-toggle **capture** surface + the **cascade extension**
+  (fidelity-rank walk + rollerski carve-out + 2C `cluster_gear_toggle_states` feed) + **migration
+  `0026`** (ski-gear `craft_terrain_compatibility` rows). Then **4.3** (redump retiring
+  `craft_discipline_aliases` + the EX126/EX128 equipment strip).
+
+### Finding 1 — migration `0026` is version-digest-coupled to the cascade (do NOT ship it standalone)
+`craft_terrain_compatibility` is **already a live-read Layer-0 table** and is in
+`_LAYER0_TABLE_FAMILY` → "0A" (`layer4/orchestrator.py:2003`), so it feeds
+`_q_current_etl_version_set` (`:2031`). That digest is built from the **DISTINCT `etl_version` per
+table** (`SELECT DISTINCT … etl_version … WHERE superseded_at IS NULL`, `:2051-2056`), not row
+contents. So:
+- Stamping `0026`'s rows with a **fresh** `etl_version` adds a DISTINCT value → the **0A digest
+  changes → a global plan-gen cache invalidation** (every plan folding `etl_version_set`
+  re-synthesizes) — *even though nothing reads the new ski rows until the cascade extension lands*
+  (cascade still gated to `{bike,paddle}`, `session_feasibility.py:362`).
+- Stamping them with an **existing** `etl_version` dodges the invalidation but muddies provenance
+  and breaks the `0024`/`0025` "delete-this-version-then-insert" idempotency isolation — a hack.
+- **Therefore `0026` must co-land with the cascade extension that reads it (4b-ii)** so the one
+  (justified) invalidation coincides with the behavior change. This differs from `0024`/`0025`,
+  which created *new, unread* tables (no family-map coupling). It is a Trigger #3 (cross-layer
+  serving) event when it lands → Andy's go on the invalidation.
+
+### Finding 2 — the capture surface needs a slug→label decision (not a mechanical mirror)
+The gear-toggle capture form writes the discipline-unlocking `GEAR_REGISTRY` slugs
+(`classic_xc_ski`, `skate_xc_ski`, `rollerskis`, `snowshoes`, `climbing_gear`, `mountaineering`,
+`skimo_at`) via `replace_owned_gear_for_kinds(..., {ski,snow,climbing,alpine})`. The
+`_skills_form.html` precedent sources checkbox copy from a Layer-0 vocab table — but
+`sport_specific_gear_toggles` keys its rows by **human strings** ("Classic XC ski setup",
+"Touring/AT ski setup", "Climbing — roped", "Snowshoeing setup", "Mountaineering") that **do not
+map 1:1 to the slugs**, and there is **no `rollerskis` row at all** (new §5.5 slug). So capture
+needs either a small slug→label display map + net-new rollerski copy, or a vocab add — **user-facing
+copy (coaching voice) / possible Trigger #2** → Andy's decision, not a unilateral pick.
+
+### Ceiling-respecting decomposition
+Full 4b (capture + cascade + `0026`) is ~6 substantive files. Andy's pinned decision #4 ("capture
+must write the store before the gate bites") forbids shipping the cascade extension first (it would
+re-resolve ski/climbing disciplines from today's terrain-only fallthrough to strength/indoor on
+empty owned-gear). Split:
+- **4b-i — gear-toggle capture (behavior-INERT, ~3-4 files).** New `/profile/gear-toggles` POST
+  mirroring `save_crafts` (`routes/profile.py:691`) → `replace_owned_gear_for_kinds(..., {ski,snow,
+  climbing,alpine})` + `evict_layer1_on_gear_change`; a `_gear_toggles_form.html` partial mirroring
+  `_crafts_form.html` on the profile gear tab (`edit.html:319`); tests; onboarding mirror optional.
+  **Public-schema `athlete_gear` only → no migration, no version digest, no cache invalidation.**
+  Output-inert: the cascade ignores ski/climbing/snow/alpine owned-gear until 4b-ii, so the
+  eviction only forces an identical re-synth on the athlete's *own* explicit save (expected).
+  Satisfies decision #4. **Blocked on Finding 2** (the slug→label copy decision).
+- **4b-ii — cascade extension + `0026` co-landed (behavior-CHANGE, ~5 files).**
+  `session_feasibility.py` (expand `_CRAFT_GROUP_KINDS`; thread `fidelity_rank`; ascending-rank
+  walk; rollerski carve-out falls out of the existing Tier-2 "own craft, ride alternate compatible
+  terrain"); `orchestrator.py` (a `fidelity_rank`-returning gear-alias reader + un-starve the 2C
+  `cluster_gear_toggle_states` feed at `:1098`); **migration `0026`** co-landed (Finding 1); tests
+  (rank-walk classic>skate>rollerski; rollerski-dryland PROXY; **bike/paddle regression identical
+  to today**; climbing gear+skill matrix). Carries the Trigger #3 invalidation + `layer0-apply`.
+- **4.3 — redump + equipment strip.** Unchanged from the plan body above.
+
+### Recommendation
+Build **4b-i first** (after Andy rules on the Finding-2 copy/vocab approach), then **4b-ii**. Each
+PR ≤ 5 files and reviewable; the digest foot-gun (Finding 1) is resolved by co-landing `0026` with
+its consumer. **Open decisions for Andy:** (i) resume #884 4b now vs. pivot to #196 Phase 5;
+(ii) the 4b-i slug→label copy/vocab approach; (iii) acknowledge the 4b-ii cross-layer cache
+invalidation when `0026` lands.
+
+**End of plan (v1 body + 2026-06-28 4b addendum).**

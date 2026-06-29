@@ -3099,6 +3099,32 @@ _PG_MIGRATIONS = [
     "ALTER TABLE canonical_daily_wellness ALTER COLUMN hrv_7d_avg_ms     TYPE DOUBLE PRECISION",
     "ALTER TABLE canonical_daily_wellness ALTER COLUMN vo2max_running    TYPE DOUBLE PRECISION",
     "ALTER TABLE canonical_daily_wellness ALTER COLUMN vo2max_cycling    TYPE DOUBLE PRECISION",
+    # #884 slice 4b (taxonomy normalization, Andy 2026-06-29) — rename the live
+    # gear group_kind 'climbing' -> 'climb' to match GEAR_REGISTRY + the modality
+    # vocab. The denormalized group_kind on captured climbing_gear rows must track
+    # GEAR_REGISTRY, else replace_owned_gear_for_kinds (which DELETEs by kind) and
+    # get_owned_gear_toggles (which filters by _GEAR_TOGGLE_KINDS) would orphan a
+    # stale 'climbing' row. Pairs with layer0 migration 0027 (gear_discipline_aliases).
+    # Idempotent (matches only the old value); public-schema → auto-applies on deploy.
+    "UPDATE athlete_gear SET group_kind = 'climb' WHERE group_kind = 'climbing'",
+    # ── user_source_preferences (#196 Phase 5, Track B — slice B1) ───────────
+    # Optional per-athlete HARD PIN over the canonical merge's automatic pick:
+    # one preferred provider per domain ('wellness' | 'cardio'). When a pin is
+    # set and the pinned provider has a value/copy it wins; otherwise the
+    # most-complete merge applies (Andy 2026-06-29 — single pin per domain;
+    # per-metric/field pins deferred). PK (user_id, domain) → at most one pin per
+    # domain; absence = "no pin → automatic merge". Substrate only this slice —
+    # consumers wire in B2 (wellness coalesce) / B3 (cardio merge) / B4 (picker).
+    # Additive / idempotent / public-schema → auto-applies on deploy; no Neon
+    # apply owed. Design: designs/CanonicalSourcePrecedence_196_Phase5_Design_v1.md
+    """CREATE TABLE IF NOT EXISTS user_source_preferences (
+        user_id            INTEGER NOT NULL REFERENCES users(id),
+        domain             TEXT NOT NULL,
+        preferred_provider TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, domain)
+    )""",
 ]
 
 _CLOTHING_SEEDS = [

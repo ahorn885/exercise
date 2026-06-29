@@ -55,9 +55,14 @@
     {% if is_new %}
       {# For the create flow, the Mapbox hidden inputs ride inside the
          race-details form so the POST writes the full row in a single
-         transaction. #}
-      {% with selected_name=None, selected_place_name=None,
-              selected_mapbox_id=None, selected_lat=None, selected_lng=None,
+         transaction. `race` is None on the first render; after a failed save
+         it's a `_race_form_echo` dict, so read the anchored location back off
+         it to keep a picked-but-rejected location (#947). #}
+      {% with selected_name=(race.event_locale_name if race else None),
+              selected_place_name=(race.event_locale_place_name if race else None),
+              selected_mapbox_id=(race.event_locale_mapbox_id if race else None),
+              selected_lat=(race.event_locale_lat if race else None),
+              selected_lng=(race.event_locale_lng if race else None),
               search_endpoint_url=url_for('race_events.locale_search'),
               acknowledge_endpoint_url=url_for('race_events.acknowledge_mapbox_disclosure'),
               return_to_url=url_for('race_events.new_race') %}
@@ -571,6 +576,31 @@
       });
     }
 
+    // Issue #948 — the race-URL parse returns included_discipline_ids; the
+    // shared autofill partial hands them here so the grid toggles them on
+    // (they were never checked before, forcing manual entry). Stored because a
+    // framework_sport change rebinds the grid asynchronously — re-applied after
+    // every rebind so the parsed picks survive the swap.
+    let desiredDisciplineIds = null;
+
+    function applyDesiredDisciplines() {
+      if (!desiredDisciplineIds || !desiredDisciplineIds.size) return;
+      let changed = false;
+      grid.querySelectorAll('input[name="included_discipline_ids"]').forEach((box) => {
+        if (desiredDisciplineIds.has(box.value) && !box.checked) {
+          box.checked = true;
+          changed = true;
+        }
+      });
+      if (changed) applyTerrainDisciplineSelects();
+    }
+
+    document.addEventListener('race-autofill:disciplines', function (ev) {
+      const ids = (ev.detail && ev.detail.ids) || [];
+      desiredDisciplineIds = new Set(ids);
+      applyDesiredDisciplines();
+    });
+
     async function fetchDisciplinesAndRebind(frameworkSport) {
       try {
         const url = ENDPOINT + '?framework_sport=' + encodeURIComponent(frameworkSport);
@@ -579,6 +609,7 @@
         const data = await resp.json();
         const results = (data && data.results) || [];
         refreshGrid(results);
+        applyDesiredDisciplines();
         applyTerrainDisciplineSelects();
       } catch (_e) { /* network/parse error — leave existing grid alone */ }
     }

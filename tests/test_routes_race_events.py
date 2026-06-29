@@ -898,12 +898,21 @@ class TestNewRaceMapboxRequired:
     required-field gates.
     """
 
-    def test_post_without_mapbox_id_flashes_and_redirects(self, monkeypatch):
+    def test_post_without_mapbox_id_flashes_and_rerenders(self, monkeypatch):
         app = _make_app()
         conn = _RouteFakeConn()
         import routes.race_events as re_mod
         monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        # #947 — a failed gate must RE-RENDER the form (preserving the
+        # athlete's auto-filled details + picked distance) rather than redirect
+        # to a blank one. Capture the echo passed to the render helper so we can
+        # assert the submitted values are carried back into the form.
+        captured = {}
+        def fake_render(db, uid, race):
+            captured['race'] = race
+            return 'rendered'
+        monkeypatch.setattr(re_mod, '_render_new_race_form', fake_render)
 
         with app.test_request_context(
             '/profile/race-events/new',
@@ -912,6 +921,7 @@ class TestNewRaceMapboxRequired:
                 'name': 'Test Race',
                 'event_date': '2026-07-17',
                 'race_format': 'continuous_multi_day',
+                'distance_km': '50',
                 # `event_locale_mapbox_id` deliberately absent.
             },
         ):
@@ -919,9 +929,10 @@ class TestNewRaceMapboxRequired:
 
         # No create SQL should fire when the gate rejects.
         assert _sql_fragment_count(conn, 'INSERT INTO race_events') == 0
-        # 302 redirect back to /profile/race-events/new.
-        assert response.status_code == 302
-        assert '/new' in response.location
+        # Re-render (not a redirect) with the submitted values preserved.
+        assert response == 'rendered'
+        assert captured['race']['name'] == 'Test Race'
+        assert captured['race']['distance_km'] == 50.0
 
     def test_post_with_mapbox_id_proceeds(self, monkeypatch):
         app = _make_app()
@@ -966,7 +977,7 @@ class TestUpdateRaceMapboxRequired:
     can land.
     """
 
-    def test_post_on_unanchored_row_flashes_and_redirects(self, monkeypatch):
+    def test_post_on_unanchored_row_flashes_and_rerenders(self, monkeypatch):
         app = _make_app()
         conn = _RouteFakeConn()
         import routes.race_events as re_mod
@@ -984,6 +995,13 @@ class TestUpdateRaceMapboxRequired:
                 'is_target_event': False,
             },
         )
+        # #947 — re-render the edit form (preserving the submitted details)
+        # rather than redirect to a fresh GET that drops the athlete's input.
+        captured = {}
+        def fake_render(db, uid, race):
+            captured['race'] = race
+            return 'rendered'
+        monkeypatch.setattr(re_mod, '_render_edit_race_form', fake_render)
 
         with app.test_request_context(
             '/profile/race-events/10/update',
@@ -992,13 +1010,17 @@ class TestUpdateRaceMapboxRequired:
                 'name': 'Legacy Race',
                 'event_date': '2026-07-17',
                 'race_format': 'single_day',
+                'distance_km': '50',
             },
         ):
             response = re_mod.update_race(10)
 
         # No UPDATE SQL should fire when the gate rejects.
         assert _sql_fragment_count(conn, 'UPDATE race_events') == 0
-        assert response.status_code == 302
+        assert response == 'rendered'
+        # Submitted details overlaid on the loaded row, id preserved.
+        assert captured['race']['id'] == 10
+        assert captured['race']['distance_km'] == 50.0
 
     def test_post_on_anchored_row_proceeds(self, monkeypatch):
         app = _make_app()
