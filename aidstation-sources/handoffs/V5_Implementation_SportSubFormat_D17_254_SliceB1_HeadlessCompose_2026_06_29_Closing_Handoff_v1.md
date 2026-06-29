@@ -1,7 +1,8 @@
 # V5 Implementation — #254 / D-17 Sport Sub-Format Capture — Slice B1 (headless backend compose) — Closing Handoff
 
 **Date:** 2026-06-29
-**Branch:** `claude/issue-254-slice-b-46tprr`
+**Branch:** `claude/issue-254-slice-b-46tprr` — **PR [#1022](https://github.com/ahorn885/exercise/pull/1022)** (merging via auto-merge, merge commit, on Andy's go 2026-06-29; merged `origin/main` in first — clean except a CURRENT_STATE pointer reorder).
+**Next session continues:** **#254 slice B2 (capture UI + override)** — see §6.
 **Issue:** [#254](https://github.com/ahorn885/exercise/issues/254) — Onboarding: map a race goal to the correct sport sub-format (D-17 Sheet 3 / Sheet 5 naming mismatch). Parent #246.
 **Design:** `aidstation-sources/designs/Onboarding_SportSubFormat_D17_254_Design_v1.md` (ratified; §8 slice B).
 **Predecessor handoff:** `handoffs/V5_Implementation_SportSubFormat_D17_254_Slice2_Guard_SliceA_Layer0Map_2026_06_29_Closing_Handoff_v1.md` (slice 2 guard + slice A Layer-0 map).
