@@ -101,7 +101,6 @@ _EVENT_DATE = date(2026, 6, 8)  # 7 days out
 def _layer1() -> dict[str, Any]:
     return {
         "experience_level": "advanced",
-        "coach_notes": None,
         "travel_constraint": None,
         "sleep_baseline": None,
     }

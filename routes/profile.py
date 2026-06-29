@@ -415,7 +415,6 @@ def edit():
             height_cm=height_cm,
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
-            coach_notes=_str('coach_notes'),
             experience_level=experience_level,
             unit_preference=submitted_unit_pref,
             # #894 — the nutrition / fueling / altitude protocol moved to its own

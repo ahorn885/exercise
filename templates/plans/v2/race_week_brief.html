@@ -163,8 +163,8 @@
   </div>
   {% endif %}
 
-  {# #826 — always-visible "science behind your plan" panel. The brief + race
-     plan reuse this plan version's evidence links. #}
+  {# #943 — compact "Why this plan" source footnote (was the big #826 card). The
+     brief + race plan reuse this plan version's evidence links. #}
   {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
 </div>
 {% endblock %}

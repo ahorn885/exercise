@@ -1,5 +1,8 @@
 {% extends 'base.html' %}
 {% set nav_active = 'plan' %}
+{# #943 — inline "science behind your plan" tooltips (phase / recovery / taper /
+   calories) + the compact source footnote, replacing the big #826 card. #}
+{% import '_science.html' as science %}
 {% block title %}{{ plan_name }} · AIDSTATION{% endblock %}
 {% block crumbs %}<a href="{{ url_for('dashboard.index') }}">Plan</a> <span class="sep">/</span> <b>{{ plan_name }}</b>{% endblock %}
 {% block topbar_actions %}
@@ -40,9 +43,6 @@
     · {{ session_count }} session{{ '' if session_count == 1 else 's' }}
   </p>
 
-  {# #826 — always-visible "science behind your plan" panel. #}
-  {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
-
   {# Item B (§5.4 Slice 2) — surfaced informational coaching_flags as plan-page
      notes. On the review screen these FYI items appear only when something else
      parks the plan; a green plan never showed them. List them here so the athlete
@@ -74,7 +74,7 @@
       {% for phase, t in nutrition.per_phase_baseline.items() %}
       <div class="nutri-phase">
         <span class="chip">{{ phase }}</span>
-        <span class="nutri-kcal">{{ t.daily_calorie_target_kcal }} kcal</span>
+        {{ science.note(t.daily_calorie_target_kcal ~ ' kcal', 'How this is calculated', "Phase baseline = your estimated resting energy (BMR) × an activity multiplier for this phase. It's a weekly average — each day's target shifts above or below it with that day's training load.", 'nutri-kcal') }}
         <span class="rail-note nutri-macros">C {{ t.macros.cho_g }} · P {{ t.macros.protein_g }} · F {{ t.macros.fat_g }} g</span>
       </div>
       {% endfor %}
@@ -115,10 +115,7 @@
         <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if conditions and conditions.days else 'Generate' }}</button>
       </form>
     </div>
-    {% if conditions and conditions.days %}
-    {% for n in conditions.notes %}<p class="rail-note">{{ n }}</p>{% endfor %}
-    <p class="rail-note">Typical high/low, rain chance and what to wear appear on each outdoor training day below.</p>
-    {% else %}
+    {% if not (conditions and conditions.days) %}
     <p class="rail-note">Conditions haven't been generated for this plan yet — they need at least one session at a locale with coordinates.</p>
     {% endif %}
   </div>
@@ -130,7 +127,7 @@
       {% set pm = sessions | selectattr('phase_metadata') | map(attribute='phase_metadata') | first %}
       {% if pm and (pm.phase_name != ns.phase or pm.week_in_phase != ns.week) %}
         <div class="phase-head">
-          <span class="chip accent">{{ pm.phase_name }} phase</span>
+          {{ science.phase_term(pm.phase_name, evidence_sources, 'chip accent') }}
           <span class="rail-note">Week {{ pm.week_in_phase }} of {{ pm.total_weeks_in_phase }}</span>
           {% if pm.intended_volume_band and (pm.intended_volume_band[0] or pm.intended_volume_band[1]) %}
           <span class="rail-note">target {{ '%g'|format(pm.intended_volume_band[0]) }}–{{ '%g'|format(pm.intended_volume_band[1]) }} h</span>
@@ -160,7 +157,8 @@
         {% set merge_heat = dn is not none and fuel.heat is not none %}
         {% if dn %}
         <div class="day-fuel">
-          <span class="chip{{ ' accent' if dn.load_tier in ['hard', 'peak'] else '' }}">⚡ {{ dn.total_kcal }} kcal</span>
+          {% set _kcal_cls = 'chip accent' if dn.load_tier in ['hard', 'peak'] else 'chip' %}
+          {{ science.note('⚡ ' ~ dn.total_kcal ~ ' kcal', 'How this is calculated', "This day's target is your phase baseline redistributed by the day's training load — estimated from each session's intensity and duration. Rest days sit near your resting floor; long or hard days take the surplus, so the week still averages out to your phase target.", _kcal_cls) }}
           {% if dn.carb_loading_applied %}<span class="chip accent">🍝 carb load</span>{% endif %}
           <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g</span>
           {% if dn.fueling_note or merge_heat %}<p class="day-fuel-note">{{ dn.fueling_note }}{% if merge_heat %} In the heat, {{ fuel.heat.split('—', 1)[1] | trim }}.{% endif %}</p>{% endif %}
@@ -204,7 +202,7 @@
             <div class="sess-head">
               <span class="sess-name">Rest</span>
             </div>
-            <p class="sess-intent">Off day — recovery.</p>
+            <p class="sess-intent">Off day — {{ science.term('recovery', 'recovery-adaptation', evidence_sources) }}.</p>
           </div>
         </div>
         {% else %}
@@ -215,7 +213,7 @@
               <span class="sess-name">
                 {% if sess.kind == 'rest' %}Rest{% if sess.rest_reason %} — {{ sess.rest_reason|replace('_', ' ')|capitalize }}{% endif %}
                 {% elif sess.kind == 'strength' %}Strength{% if sess.discipline_name %} · {{ sess.discipline_name }}{% endif %} — {{ sess.duration_min }} min
-                {% elif sess.kind == 'recovery' %}Recovery — {{ sess.duration_min }} min
+                {% elif sess.kind == 'recovery' %}{{ science.term('Recovery', 'recovery-adaptation', evidence_sources) }} — {{ sess.duration_min }} min
                 {% else %}{{ sess.discipline_name or sess.discipline_id or sess.kind|title }} — {{ sess.duration_min }} min{% endif %}
               </span>
               {% if sess.kind != 'rest' %}<span class="chip">{{ sess.intensity_summary|title }}</span>{% endif %}
@@ -329,5 +327,8 @@
     <p class="rail-note">No sessions persisted for this plan version.</p>
   </div>
   {% endif %}
+
+  {# #943 — compact "Why this plan" source footnote (was the big #826 card). #}
+  {% with evidence = evidence_sources %}{% include '_science_panel.html' %}{% endwith %}
 </div>
 {% endblock %}

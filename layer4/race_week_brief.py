@@ -35,8 +35,8 @@ carries the brief-rendering-relevant surface. See
 **Layer 1 payload handling (v1).** `Layer1Payload` is opaque `dict[str, Any]`
 per the PR-D + Step 4a/b/c/d precedent (Layer 1 typed contract out of v1
 scope). The prompt template reads specific keys (`experience_level`,
-`coach_notes`, `travel_constraint`, `sleep_baseline`) and
-renders missing keys as empty placeholders.
+`travel_constraint`, `sleep_baseline`) and renders missing keys as empty
+placeholders.
 
 **Tool-schema fidelity (Step 4a precedent).** The `record_race_week_brief`
 tool schema mirrors the full `RaceWeekBrief` + `RacePlan` + Taper-session
@@ -1079,9 +1079,6 @@ def _render_user_prompt(
     parts.append(f"User ID {layer3a_payload.user_id}.")
     exp = layer1_payload.get("experience_level") or "unknown"
     parts.append(f"Experience level: {exp}.")
-    coach_notes = layer1_payload.get("coach_notes")
-    if coach_notes:
-        parts.append(f"Coach notes: {coach_notes}")
     travel = layer1_payload.get("travel_constraint")
     if travel:
         parts.append(f"Travel constraint: {travel}")

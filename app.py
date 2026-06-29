@@ -212,7 +212,44 @@ def _workout_steps(description):
     return steps
 
 
+def _duration_mmss(minutes):
+    """Render a duration given in minutes as `mm:ss` (issue #952).
+
+    Workout durations are stored as (possibly fractional) minutes. Showing
+    "45.5 min" reads badly; athletes think in minutes-and-seconds. This drops
+    decimal minutes and rounds to whole seconds, never finer. The minutes
+    field is the *total* minutes, so it can exceed 59 (a 125-min ride renders
+    "125:30"). Returns '' for None/blank so templates can fall back to a dash.
+    """
+    if minutes is None or minutes == '':
+        return ''
+    try:
+        total_seconds = int(round(float(minutes) * 60))
+    except (TypeError, ValueError):
+        return ''
+    mins, secs = divmod(total_seconds, 60)
+    return f"{mins}:{secs:02d}"
+
+
+def _distance_hundredths(value):
+    """Round a distance to the hundredth, trimming trailing zeros (issue #952).
+
+    FIT/GPX ingest leaves distances with long decimal tails (13.123456 mi).
+    Round to two places and strip insignificant zeros so 13.50 -> "13.5" and
+    5.00 -> "5". Returns '' for None/blank.
+    """
+    if value is None or value == '':
+        return ''
+    try:
+        rounded = round(float(value), 2)
+    except (TypeError, ValueError):
+        return ''
+    return f"{rounded:.2f}".rstrip('0').rstrip('.')
+
+
 app.jinja_env.filters['workout_steps'] = _workout_steps
+app.jinja_env.filters['duration_mmss'] = _duration_mmss
+app.jinja_env.filters['distance_hundredths'] = _distance_hundredths
 
 from routes.dashboard import bp as dashboard_bp
 from routes.training import bp as training_bp

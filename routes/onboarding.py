@@ -856,19 +856,6 @@ def _parse_race_terrain(form):
     return out
 
 
-def _parse_discipline_id_filter(form):
-    """Parse `included_discipline_ids` checkbox values into a canonical-id
-    list, or None when no boxes are checked. Mirrors
-    `routes/race_events.py:_parse_discipline_id_filter` exactly.
-    """
-    if hasattr(form, 'getlist'):
-        raw = form.getlist('included_discipline_ids')
-    else:
-        raw = []
-    values = [v.strip() for v in raw if isinstance(v, str) and v and v.strip()]
-    return values or None
-
-
 def _terrain_choices(db):
     """Return `{id, label, description}` dicts for race-eligible
     `layer0.terrain_types` rows.
@@ -1049,6 +1036,7 @@ def target_race_save():
     # failed-validation gate below instead of redirecting to a blank one (#947).
     from routes.race_events import (
         _extract_mapbox_locale_from_form,
+        _included_disciplines_from_terrain,
         _parse_estimated_duration_hr,
         _parse_first_time_at_distance,
         _parse_goal_outcome,
@@ -1057,10 +1045,7 @@ def target_race_save():
         _parse_primary_metric,
         _parse_race_url,
         _race_form_echo,
-        _remap_discipline_filter_on_sport_change,
-        _rescope_terrain_to_included,
-        _terrain_discipline_mismatch_flash,
-        _terrain_discipline_mismatches,
+        _rescope_terrain_to_framework_sport,
     )
 
     name = _parse_str_field(request.form, 'name')
@@ -1091,7 +1076,6 @@ def target_race_save():
     new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
     new_primary_metric = _parse_primary_metric(request.form)
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
-    parsed_discipline_filter = _parse_discipline_id_filter(request.form)
     # §H.2 goal context
     new_goal_outcome = _parse_goal_outcome(request.form)
     new_first_time_at_distance = _parse_first_time_at_distance(request.form)
@@ -1107,49 +1091,36 @@ def target_race_save():
         return _render_target_race_form(db, uid, _race_form_echo(request.form))
 
     target = _get_target_race_row(db, uid)
-    # #892 — re-map (don't wipe) the discipline narrowing when the race event
-    # type (framework_sport) changes; mirrors `routes/race_events.py:update_race`.
-    # Canonical IDs are global, so prior picks usually stay valid for the new
-    # event type — keep the surviving subset and re-scope terrain couplings to
-    # match, instead of clearing to None (which collapsed the picker to
-    # "Race-wide"). Only the UPDATE branch has a prior selection to re-map.
+    # #892 / #949 — when the race event type (framework_sport) changes on the
+    # UPDATE branch, re-scope terrain rows pinned to a discipline the new event
+    # type doesn't include back to race-wide (so the derived included set can't
+    # silently re-include an out-of-sport discipline). Mirrors
+    # `routes/race_events.py:update_race`. Only the UPDATE branch has a prior
+    # sport to compare against.
     if target:
         prior_framework_sport = target.get('framework_sport')
         prior_discipline_filter = target.get('included_discipline_ids')
         if prior_framework_sport != new_framework_sport:
-            new_discipline_filter, dropped_disciplines = (
-                _remap_discipline_filter_on_sport_change(
-                    db, new_framework_sport, parsed_discipline_filter,
-                    prior_discipline_filter,
+            new_race_terrain, dropped_disciplines = (
+                _rescope_terrain_to_framework_sport(
+                    db, new_framework_sport, new_race_terrain
                 )
-            )
-            new_race_terrain = _rescope_terrain_to_included(
-                new_race_terrain, new_discipline_filter
             )
             if dropped_disciplines:
                 flash(
-                    'Race event type changed — disciplines that don’t apply to '
-                    'the new event type were dropped (' +
-                    ', '.join(dropped_disciplines) + '); your other picks were '
-                    'kept. Review the discipline list below.',
+                    'Race event type changed — terrain scoped to disciplines '
+                    'that don’t apply to the new event type (' +
+                    ', '.join(dropped_disciplines) + ') was set back to '
+                    'race-wide. Review the terrain breakdown below.',
                     'info',
                 )
-        else:
-            new_discipline_filter = parsed_discipline_filter
     else:
         prior_framework_sport = None
         prior_discipline_filter = None
-        new_discipline_filter = parsed_discipline_filter
 
-    # Issue #342 — block terrain rows scoped to a discipline that isn't in
-    # the race's included disciplines (validated against the effective
-    # filter, post auto-clear). Mirrors routes/race_events.py.
-    mismatches = _terrain_discipline_mismatches(
-        new_race_terrain, new_discipline_filter
-    )
-    if mismatches:
-        flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
-        return _render_target_race_form(db, uid, _race_form_echo(request.form))
+    # #949 — included disciplines are derived from the (re-scoped) terrain
+    # breakdown; there's no separate grid, so no #342 mismatch is possible.
+    new_discipline_filter = _included_disciplines_from_terrain(new_race_terrain)
 
     if target:
         update_race_event(

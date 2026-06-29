@@ -91,7 +91,7 @@
         <td>
           {{ e.activity }}{% if e.activity_name %} <span class="dim">· {{ e.activity_name }}</span>{% endif %}
           <span class="dim">·</span>
-          {{ e.duration_min or '—' }}{% if e.duration_min %} min{% endif %}
+          {{ e.duration_min|duration_mmss if e.duration_min else '—' }}
           {%- if e.activity in BIKE and e.avg_speed %} <span class="dim">·</span> {{ e.avg_speed }} mph
           {%- elif e.avg_pace %} <span class="dim">·</span> {{ e.avg_pace }}/mi
           {%- elif e.avg_speed %} <span class="dim">·</span> {{ e.avg_speed }} mph
@@ -99,7 +99,7 @@
         </td>
         <td class="text-nowrap dim">—</td>
         <td class="text-nowrap">
-          {{ e.distance_mi or '—' }}{% if e.distance_mi %} mi{% endif %}
+          {{ e.distance_mi|distance_hundredths if e.distance_mi else '—' }}{% if e.distance_mi %} mi{% endif %}
           {% if e.avg_hr %}<span class="dim">· {{ e.avg_hr }} bpm</span>{% endif %}
         </td>
         <td class="text-nowrap">{% if e.elev_gain_ft %}{{ e.elev_gain_ft }} ft{% else %}—{% endif %}</td>
