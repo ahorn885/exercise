@@ -2788,6 +2788,31 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS plan_versions_unseen_notification_idx "
     "ON plan_versions (user_id) "
     "WHERE notified_at IS NOT NULL AND notification_seen_at IS NULL",
+    # ── Notification delivery preferences (#963) ─────────────────────────
+    # Per-(user × notification_type × channel) opt-in overrides behind the §22
+    # settings matrix. Registry (`notification_prefs.py`) owns the defaults; a
+    # row here is a user's deviation from one. Absent row ⇒ resolve to default,
+    # so a new user needs no seeding. `channel` includes 'push' even though it's
+    # undeliverable until a native app ships — the preference is stored now and
+    # delivery lands later (#963 scope: "wire the preference now, deliver
+    # later"). Composite PK is the upsert conflict target
+    # (notification_preferences_repo.set_pref). PG-only — SQLite dev has no such
+    # table; the repo's hot-path reads fail open to defaults so its absence is
+    # deploy-safe.
+    """CREATE TABLE IF NOT EXISTS notification_preferences (
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        notification_type TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, notification_type, channel)
+    )""",
+    # Read/unread state for the §21 notifications feed (#963). Orthogonal to
+    # `dismissed_at` (dismiss = resolved/archived; read = merely seen): an
+    # undismissed nudge can be unread (read_at NULL) or read. Nullable; legacy
+    # rows read as unread until stamped. The feed's "Mark read"/"Mark all read"
+    # actions and unread styling key off it.
+    "ALTER TABLE account_nudges ADD COLUMN IF NOT EXISTS read_at TIMESTAMP",
     # ── Layer 3D HITL gate (#213, Slice 1) ───────────────────────────────
     # The 3D gate aggregates the human-review items the upstream nodes already
     # emit (2A/2D/2E/3B) and parks a plan at `needs_review` instead of advancing
