@@ -24,8 +24,11 @@ from layer4.rx_wire import (
     RxWireDiagnostic,
     _FIRST_EXPOSURE_TEMPLATES,
     _classify_category,
+    _is_per_hand_dumbbell,
+    _is_unilateral,
     _parse_target_reps,
     _round_to_gym_increment,
+    _with_load_conventions,
     apply_current_rx,
 )
 
@@ -631,6 +634,162 @@ class TestDegradedDb:
         assert "first_exposure" not in result_ex.coaching_flags
         assert diag.skipped_count == 1
         assert diag.outcomes[0].path == "skipped"
+
+
+class TestPrescriptionConventions:
+    """#961 — the rendered load makes the two ambiguous conventions explicit:
+    a two-dumbbell load is labelled "per hand" (the logged weight is per
+    implement, not total), and a unilateral movement's reps are labelled
+    "per side"."""
+
+    def _hit(self, ex, resolved, row):
+        """Run apply_current_rx for a single current_rx hit, return the
+        rewritten exercise."""
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [resolved])
+        db = _FakeDb({(ex.exercise_name, 1): row})
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+        return new_payload.sessions[0].strength_exercises[0]
+
+    def test_two_dumbbell_weight_labelled_per_hand(self):
+        # 27.2 kg ≈ 60 lb; baseline reps == prescribed reps → no phase re-express.
+        ex = _strength_ex("EX234", name="Biceps Curl (DB)", reps_per_set=10)
+        resolved = _resolved("EX234", "Biceps Curl (DB)", patterns=["Pull"])
+        row = _row(sets=3, reps=10, weight=27.2155)
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "60 lb per hand"
+
+    def test_unilateral_weight_labelled_per_side(self):
+        # Single-leg movement (no dumbbell cue) → "per side" only.
+        ex = _strength_ex("EX004", name="Single-Leg Deadlift (Loaded)", reps_per_set=8)
+        resolved = _resolved("EX004", "Single-Leg Deadlift (Loaded)",
+                             patterns=["Single-Leg", "Hinge"])
+        row = _row(sets=3, reps=8, weight=83.9146)  # ≈ 185 lb
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "185 lb, per side"
+
+    def test_unilateral_two_dumbbell_gets_both_labels(self):
+        # Bulgarian split squat (DB): a dumbbell in each hand, worked one leg at
+        # a time → "per hand, per side" (exactly the #961 example).
+        ex = _strength_ex("EX021", name="Bulgarian Split Squat (DB)", reps_per_set=8)
+        resolved = _resolved("EX021", "Bulgarian Split Squat (DB)",
+                             patterns=["Single-Leg", "Squat"])
+        row = _row(sets=3, reps=8, weight=27.2155)  # ≈ 60 lb
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "60 lb per hand, per side"
+
+    def test_goblet_single_dumbbell_not_per_hand(self):
+        # Goblet squat carries ONE bell (both hands) → no per-hand label.
+        ex = _strength_ex("EX002", name="Goblet Squat (DB/KB)", reps_per_set=10)
+        resolved = _resolved("EX002", "Goblet Squat (DB/KB)", patterns=["Squat"])
+        row = _row(sets=3, reps=10, weight=27.2155)  # ≈ 60 lb
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "60 lb"
+
+    def test_one_arm_dumbbell_is_per_side_not_per_hand(self):
+        # One-arm row: one bell in one hand, worked a side at a time → per side,
+        # NOT per hand.
+        ex = _strength_ex("EX246", name="One-Arm Dumbbell Row", reps_per_set=10)
+        resolved = _resolved("EX246", "One-Arm Dumbbell Row", patterns=["Pull"])
+        row = _row(sets=3, reps=10, weight=27.2155)  # ≈ 60 lb
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "60 lb, per side"
+
+    def test_bilateral_barbell_unchanged(self):
+        # No dumbbell, no laterality → the existing "185 lb" render is untouched.
+        ex = _strength_ex("EX001", name="Back Squat (Barbell)", reps_per_set=8)
+        resolved = _resolved("EX001", "Back Squat (Barbell)", patterns=["Squat"])
+        row = _row(sets=3, reps=8, weight=83.9146)
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "185 lb"
+
+    def test_duration_unilateral_gets_per_side(self):
+        # A unilateral duration hold (e.g. side plank) → "45s per side"; no
+        # per-hand label on a duration target.
+        ex = _strength_ex("EX-SP", name="Single-Leg Glute Bridge Hold")
+        resolved = _resolved("EX-SP", "Single-Leg Glute Bridge Hold",
+                             patterns=["Single-Leg"])
+        row = _row(sets=3, reps=None, weight=None, duration=45)
+        result = self._hit(ex, resolved, row)
+        assert result.load_prescription == "45s, per side"
+
+    def test_first_exposure_unilateral_gets_per_side(self):
+        # First-exposure unilateral → the calibration qualifier carries the
+        # per-side note; "per hand" never applies (no weight on this path).
+        ex = _strength_ex("EX021", name="Bulgarian Split Squat (DB)", reps_per_set=8)
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX021", "Bulgarian Split Squat (DB)",
+                                          patterns=["Single-Leg", "Squat"])])
+        db = _FakeDb()  # no rows → first exposure
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        result = new_payload.sessions[0].strength_exercises[0]
+        base_q, _note = _FIRST_EXPOSURE_TEMPLATES[_classify_category(
+            ex, _resolved("EX021", "Bulgarian Split Squat (DB)",
+                          patterns=["Single-Leg", "Squat"]))]
+        assert result.load_prescription == f"{base_q}, per side"
+
+    def test_bilateral_first_exposure_unchanged(self):
+        # A bilateral first-exposure load qualifier is untouched (the #962
+        # contract): no convention suffix appended.
+        ex = _strength_ex("EX001", name="Back Squat (Barbell)")
+        session = _strength_session("S-1", [ex])
+        l2c = _layer2c("home", [_resolved("EX001", "Back Squat (Barbell)",
+                                          patterns=["Squat"])])
+        db = _FakeDb()
+
+        new_payload, _ = apply_current_rx(_payload([session]), db, 1, {"home": l2c})
+
+        result = new_payload.sessions[0].strength_exercises[0]
+        assert result.load_prescription == _FIRST_EXPOSURE_TEMPLATES["compound_barbell"][0]
+        assert "per side" not in result.load_prescription
+
+    def test_unilateral_detected_from_name_without_resolved(self):
+        # No resolved 2C entry → the name-cue fallback still flags per-side.
+        ex = _strength_ex("EX-X", name="Walking Lunge", reps_per_set=10)
+        assert _is_unilateral(ex, None) is True
+
+    def test_unilateral_detected_from_movement_pattern(self):
+        # Pattern signal wins even when the name has no laterality cue.
+        ex = _strength_ex("EX-Y", name="Step Down", reps_per_set=10)
+        resolved = _resolved("EX-Y", "Step Down", patterns=["Single-Leg"])
+        assert _is_unilateral(ex, resolved) is True
+
+
+class TestConventionHelpers:
+    """Direct unit coverage of the #961 detection + formatting helpers."""
+
+    @pytest.mark.parametrize("name", [
+        "Bulgarian Split Squat (DB)",
+        "Dumbbell Bench Press",
+        "Biceps Curl (DB)",
+        "Romanian Deadlift (DB/KB)",
+    ])
+    def test_per_hand_dumbbell_true(self, name):
+        assert _is_per_hand_dumbbell(_strength_ex("E", name=name)) is True
+
+    @pytest.mark.parametrize("name", [
+        "Goblet Squat (DB/KB)",          # single bell, both hands
+        "One-Arm Dumbbell Row",          # single bell, one hand
+        "Single-Arm DB Press",           # single bell, one hand
+        "Back Squat (Barbell)",          # no dumbbell at all
+        "Plank",                         # no equipment cue
+    ])
+    def test_per_hand_dumbbell_false(self, name):
+        assert _is_per_hand_dumbbell(_strength_ex("E", name=name)) is False
+
+    def test_with_conventions_per_hand_only(self):
+        assert _with_load_conventions("60 lb", per_hand=True, per_side=False) == "60 lb per hand"
+
+    def test_with_conventions_per_side_only(self):
+        assert _with_load_conventions("185 lb", per_hand=False, per_side=True) == "185 lb, per side"
+
+    def test_with_conventions_both(self):
+        assert _with_load_conventions("60 lb", per_hand=True, per_side=True) == "60 lb per hand, per side"
+
+    def test_with_conventions_neither(self):
+        assert _with_load_conventions("185 lb", per_hand=False, per_side=False) == "185 lb"
 
 
 class TestDiagnosticMetadata:

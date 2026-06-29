@@ -22,26 +22,41 @@
                        per-row select then renders the "no disciplines"
                        fallback option.
 
+   Issue #949 — the discipline column comes FIRST and IS the included-
+   disciplines surface: a discipline that scopes any breakdown row is an
+   included discipline (the route derives `included_discipline_ids` from
+   these rows), which is why the standalone discipline checkbox grid was
+   removed. Column order is discipline → percentage → terrain.
+
    The JS hooks (#race-terrain-rows, #add-terrain-row, #race-terrain-template,
-   `[data-discipline-select]`) assume single-render-per-page. Do not include
-   this partial twice in one template — the IDs would collide. #}
+   #race-discipline-options, `[data-discipline-select]`) assume single-render-
+   per-page. Do not include this partial twice in one template — the IDs would
+   collide. #}
 
 <div class="col-12">
   <label class="form-label">Race terrain breakdown</label>
   <small class="text-muted d-block mb-2">
-    Estimated percentages of total race distance per terrain type. Used by the terrain classifier to plan locale-relevant training. Total should sum to roughly 100% (the planner tolerates &plusmn;20%); leave blank if not yet known. Discipline column is optional &mdash; pick one to scope the terrain to a single discipline (e.g. paddle leg only), or leave race-wide.
+    Break your race down by discipline and terrain. The discipline you pick on a row <strong>includes that discipline in your plan</strong> &mdash; that's how you scope training, so there's no separate discipline toggle. Leave a row <strong>Race-wide</strong> to apply its terrain across the whole race without tying it to one discipline. Percentages are of total race distance and should sum to roughly 100% (the planner tolerates &plusmn;20%); leave the breakdown blank to let the planner auto-include disciplines from race format + duration.
   </small>
+  {# Column headers (md+ only — the stacked mobile layout reads off the
+     controls' own placeholders / default options). #}
+  <div class="row g-2 mb-1 d-none d-md-flex small text-muted text-uppercase">
+    <div class="col-md-3">Discipline</div>
+    <div class="col-md-2">% of race</div>
+    <div class="col-md-5">Terrain</div>
+    <div class="col-md-2"></div>
+  </div>
   <div id="race-terrain-rows">
     {% for entry in existing_terrain %}
       <div class="row g-2 mb-2 race-terrain-row" data-row-idx="{{ loop.index0 }}">
-        <div class="col-md-5">
+        <div class="col-md-3">
           <select class="form-select form-select-sm"
-                  name="race_terrain[{{ loop.index0 }}][terrain_id]">
-            <option value="">— Pick terrain —</option>
-            {% for tc in terrain_choices %}
-              <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}
-                      {% if tc.description %}title="{{ tc.description }}"{% endif %}>
-                {{ tc.label }}
+                  name="race_terrain[{{ loop.index0 }}][discipline_id]"
+                  data-discipline-select="1">
+            <option value="">Race-wide</option>
+            {% for dc in discipline_choices %}
+              <option value="{{ dc.id }}" {% if dc.id == entry.discipline_id %}selected{% endif %}>
+                {{ dc.id }} &mdash; {{ dc.label }}
               </option>
             {% endfor %}
           </select>
@@ -54,14 +69,14 @@
             <span class="input-group-text">%</span>
           </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-5">
           <select class="form-select form-select-sm"
-                  name="race_terrain[{{ loop.index0 }}][discipline_id]"
-                  data-discipline-select="1">
-            <option value="">Race-wide</option>
-            {% for dc in discipline_choices %}
-              <option value="{{ dc.id }}" {% if dc.id == entry.discipline_id %}selected{% endif %}>
-                {{ dc.id }} &mdash; {{ dc.label }}
+                  name="race_terrain[{{ loop.index0 }}][terrain_id]">
+            <option value="">— Pick terrain —</option>
+            {% for tc in terrain_choices %}
+              <option value="{{ tc.id }}" {% if tc.id == entry.terrain_id %}selected{% endif %}
+                      {% if tc.description %}title="{{ tc.description }}"{% endif %}>
+                {{ tc.label }}
               </option>
             {% endfor %}
           </select>
@@ -78,15 +93,21 @@
       + Add terrain
     </button>
   </div>
+  {# Discipline options for the effective framework_sport, as JSON — the JS
+     below rebuilds every per-row `<select>` from this list when the athlete
+     changes the race event type. Seeded from the same `discipline_choices`
+     the server-rendered rows use, so load-time state needs no JS pass. #}
+  <script type="application/json" id="race-discipline-options">{{ discipline_choices|tojson }}</script>
   {# Hidden template row — JS clones this when the athlete clicks "Add terrain". #}
   <template id="race-terrain-template">
     <div class="row g-2 mb-2 race-terrain-row" data-row-idx="__IDX__">
-      <div class="col-md-5">
-        <select class="form-select form-select-sm" name="race_terrain[__IDX__][terrain_id]">
-          <option value="">— Pick terrain —</option>
-          {% for tc in terrain_choices %}
-            <option value="{{ tc.id }}"
-                    {% if tc.description %}title="{{ tc.description }}"{% endif %}>{{ tc.label }}</option>
+      <div class="col-md-3">
+        <select class="form-select form-select-sm"
+                name="race_terrain[__IDX__][discipline_id]"
+                data-discipline-select="1">
+          <option value="">Race-wide</option>
+          {% for dc in discipline_choices %}
+            <option value="{{ dc.id }}">{{ dc.id }} &mdash; {{ dc.label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -97,13 +118,12 @@
           <span class="input-group-text">%</span>
         </div>
       </div>
-      <div class="col-md-3">
-        <select class="form-select form-select-sm"
-                name="race_terrain[__IDX__][discipline_id]"
-                data-discipline-select="1">
-          <option value="">Race-wide</option>
-          {% for dc in discipline_choices %}
-            <option value="{{ dc.id }}">{{ dc.id }} &mdash; {{ dc.label }}</option>
+      <div class="col-md-5">
+        <select class="form-select form-select-sm" name="race_terrain[__IDX__][terrain_id]">
+          <option value="">— Pick terrain —</option>
+          {% for tc in terrain_choices %}
+            <option value="{{ tc.id }}"
+                    {% if tc.description %}title="{{ tc.description }}"{% endif %}>{{ tc.label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -149,5 +169,75 @@
       const row = btn.closest('.race-terrain-row');
       if (row) row.remove();
     });
+
+    // ── #949: per-row discipline column = the included-disciplines surface ──
+    // Each row's `<select>` offers every discipline mapped to the race event
+    // type (framework_sport); picking one includes that discipline. When the
+    // athlete changes the event type we re-fetch the discipline set and
+    // rebuild every per-row select (and the clone-template) so the options
+    // track the new sport — preserving any current pick, and flagging a pick
+    // that's no longer in the set rather than silently dropping it.
+    const fsInput = document.getElementById('framework_sport');
+    const ENDPOINT = "{{ url_for('race_events.disciplines_search') }}";
+    const optsEl = document.getElementById('race-discipline-options');
+    let disciplineOptions = [];
+    try { disciplineOptions = JSON.parse((optsEl && optsEl.textContent) || '[]'); }
+    catch (_e) { disciplineOptions = []; }
+
+    function htmlEscape(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function buildSelectHTML(selectedId) {
+      const optIds = new Set(disciplineOptions.map((o) => o.id));
+      let html = '<option value="">Race-wide</option>';
+      disciplineOptions.forEach((o) => {
+        const selected = o.id === selectedId ? ' selected' : '';
+        html += '<option value="' + htmlEscape(o.id) + '"' + selected + '>' +
+                  htmlEscape(o.id) + ' &mdash; ' + htmlEscape(o.label) + '</option>';
+      });
+      // Preserve a saved pick that's outside the current event type's set (a
+      // legacy coupling, or one just orphaned by a sport change) — flag it
+      // instead of rewriting the athlete's data. The server re-scopes such a
+      // coupling to race-wide on save when the sport changed.
+      if (selectedId && !optIds.has(selectedId)) {
+        html += '<option value="' + htmlEscape(selectedId) + '" selected>' +
+                  htmlEscape(selectedId) + ' &mdash; (not in this event type)</option>';
+      }
+      return html;
+    }
+
+    function rebindSelects() {
+      document.querySelectorAll('select[data-discipline-select="1"]').forEach((sel) => {
+        sel.innerHTML = buildSelectHTML(sel.value);
+      });
+      // Keep the clone-template current so newly-added rows carry the set.
+      const tplSel = tpl.content
+        ? tpl.content.querySelector('select[data-discipline-select="1"]')
+        : null;
+      if (tplSel) tplSel.innerHTML = buildSelectHTML('');
+    }
+
+    async function fetchAndRebind(frameworkSport) {
+      try {
+        const url = ENDPOINT + '?framework_sport=' + encodeURIComponent(frameworkSport);
+        const resp = await fetch(url, { credentials: 'same-origin' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        disciplineOptions = (data && data.results) || [];
+        rebindSelects();
+      } catch (_e) { /* network/parse error — leave existing selects alone */ }
+    }
+
+    // #885 — framework_sport is a <select>; rebind on `change` (fires once per
+    // selection). A blank value (the "inherit" option) resolves server-side to
+    // the athlete's profile sport.
+    if (fsInput) {
+      fsInput.addEventListener('change', function () {
+        fetchAndRebind(fsInput.value.trim());
+      });
+    }
   })();
 </script>

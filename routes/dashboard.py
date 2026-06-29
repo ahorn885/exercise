@@ -236,18 +236,17 @@ def index():
     week_ago = (date.today() - timedelta(days=7)).isoformat()
 
     stats = {
-        'training_total': db.execute(
-            'SELECT COUNT(*) FROM training_log WHERE user_id = ?', (uid,)
-        ).fetchone()[0],
-        'cardio_total': db.execute(
-            # canonical_cardio_feed (#196 Slice 4b): count a cross-source ride once.
-            'SELECT COUNT(*) FROM canonical_cardio_feed WHERE user_id = ?', (uid,)
-        ).fetchone()[0],
         'active_injuries': db.execute(
             "SELECT COUNT(*) FROM injury_log WHERE user_id = ? AND status='Active'", (uid,)
         ).fetchone()[0],
+        # #957 — "Progressing" was empty because it exact-matched
+        # last_outcome='PROGRESS ↑'. Outcome strings are stored in more than one
+        # shape (e.g. 'PROGRESS ↑' from the engine, '↑ progress' in older rows),
+        # so the rest of the app keys off the ↑ arrow via substring/LIKE
+        # (routes/rx.py, the rx list + recent-activity templates). Match that
+        # convention here so a genuinely-progressing exercise actually counts.
         'exercises_progress': db.execute(
-            "SELECT COUNT(*) FROM current_rx WHERE user_id = ? AND last_outcome='PROGRESS ↑'",
+            "SELECT COUNT(*) FROM current_rx WHERE user_id = ? AND last_outcome LIKE '%↑%'",
             (uid,)
         ).fetchone()[0],
         'latest_weight': None,
@@ -324,20 +323,52 @@ def index():
         "ORDER BY pi.item_date DESC LIMIT 5",
         (uid, week_ago, today)).fetchall()
 
-    recent_training = db.execute(
-        'SELECT date, exercise, actual_sets, actual_reps, actual_weight, outcome '
-        'FROM training_log WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 10',
+    # #957 — recent strength as SESSIONS, not individual exercises. One row per
+    # logged day (a training session), with how many exercises it covered and how
+    # many progressed (↑), so the merged recent-activity table reads at the
+    # session grain the rest of the app uses.
+    recent_strength = db.execute(
+        "SELECT date, COUNT(*) AS exercises, "
+        "SUM(CASE WHEN outcome LIKE '%↑%' THEN 1 ELSE 0 END) AS progressed "
+        'FROM training_log WHERE user_id = ? '
+        'GROUP BY date ORDER BY date DESC LIMIT 10',
         (uid,)
     ).fetchall()
 
     # canonical_cardio_feed (#196 Slice 4b): a ride synced from N providers shows
-    # once in the recent-cardio strip; unclustered rows still surface via the feed.
+    # once in the recent strip; unclustered rows still surface via the feed.
     recent_cardio = db.execute(
         'SELECT date, activity, duration_min, distance_mi, avg_hr '
         'FROM canonical_cardio_feed '
-        'WHERE user_id = ? ORDER BY date DESC LIMIT 5',
+        'WHERE user_id = ? ORDER BY date DESC LIMIT 10',
         (uid,)
     ).fetchall()
+
+    # #957 — merge recent strength + cardio into ONE inline, chronological table.
+    # Each entry is normalized to a common shape; `kind` switches the per-row
+    # detail in the template. Sort by ISO date string (both sources store
+    # YYYY-MM-DD) so the two streams interleave by recency.
+    recent_activity = []
+    for s in recent_strength:
+        n = s['exercises'] or 0
+        recent_activity.append({
+            'date': s['date'],
+            'kind': 'strength',
+            'name': 'Strength',
+            'detail': f"{n} exercise{'' if n == 1 else 's'}",
+            'progressed': s['progressed'] or 0,
+        })
+    for c in recent_cardio:
+        recent_activity.append({
+            'date': c['date'],
+            'kind': 'cardio',
+            'name': c['activity'],
+            'duration_min': c['duration_min'],
+            'distance_mi': c['distance_mi'],
+            'progressed': 0,
+        })
+    recent_activity.sort(key=lambda r: str(r['date']), reverse=True)
+    recent_activity = recent_activity[:10]
 
     has_plan_version = _has_plan_version(db, uid)
 
@@ -355,15 +386,25 @@ def index():
 
     weather = _get_weather(db)
 
-    # Cardio sessions in the last 7 days with no conditions log entry.
-    # canonical_cardio_feed (#196 Slice 4b): a cross-source ride prompts for
-    # conditions once (against the feed's primary copy id), not N times; the
-    # conditions_log join still resolves on that primary copy's id.
+    # Cardio sessions in the last 7 days with no conditions log entry (#955):
+    # once conditions are logged for the event, the "Log conditions" nudge is
+    # suppressed. canonical_cardio_feed (#196 Slice 4b) shows a cross-source ride
+    # once (its primary copy id), so the suppression must resolve across the whole
+    # cluster: conditions linked to ANY copy of the ride (e.g. a non-primary
+    # provider copy chosen from the conditions-form dropdown) count as conditioned
+    # for that event, not just the primary copy id the nudge links to.
     unconditioned_cardio = db.execute(
         '''SELECT cl.id, cl.date, cl.activity, cl.activity_name, cl.duration_min
            FROM canonical_cardio_feed cl
-           LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id
-           WHERE cl.user_id = ? AND cl.date >= ? AND cond.id IS NULL
+           WHERE cl.user_id = ? AND cl.date >= ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM conditions_log cond
+                 LEFT JOIN cardio_log m ON m.id = cond.cardio_log_id
+                 WHERE cond.user_id = cl.user_id
+                   AND (cond.cardio_log_id = cl.id
+                        OR (cl.cluster_id IS NOT NULL
+                            AND m.cluster_id = cl.cluster_id))
+             )
            ORDER BY cl.date DESC''',
         (uid, week_ago)
     ).fetchall()
@@ -384,8 +425,7 @@ def index():
         pass
 
     return render_template('dashboard.html', stats=stats,
-                           recent_training=recent_training,
-                           recent_cardio=recent_cardio,
+                           recent_activity=recent_activity,
                            today_workouts=today_workouts,
                            tomorrow_workouts=tomorrow_workouts,
                            missed_workouts=missed_workouts,

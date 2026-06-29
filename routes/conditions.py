@@ -66,11 +66,18 @@ def new_entry():
     cardio_log_id = request.args.get('cardio_log_id', type=int)
     if cardio_log_id:
         row = db.execute(
-            'SELECT id, date, activity FROM cardio_log WHERE id=? AND user_id=?',
+            'SELECT id, date, activity, activity_name FROM cardio_log WHERE id=? AND user_id=?',
             (cardio_log_id, current_user_id())
         ).fetchone()
         if row:
             prefill = {'cardio_log_id': row['id'], 'date': row['date'], 'activity': row['activity']}
+            # The dropdown is capped at 60 recent rows; a prefilled session
+            # outside that window would otherwise not be selectable, so the
+            # conditions row would save with no link and the dashboard's
+            # "Log conditions" nudge would never clear (#955). Guarantee the
+            # linked session is present so the FK is always set.
+            if not any(s['id'] == row['id'] for s in cardio_sessions):
+                cardio_sessions = [row] + list(cardio_sessions)
     return render_template('conditions/form.html', entry=None, prefill=prefill,
                            wind_dirs=WIND_DIRS, conditions_opts=WEATHER_CONDITIONS,
                            activities=CONDITION_ACTIVITIES, clothing_options=clothing_options,

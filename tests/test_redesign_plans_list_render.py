@@ -190,6 +190,29 @@ def test_generated_plans_bucketed_by_scope_dates(monkeypatch):
     assert 'Generated plan' not in html
 
 
+def test_generated_card_hides_internal_pattern_and_created_via(monkeypatch):
+    # #958 (mirroring the #618 view-plan / log-wellness cleanup) — the internal
+    # Layer 4 `pattern` code ("Pattern A"/"Pattern B") and the raw `created_via`
+    # enum ("plan create", "plan refresh t3") are engineering jargon and must
+    # never surface on the athlete-facing card. Lifecycle is the section header.
+    today = date.today()
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=11, pattern='A', created_via='plan_create',
+             scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30)),
+    ])
+    resp = client.get('/plans/')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Pattern A' not in html
+    assert 'Pattern B' not in html
+    assert 'plan create' not in html
+    assert 'plan refresh' not in html
+    # The card still renders (named after the no-race fallback) and is bucketed.
+    assert 'Active · 1' in html
+    assert 'Training plan' in html
+
+
 def test_generated_plan_named_after_target_race(monkeypatch):
     today = date.today()
     client = _client(monkeypatch, [], generated=[
@@ -223,6 +246,37 @@ def test_archived_generated_plan_shown_with_restore(monkeypatch):
     assert '/plans/v2/40/unarchive' in html
     assert '/plans/v2/40/delete' in html
     assert '/plans/v2/40/complete' not in html
+
+
+def test_fresh_plan_has_no_provenance_badge(monkeypatch):
+    # #959 — a freshly created plan (created_via='plan_create') gets NO
+    # provenance badge, and never leaks the raw internal slug.
+    today = date.today()
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=50, created_via='plan_create', created_at='2026-06-01',
+             scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30)),
+    ])
+    resp = client.get('/plans/')
+    html = resp.get_data(as_text=True)
+    assert 'plan create' not in html
+    assert 'Refreshed on' not in html
+
+
+def test_refreshed_plan_shows_refreshed_on_date(monkeypatch):
+    # #959 — a refreshed plan (created_via starts with 'plan_refresh') is
+    # called out with the date it was refreshed, not the raw slug.
+    today = date.today()
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=51, created_via='plan_refresh_t2',
+             created_at='2026-06-15T09:30:00Z',
+             scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30)),
+    ])
+    resp = client.get('/plans/')
+    html = resp.get_data(as_text=True)
+    assert 'Refreshed on 2026-06-15' in html
+    assert 'plan refresh' not in html
 
 
 def test_generating_plan_shown_with_progress_link(monkeypatch):

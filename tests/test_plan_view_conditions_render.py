@@ -100,10 +100,13 @@ def test_renders_card_and_per_day_cold_wet_advisory():
     )
     html = _render(_conditions(ec))
 
-    # Conditions card header + standing (normals-not-forecast) note + Regenerate.
+    # Conditions card header + Regenerate. The aggregate standing
+    # (normals-not-forecast) note was dropped in #944 — the per-day view is
+    # sufficient — so it must no longer render.
     assert "Conditions" in html
-    assert "climate normals" in html
     assert "Regenerate" in html
+    assert "climate normals" not in html
+    assert "appear on each outdoor training day below" not in html
 
     # Per-day: band chip, temps, clothing prose, kit list, and the two flags.
     assert "Cold" in html

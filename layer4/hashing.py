@@ -116,7 +116,13 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # resolution_tier / substitute_text / proxy_origin_id (the synthesizer sets them
 # from each pick's 2C resolution before StrengthExercise construction). Prompt
 # body changed, so cached plans regenerate.
-LAYER4_PROMPT_REVISION = "19"
+# "20" = #954 coach_notes retired — the free-text `Coach notes:` athlete-context
+# line is removed from every synthesizer (per_phase / plan_refresh T1-T3 /
+# single_session / race_week_brief); the content was merged into Coaching memory
+# (`coaching_preferences`, still rendered). The `coach_notes` field also leaves
+# the Layer 1 payload, so `layer1_hash` shifts independently; this tag closes the
+# prompt-body determinant so cached plans + refreshes regenerate.
+LAYER4_PROMPT_REVISION = "20"
 
 # Prompt-body revision tag for the Layer 3A/3B LLM stages, mixed into the Layer 3D
 # gate's "Reading B" staleness fingerprint (`compute_gate_input_fingerprint`).

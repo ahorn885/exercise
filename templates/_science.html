@@ -1,0 +1,61 @@
+{#
+  #943 — inline "science behind your plan" tooltips.
+
+  Replaces the big always-visible #826 science card. The plan's rationale is now
+  surfaced two ways instead of one large standalone block:
+
+  * Inline hover/focus tooltips on the terms the rationale actually attaches to
+    — the phase chips ("build phase" / "taper"), recovery sessions, and the
+    daily calorie figures. `term()` / `phase_term()` look the backing evidence
+    up by slug and degrade to plain text when nothing is linked; `note()`
+    carries a static (non-evidence) explanation, e.g. how a calorie number is
+    derived.
+  * `footnote()` — a compact "Why this plan" line of source chips at the foot of
+    the plan, each revealing its summary + citation on hover, so the
+    selectively-cited (non-baseline) sources are still surfaced.
+
+  Evidence rows carry `slug`, `kind` (study | guideline | expert_coach),
+  `title`, `summary`, `citation`, and optional `url` — the shape
+  `evidence_repo.load_plan_evidence` returns. Citations are curated upstream, so
+  everything shown here is safe to surface.
+#}
+{% set _kind_labels = {'study': 'Study', 'guideline': 'Guideline', 'expert_coach': 'Expert coach'} %}
+
+{#- The tooltip primitive: a focusable inline anchor carrying a positioned
+    popover. `extra` appends classes to the anchor (e.g. `chip accent`) so a
+    term can wear the same skin as the element it replaces. -#}
+{%- macro _pop(label, title, body, kind=none, cite=none, extra='') -%}
+<span class="sci-term{{ ' ' ~ extra if extra }}" tabindex="0" role="note" aria-label="{{ title ~ ': ' if title }}{{ body }}{{ ' — ' ~ cite if cite }}">{{ label }}<span class="sci-pop" role="tooltip">{% if kind %}<span class="chip">{{ _kind_labels.get(kind, kind) }}</span>{% endif %}{% if title %}<span class="sci-pop-title">{{ title }}</span>{% endif %}<span class="sci-pop-body">{{ body }}</span>{% if cite %}<span class="sci-pop-cite">{{ cite }}</span>{% endif %}</span></span>
+{%- endmacro -%}
+
+{#- Evidence-backed term: render `label` with the tooltip for the source whose
+    `slug` is linked to this plan, or plain text when it isn't linked. -#}
+{%- macro term(label, slug, evidence, extra='') -%}
+{%- set src = (evidence | selectattr('slug', 'equalto', slug) | list | first) if evidence else none -%}
+{%- if src -%}{{ _pop(label, src.title, src.summary, src.kind, src.citation, extra) }}{%- elif extra -%}<span class="{{ extra }}">{{ label }}</span>{%- else -%}{{ label }}{%- endif -%}
+{%- endmacro -%}
+
+{#- A phase chip ("Build phase", "Taper phase", …). Taper keys off the tapering
+    study; every other phase off the periodization baseline. -#}
+{%- macro phase_term(phase_name, evidence, extra='') -%}
+{%- set slug = 'tapering-peak' if (phase_name | lower) == 'taper' else 'periodization-foundations' -%}
+{{- term(phase_name ~ ' phase', slug, evidence, extra) -}}
+{%- endmacro -%}
+
+{#- A static (non-evidence) explanatory tooltip — e.g. how a calorie figure is
+    derived, where there is no citable source to hang off. -#}
+{%- macro note(label, title, body, extra='') -%}
+{{- _pop(label, title, body, none, none, extra) -}}
+{%- endmacro -%}
+
+{#- The compact "Why this plan" source footnote that replaces the big science
+    card. Each linked source is a chip; its summary + citation appear on hover.
+    Renders nothing when no evidence is linked, so callers can use it freely. -#}
+{%- macro footnote(evidence) -%}
+{%- if evidence -%}
+<p class="sci-footnote">
+  <span class="sci-footnote-lead">Why this plan</span>
+  {%- for src in evidence %} {{ _pop(src.title, none, src.summary, src.kind, src.citation, 'chip sci-footnote-src') }}{% endfor -%}
+</p>
+{%- endif -%}
+{%- endmacro -%}
