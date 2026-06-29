@@ -32,10 +32,12 @@ from routes.race_events import (
     _parse_previous_attempts,
     _parse_race_terrain,
     _parse_race_url,
+    _race_form_echo,
     _race_saved_discipline_ids,
     _rescope_terrain_to_framework_sport,
     _resolve_effective_framework_sport,
     _run_mapbox_search,
+    _sub_format_context,
 )
 
 
@@ -513,6 +515,68 @@ class TestFrameworkSportChoices:
     def test_empty_table_returns_empty_list(self):
         conn = _FakeConn(rows=[])
         assert _framework_sport_choices(conn) == []
+
+
+# ─── #254 / D-17 B2 — Sub-format select context ─────────────────────────────
+
+
+class TestSubFormatContext:
+    """The template context for the Sub-format select: the option list for the
+    currently-chosen parent (server render) + the full parent→options map (the
+    client-side repopulation blob)."""
+
+    _ROWS = [
+        {'parent_sport': 'Triathlon',
+         'sub_format_sport': 'Triathlon (Sprint)',
+         'display_label': 'Sprint', 'is_default': False},
+        {'parent_sport': 'Triathlon',
+         'sub_format_sport': 'Triathlon (Standard / Olympic)',
+         'display_label': 'Standard / Olympic', 'is_default': True},
+    ]
+
+    def test_parent_drives_server_rendered_options(self):
+        conn = _FakeConn(rows=self._ROWS)
+        ctx = _sub_format_context(conn, {'framework_sport': 'Triathlon'})
+        assert [o['sub_format_sport'] for o in ctx['sub_format_options']] == [
+            'Triathlon (Sprint)', 'Triathlon (Standard / Olympic)',
+        ]
+        assert ctx['sub_format_options_map']['Triathlon'][1]['is_default'] is True
+
+    def test_none_race_yields_empty_options_but_full_blob(self):
+        # No chosen parent → no select rendered server-side (sub_format_options
+        # short-circuits), but the JSON blob is still emitted so the JS can
+        # populate the select once the athlete picks a parent.
+        conn = _FakeConn(rows=self._ROWS)
+        ctx = _sub_format_context(conn, None)
+        assert ctx['sub_format_options'] == []
+        assert 'Triathlon' in ctx['sub_format_options_map']
+
+    def test_blank_framework_sport_yields_empty_options(self):
+        conn = _FakeConn(rows=self._ROWS)
+        ctx = _sub_format_context(conn, {'framework_sport': None})
+        assert ctx['sub_format_options'] == []
+
+
+class TestRaceFormEchoSubFormat:
+    """A failed-save re-render must keep the athlete's Sub-format pick (#947 /
+    #254 B2)."""
+
+    def test_echo_carries_sport_sub_format(self):
+        form = _FakeFormMapping({
+            'name': 'Race', 'event_date': '2026-07-17',
+            'race_format': 'single_day', 'framework_sport': 'Triathlon',
+            'sport_sub_format': 'Triathlon (Full / Ironman 140.6)',
+        })
+        echo = _race_form_echo(form)
+        assert echo['sport_sub_format'] == 'Triathlon (Full / Ironman 140.6)'
+
+    def test_echo_blank_sub_format_is_none(self):
+        form = _FakeFormMapping({
+            'name': 'Race', 'event_date': '2026-07-17',
+            'race_format': 'single_day',
+        })
+        echo = _race_form_echo(form)
+        assert echo['sport_sub_format'] is None
 
 
 # ─── #892 discipline persistence across a sport change ──────────────────────
@@ -1020,6 +1084,89 @@ class TestUpdateRaceRescopesTerrainOnSportChange:
         # coupling (D-099) was reset to race-wide, so no discipline is
         # included → None (use the new sport's bridge defaults).
         assert captured['included_discipline_ids'] is None
+
+
+class TestUpdateRaceSubFormatInvalidation:
+    """#254 / D-17 D6 — a sport_sub_format-only change on the target event
+    shifts the composed Layer 2A sport input, so it fires the same
+    Layer-2A-wide eviction as a framework_sport change.
+    """
+
+    def test_sub_format_only_change_fires_framework_sport_eviction(self, monkeypatch):
+        app = _make_app()
+        conn = _RouteFakeConn()
+        import routes.race_events as re_mod
+        monkeypatch.setattr(re_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(re_mod, 'current_user_id', lambda: 1)
+        # Target row: Triathlon / Standard. The athlete keeps the parent but
+        # switches the sub-format to Ironman. framework_sport is unchanged, so
+        # no terrain re-scope (no bridge query) fires.
+        monkeypatch.setattr(
+            re_mod, 'get_race_event',
+            lambda db, uid, race_event_id: {
+                'id': 10,
+                'name': 'Tri A',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+                'distance_km': None,
+                'total_elevation_gain_m': None,
+                'estimated_duration_hr': None,
+                'primary_metric': None,
+                'event_locale_id': None,
+                'event_locale_name': None,
+                'event_locale_mapbox_id': 'poi.anchor',
+                'event_locale_place_name': None,
+                'event_locale_lat': None,
+                'event_locale_lng': None,
+                'notes': None,
+                'race_terrain': [],
+                'race_url': None,
+                'framework_sport': 'Triathlon',
+                'sport_sub_format': 'Triathlon (Standard / Olympic)',
+                'included_discipline_ids': None,
+                'goal_outcome': None,
+                'first_time_at_distance': None,
+                'time_goal': None,
+                'race_pack_weight_kg': None,
+                'previous_attempts': [],
+                'is_target_event': True,
+            },
+        )
+        captured = {}
+        monkeypatch.setattr(
+            re_mod, 'update_race_event',
+            lambda db, uid, rid, **kw: captured.update(kw),
+        )
+        fired = []
+        for helper in (
+            'evict_on_target_event_framework_sport_change',
+            'evict_on_target_event_included_discipline_ids_change',
+            'evict_on_target_event_periodization_change',
+            'evict_on_target_event_brief_field_change',
+        ):
+            monkeypatch.setattr(
+                re_mod, helper,
+                (lambda name: (lambda *a, **k: fired.append(name)))(helper),
+            )
+
+        with app.test_request_context(
+            '/profile/race-events/10/update',
+            method='POST',
+            data={
+                'name': 'Tri A',
+                'event_date': '2026-07-17',
+                'race_format': 'single_day',
+                'framework_sport': 'Triathlon',
+                'sport_sub_format': 'Triathlon (Full / Ironman 140.6)',
+            },
+        ):
+            response = re_mod.update_race(10)
+
+        assert response.status_code == 302
+        # The new pick threads to the repo...
+        assert captured['sport_sub_format'] == 'Triathlon (Full / Ironman 140.6)'
+        # ...and only the framework_sport (Layer-2A-wide) eviction fires.
+        assert fired == ['evict_on_target_event_framework_sport_change']
 
 
 class TestSetLocaleMapboxRequired:

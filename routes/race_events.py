@@ -53,6 +53,7 @@ from race_events_repo import (
     update_race_event_locale,
     update_route_locale,
 )
+from sport_sub_format_repo import parent_options_map, sub_format_options
 from routes.auth import current_user_id
 from routes.locales import (
     MAPBOX_DISCLOSURE_VERSION,
@@ -355,6 +356,29 @@ def _framework_sport_choices(db) -> list[str]:
         """
     )
     return [r['framework_sport'] for r in cur.fetchall() if r['framework_sport']]
+
+
+def _sub_format_context(db, race) -> dict:
+    """Template context for the #254 / D-17 Sub-format select (slice B2).
+
+    Five parents (Triathlon, Skimo, …) name themselves top-level in the bridge
+    but sub-format in `phase_load_allocation`, so a bare-parent pick joins zero
+    PLA bands. The form captures WHICH sub-format into `race_events.sport_sub_format`
+    (two-column model, D1′); the orchestrator composes it with `framework_sport`
+    for the Layer 2A phase-load joins.
+
+    `sub_format_options` is the option list for the currently-chosen parent
+    (server-render of the select, keyed on the same `framework_sport` value the
+    Race-event-type select shows selected — `[]` for a single-format sport, so
+    the field hides). `sub_format_options_map` is the full parent→options map,
+    embedded as a JSON blob so the select repopulates client-side on a parent
+    change. `race` is the loaded DB row / `_race_form_echo` dict / None.
+    """
+    current_parent = (race or {}).get('framework_sport') if race else None
+    return {
+        'sub_format_options': sub_format_options(db, current_parent),
+        'sub_format_options_map': parent_options_map(db),
+    }
 
 
 # ─── #256/#592 race-detail auto-fill (parse a race URL + terrain fallback) ───
@@ -739,6 +763,7 @@ def _race_form_echo(form, *, base=None):
         'event_date': (form.get('event_date') or '').strip() or None,
         'race_format': (form.get('race_format') or '').strip() or None,
         'framework_sport': _parse_str(form, 'framework_sport'),
+        'sport_sub_format': _parse_str(form, 'sport_sub_format'),
         'primary_metric': _parse_primary_metric(form),
         'distance_km': _parse_decimal(form, 'distance_km'),
         'estimated_duration_hr': _parse_decimal(form, 'estimated_duration_hr'),
@@ -784,6 +809,7 @@ def _render_new_race_form(db, uid, race):
         ),
         initial_framework_sport=initial_framework_sport,
         framework_sport_choices=_framework_sport_choices(db),
+        **_sub_format_context(db, race),
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=True,
@@ -813,6 +839,7 @@ def _render_edit_race_form(db, uid, race):
         ),
         initial_framework_sport=initial_framework_sport,
         framework_sport_choices=_framework_sport_choices(db),
+        **_sub_format_context(db, race),
         race_formats=VALID_RACE_FORMATS,
         route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
         is_new=False,
@@ -931,6 +958,7 @@ def new_race():
             previous_attempts=_parse_previous_attempts(request.form),
             race_url=_parse_race_url(request.form),
             framework_sport=_parse_str(request.form, 'framework_sport'),
+            sport_sub_format=_parse_str(request.form, 'sport_sub_format'),
             included_discipline_ids=new_discipline_filter,
             goal_outcome=_parse_goal_outcome(request.form),
             first_time_at_distance=_parse_first_time_at_distance(request.form),
@@ -1031,6 +1059,7 @@ def update_race(race_event_id: int):
     new_previous_attempts = _parse_previous_attempts(request.form)
     new_race_url = _parse_race_url(request.form)
     new_framework_sport = _parse_str(request.form, 'framework_sport')
+    new_sport_sub_format = _parse_str(request.form, 'sport_sub_format')
     new_goal_outcome = _parse_goal_outcome(request.form)
     new_first_time_at_distance = _parse_first_time_at_distance(request.form)
     new_time_goal = _parse_str(request.form, 'time_goal')
@@ -1044,6 +1073,7 @@ def update_race(race_event_id: int):
     # unresolvable new sport leaves couplings untouched (that's #885's
     # concern, not data loss).
     prior_framework_sport = race.get('framework_sport')
+    prior_sport_sub_format = race.get('sport_sub_format')
     prior_discipline_filter = race.get('included_discipline_ids')
     if prior_framework_sport != new_framework_sport:
         new_race_terrain, dropped_disciplines = (
@@ -1089,6 +1119,7 @@ def update_race(race_event_id: int):
         event_locale_lng=race.get('event_locale_lng'),
         race_url=new_race_url,
         framework_sport=new_framework_sport,
+        sport_sub_format=new_sport_sub_format,
         included_discipline_ids=new_discipline_filter,
         goal_outcome=new_goal_outcome,
         first_time_at_distance=new_first_time_at_distance,
@@ -1139,6 +1170,12 @@ def update_race(race_event_id: int):
         # 3A/3B vs periodization's `_NON_SINGLE_SESSION`). Fire it first;
         # the layer2a policy supersets both periodization + brief-only.
         framework_sport_changed = prior_framework_sport != new_framework_sport
+        # #254 / D-17 D6 — a sport_sub_format change (without a parent change)
+        # shifts the orchestrator's composed Layer 2A sport input
+        # (`sport_sub_format or default or framework_sport`) onto a different
+        # PLA phase-load band — the same cache axis framework_sport drives — so
+        # it fires the same layer2a-wide eviction.
+        sport_sub_format_changed = prior_sport_sub_format != new_sport_sub_format
         # D-73 Phase 5.2 Bucket E.(b)-B2 — included_discipline_ids override
         # change uses the same `layer2a` policy as framework_sport (both
         # reshape Layer 2A's discipline output). Subsumed by the
@@ -1156,7 +1193,7 @@ def update_race(race_event_id: int):
             or prior_race_url != new_race_url
             or race['primary_metric'] != new_primary_metric
         )
-        if framework_sport_changed:
+        if framework_sport_changed or sport_sub_format_changed:
             evict_on_target_event_framework_sport_change(db, uid)
         elif discipline_filter_changed:
             evict_on_target_event_included_discipline_ids_change(db, uid)

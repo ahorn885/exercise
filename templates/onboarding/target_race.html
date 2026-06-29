@@ -79,6 +79,33 @@
         The race's sport — drives the disciplines and terrain options below. Leave as “Same as my profile sport” to plan around your profile's primary sport.
       </small>
     </div>
+
+    {# #254 / D-17 slice B2 — Sub-format select. Five parents (Triathlon, Skimo,
+       Long Distance / Endurance Cycling, Canoe / Kayak Marathon, Open Water
+       Marathon Swimming) name themselves top-level in the bridge but sub-format
+       in phase_load_allocation, so a bare-parent pick joins zero phase-load
+       bands. This captures WHICH sub-format into race_events.sport_sub_format
+       (two-column model, D1′); the orchestrator composes it with the parent for
+       the Layer 2A phase-load joins. Pre-set to the Layer-0 curated default
+       (sport_sub_format_map.is_default); the athlete may override. Shown only
+       when the chosen Race event type has sub-formats — hidden + repopulated
+       client-side from the JSON blob when the parent changes. Distinct from
+       Race format (the periodization enum). Mirrors race_event_edit.html. #}
+    {% set selected_sub = target.sport_sub_format if target and target.sport_sub_format else None %}
+    <div class="col-md-6{% if not sub_format_options %} d-none{% endif %}" id="sport-sub-format-field">
+      <label class="form-label" for="sport_sub_format">Race sub-format</label>
+      <select class="form-select" id="sport_sub_format" name="sport_sub_format">
+        {% for opt in sub_format_options %}
+          <option value="{{ opt.sub_format_sport }}"
+            {% if (selected_sub and opt.sub_format_sport == selected_sub) or (not selected_sub and opt.is_default) %}selected{% endif %}>
+            {{ opt.display_label }}</option>
+        {% endfor %}
+      </select>
+      <small class="text-muted">
+        Which format you're racing — it sets the phase-load model. Pre-set to the most common; change it if your race is a different distance or variant.
+      </small>
+    </div>
+
     <div class="col-md-6">
       <label class="form-label" for="race_url">Race website URL (optional)</label>
       <input type="url" class="form-control" id="race_url" name="race_url"
@@ -251,6 +278,51 @@
     }
     sel.addEventListener('change', sync);
     sync();
+  })();
+</script>
+
+{# #254 / D-17 slice B2 — Sub-format select rebind. The parent→options map is
+   embedded as JSON so the select repopulates without a round-trip when the
+   athlete changes the Race event type. Mirrors race_event_edit.html. #}
+<script type="application/json" id="sport-sub-format-options">{{ sub_format_options_map|tojson }}</script>
+<script nonce="{{ csp_nonce() }}">
+  (function () {
+    const fsInput = document.getElementById('framework_sport');
+    const field = document.getElementById('sport-sub-format-field');
+    const sel = document.getElementById('sport_sub_format');
+    const blobEl = document.getElementById('sport-sub-format-options');
+    if (!fsInput || !field || !sel || !blobEl) return;
+    let optionsMap = {};
+    try { optionsMap = JSON.parse(blobEl.textContent || '{}'); }
+    catch (_e) { optionsMap = {}; }
+
+    function htmlEscape(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    // On a parent change, repopulate the select from the blob and pre-select
+    // the curated default; hide it when the new parent has no sub-formats (a
+    // single-format sport). A prior pick isn't carried across a parent change —
+    // sub-formats don't overlap between parents, so re-defaulting is the right
+    // reset. The server already renders the correct initial state on load.
+    fsInput.addEventListener('change', function () {
+      const opts = optionsMap[fsInput.value.trim()] || [];
+      if (!opts.length) {
+        field.classList.add('d-none');
+        sel.innerHTML = '';
+        return;
+      }
+      let html = '';
+      opts.forEach(function (o) {
+        html += '<option value="' + htmlEscape(o.sub_format_sport) + '"' +
+                (o.is_default ? ' selected' : '') + '>' +
+                htmlEscape(o.display_label) + '</option>';
+      });
+      sel.innerHTML = html;
+      field.classList.remove('d-none');
+    });
   })();
 </script>
 
