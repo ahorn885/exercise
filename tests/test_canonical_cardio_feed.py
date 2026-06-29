@@ -133,9 +133,11 @@ class TestDisplayConsumersReadFeed:
 
     def test_dashboard_cardio_surfaces_read_feed(self):
         src = _read("routes/dashboard.py")
-        # cardio_total stat + recent-cardio strip + unconditioned-cardio nudge
-        assert src.count("FROM canonical_cardio_feed") >= 3
-        assert "SELECT COUNT(*) FROM canonical_cardio_feed" in src
+        # recent-cardio strip + unconditioned-cardio nudge. (#957 removed the
+        # cardio_total stat — and its `SELECT COUNT(*) FROM canonical_cardio_feed`
+        # — from the Today view, so the feed now has two display consumers here,
+        # not three. Both remaining surfaces still read the deduped feed.)
+        assert src.count("FROM canonical_cardio_feed") >= 2
         assert "LEFT JOIN conditions_log cond ON cond.cardio_log_id = cl.id" in src
         # the raw cardio_log reads for these three surfaces are gone
         assert "SELECT COUNT(*) FROM cardio_log WHERE user_id = ?" not in src
