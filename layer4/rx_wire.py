@@ -27,6 +27,13 @@ phase's prescribed reps (`reps_per_set`) via the Epley inverse, so the
 displayed `sets × reps @ load` is internally consistent. `first_exposure`
 remains the genuine no-history fallback.
 
+Prescription conventions (#961): the rendered load is made unambiguous about
+the two conventions the synthesizer leaves implicit — a two-dumbbell load is
+labelled **per hand** (the logged weight is per-implement, not the total), and
+a unilateral movement's reps are labelled **per side** (left then right = one
+"rep"). Both are appended to `load_prescription` as wording qualifiers — never
+a rep COUNT, so the load slot stays clear of the #962 sets×reps collision.
+
 Observability (Rule #14): every `apply_current_rx` call returns an
 `RxWireDiagnostic` summarising per-exercise outcomes (rx hit, first-exposure
 category, db-error skips). Log lines are prefixed `rx_wire:` for grep
@@ -50,6 +57,40 @@ _FIRST_EXPOSURE_FLAG = "first_exposure"
 _COMPOUND_PATTERNS: frozenset[str] = frozenset({
     "squat", "hinge", "push", "pull", "lunge",
 })
+
+# ─── #961 prescription-convention cues ──────────────────────────────────────
+# Two wording conventions the synthesizer leaves ambiguous, made explicit here:
+#
+#  - PER SIDE: a unilateral movement is worked one side at a time, so its
+#    `reps_per_set` is a per-side count (left then right = one "rep"). Detected
+#    from the 0B `movement_patterns` (the authoritative laterality signal —
+#    Single-Leg / Single-Arm / Lunge) with a name-cue fallback for rows that
+#    reach rx_wire without a resolved 2C entry.
+#  - PER HAND: a two-dumbbell movement loads one bell in each hand, so the
+#    logged `current_weight` is per-hand ("30 lb" Bulgarian split squat = a
+#    30-lb dumbbell in EACH hand, 60 lb total — exactly the ambiguity #961
+#    cites). The athlete logs the per-implement weight (see `seed_workouts.py`
+#    "1-handed, per side" rows), so the stored number is per-hand.
+#
+# All cues are lower-cased for casing-robust matching against the 0B vocab.
+_UNILATERAL_PATTERNS: frozenset[str] = frozenset({
+    "single-leg", "single-arm", "lunge",
+})
+_UNILATERAL_NAME_CUES: tuple[str, ...] = (
+    "split squat", "bulgarian", "lunge", "step-up", "step up",
+    "single-leg", "single leg", "single-arm", "single arm",
+    "one-arm", "one arm", "1-arm", "pistol", "skater",
+)
+
+# Single-implement dumbbell movements carry ONE bell (goblet — both hands on
+# one bell; one-arm — one bell in one hand), so the per-hand framing would
+# mislead and they're excluded from the per-hand label.
+_SINGLE_DUMBBELL_CUES: tuple[str, ...] = (
+    "goblet", "one-arm", "one arm", "1-arm", "single-arm", "single arm",
+)
+# The catalog qualifies equipment as "(DB)" / "(DB/KB)"; older seed/Garmin
+# names spell "Dumbbell" in full. Match either form.
+_DB_TOKEN_RE = re.compile(r"\bdb\b")
 
 # Category → first-exposure calibration template (spec §7). Each entry is a
 # `(load_qualifier, calibration_note)` pair:
@@ -196,6 +237,49 @@ def _classify_category(
     # An accessory dumbbell pick here would invite the athlete to guess a
     # load when none is implied by the exercise name.
     return "compound_barbell" if is_compound else "bodyweight"
+
+
+def _is_unilateral(
+    exercise: StrengthExercise,
+    resolved: ResolvedExercise | None,
+) -> bool:
+    """True when the movement is worked one side at a time, so its prescribed
+    `reps_per_set` is a PER-SIDE count (#961). Keys off the 0B movement_patterns
+    (the authoritative laterality signal) with a name-cue fallback for rows that
+    reach rx_wire without a resolved 2C entry."""
+    patterns = frozenset(
+        (p or "").strip().lower()
+        for p in (resolved.movement_patterns if resolved else [])
+        if p
+    )
+    if patterns & _UNILATERAL_PATTERNS:
+        return True
+    name_lower = exercise.exercise_name.lower()
+    return any(cue in name_lower for cue in _UNILATERAL_NAME_CUES)
+
+
+def _is_per_hand_dumbbell(exercise: StrengthExercise) -> bool:
+    """True when the exercise loads a dumbbell in EACH hand, so the logged
+    weight is per-hand and the rendered load must say so (#961). Single-
+    implement dumbbell movements (goblet, one-arm) carry one bell and return
+    False — their weight is already unambiguous."""
+    name_lower = exercise.exercise_name.lower()
+    is_db = "dumbbell" in name_lower or bool(_DB_TOKEN_RE.search(name_lower))
+    if not is_db:
+        return False
+    return not any(cue in name_lower for cue in _SINGLE_DUMBBELL_CUES)
+
+
+def _with_load_conventions(load: str, *, per_hand: bool, per_side: bool) -> str:
+    """Append the #961 weight/rep conventions to a rendered load string so the
+    `{sets} × {reps} @ {load}` line is unambiguous: "per hand" attaches to the
+    weight (total vs per-dumbbell), "per side" flags the per-side rep count for
+    unilateral work. Neither names a rep COUNT, so the load slot stays clear of
+    the #962 sets×reps collision."""
+    out = f"{load} per hand" if per_hand else load
+    if per_side:
+        out = f"{out}, per side"
+    return out
 
 
 def _parse_target_reps(reps_per_set: int | str | None) -> int | None:
@@ -397,6 +481,11 @@ def apply_current_rx(
                 new_exercises.append(ex)
                 continue
 
+            # #961 — laterality drives the per-side rep convention on every
+            # path (weight, duration, first-exposure); resolve it once here.
+            resolved = resolved_index.get(ex.exercise_id)
+            per_side = _is_unilateral(ex, resolved)
+
             rendered = (
                 _render_current_rx(
                     rx, _parse_target_reps(ex.reps_per_set), unit_pref=unit_pref
@@ -404,6 +493,15 @@ def apply_current_rx(
                 if rx else None
             )
             if rendered:
+                # #961 — make weight/rep conventions explicit. "per hand" only
+                # attaches to a real weight render (a two-dumbbell load, not a
+                # duration target); "per side" flags unilateral rep counting.
+                per_hand = _is_per_hand_dumbbell(ex) and bool(
+                    rx and (rx.get("weight_kg") or 0) > 0
+                )
+                rendered = _with_load_conventions(
+                    rendered, per_hand=per_hand, per_side=per_side
+                )
                 new_ex = ex.model_copy(update={"load_prescription": rendered})
                 new_exercises.append(new_ex)
                 hits += 1
@@ -419,9 +517,14 @@ def apply_current_rx(
                 ))
                 continue
 
-            resolved = resolved_index.get(ex.exercise_id)
             category = _classify_category(ex, resolved)
             load_qualifier, calibration_note = _FIRST_EXPOSURE_TEMPLATES[category]
+            # #961 — a first-exposure unilateral movement still needs the
+            # per-side rep convention; the calibration qualifier carries no
+            # weight, so "per hand" never applies on this path.
+            load_qualifier = _with_load_conventions(
+                load_qualifier, per_hand=False, per_side=per_side
+            )
             new_flags = list(ex.coaching_flags)
             if _FIRST_EXPOSURE_FLAG not in new_flags:
                 new_flags.append(_FIRST_EXPOSURE_FLAG)

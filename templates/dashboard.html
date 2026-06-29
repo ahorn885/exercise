@@ -65,17 +65,12 @@
       else (tomorrow_workouts[0].plan_name if tomorrow_workouts else None) -%}
 
 {# ── Greeting ── #}
+{# #957 — the injuries flag chip lived here; removed in favor of the single
+   "Injuries" stat-strip count below (one source, no duplicate signal). #}
 <div class="dash-head">
   <div>
     <p class="eyebrow accent">● {{ active_plan_name or 'No active plan' }} · {{ today }}</p>
     <h1 class="page-title">Hi, {{ current_user.display_name or current_user.username }}. <span class="dim">Time to move.</span></h1>
-  </div>
-  <div class="head-pills">
-    {% if stats.active_injuries > 0 %}
-      <span class="chip bad">▲ {{ stats.active_injuries }} active injur{{ 'y' if stats.active_injuries == 1 else 'ies' }}</span>
-    {% else %}
-      <span class="chip good">● No active injuries</span>
-    {% endif %}
   </div>
 </div>
 
@@ -324,81 +319,53 @@
 {% endif %}
 
 {# ── Stats strip ── #}
+{# #957 — total strength-entry and cardio-session counts removed (vanity totals);
+   kept Progressing / Body weight / Injuries. #}
 <div class="dash-stats">
-  <div class="stat-card"><div class="k">Strength</div><div class="v num">{{ stats.training_total }}</div><div class="delta">entries</div></div>
-  <div class="stat-card"><div class="k">Cardio</div><div class="v num">{{ stats.cardio_total }}</div><div class="delta">sessions</div></div>
   <div class="stat-card"><div class="k">Progressing</div><div class="v num">{{ stats.exercises_progress }}</div><div class="delta">exercises ↑</div></div>
   <div class="stat-card"><div class="k">Body weight</div><div class="v num">{% if stats.latest_weight %}{{ stats.latest_weight }}<span class="u">{{ stats.latest_weight_unit or 'lb' }}</span>{% else %}—{% endif %}</div><div class="delta">{{ stats.weight_date if stats.latest_weight else 'no data' }}</div></div>
   <div class="stat-card"><div class="k">Injuries</div><div class="v num">{{ stats.active_injuries }}</div><div class="delta">{{ 'clean' if stats.active_injuries == 0 else 'active' }}</div></div>
 </div>
 
-{# ── Recent activity ── #}
-<div class="row">
-  <div class="card col">
-    <div class="card-head">
-      <span class="eyebrow">Recent strength</span>
-      <a class="link" href="{{ url_for('training.list_entries') }}">View all →</a>
-    </div>
-    {% if recent_training %}
-    <div class="table-scroll">
-      <table class="data">
-        <thead><tr><th>Date</th><th>Exercise</th><th>Sets×Reps</th><th>Load</th><th>Outcome</th></tr></thead>
-        <tbody>
-          {% for e in recent_training %}
-          <tr>
-            <td class="mono dim num">{{ e.date }}</td>
-            <td class="wk-name">{{ e.exercise }}</td>
-            <td class="num">{{ e.actual_sets or '—' }}×{{ e.actual_reps or '—' }}</td>
-            <td class="num">{{ e.actual_weight or '—' }}{% if e.actual_weight %} lb{% endif %}</td>
-            <td>
-              {% if e.outcome %}
-                <span class="chip {% if '↑' in e.outcome %}good{% elif '→' in e.outcome %}warn{% else %}bad{% endif %}">{{ e.outcome }}</span>
-              {% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="empty-line">No entries yet. <a class="accent" href="{{ url_for('training.new_entry') }}">Log your first workout →</a></p>
-    {% endif %}
+{# ── Recent activity ──
+   #957 — strength and cardio merged into ONE inline, chronological table.
+   Strength rows read at the SESSION grain (one row per logged day, with the
+   exercise count + how many progressed), not per-exercise. The duplicate
+   "Latest weight" card is dropped — body weight already shows in the stats
+   strip above. #}
+<div class="card">
+  <div class="card-head">
+    <span class="eyebrow">Recent activity</span>
+    <span>
+      <a class="link" href="{{ url_for('training.list_entries') }}">Strength →</a>
+      <a class="link" href="{{ url_for('cardio.list_entries') }}">Cardio →</a>
+    </span>
   </div>
-
-  <div class="stack col-side">
-    <div class="card">
-      <div class="card-head">
-        <span class="eyebrow">Recent cardio</span>
-        <a class="link" href="{{ url_for('cardio.list_entries') }}">View all →</a>
-      </div>
-      {% if recent_cardio %}
-      <div class="table-scroll">
-        <table class="data">
-          <thead><tr><th>Date</th><th>Activity</th><th>Dur</th><th>Dist</th></tr></thead>
-          <tbody>
-            {% for e in recent_cardio %}
-            <tr>
-              <td class="mono dim num">{{ e.date }}</td>
-              <td class="wk-name">{{ e.activity }}</td>
-              <td class="num">{{ e.duration_min or '—' }}{% if e.duration_min %}m{% endif %}</td>
-              <td class="num">{{ e.distance_mi or '—' }}{% if e.distance_mi %}mi{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      {% else %}
-      <p class="empty-line">No cardio logged yet.</p>
-      {% endif %}
-    </div>
-
-    {% if stats.latest_weight %}
-    <div class="card card-pad">
-      <div class="kv"><span class="k">Latest weight</span><span class="mono dim">{{ stats.weight_date }}</span></div>
-      <div class="wx-temp num">{{ stats.latest_weight }}<span class="u"> {{ stats.latest_weight_unit or 'lb' }}</span></div>
-    </div>
-    {% endif %}
+  {% if recent_activity %}
+  <div class="table-scroll">
+    <table class="data">
+      <thead><tr><th>Date</th><th>Type</th><th>Activity</th><th>Detail</th></tr></thead>
+      <tbody>
+        {% for e in recent_activity %}
+        <tr>
+          <td class="mono dim num">{{ e.date }}</td>
+          <td><span class="chip">{{ 'Strength' if e.kind == 'strength' else 'Cardio' }}</span></td>
+          <td class="wk-name">{{ e.name }}</td>
+          <td class="num">
+            {% if e.kind == 'strength' %}
+              {{ e.detail }}{% if e.progressed %} <span class="chip good">{{ e.progressed }} ↑</span>{% endif %}
+            {% else %}
+              {{ e.duration_min|int ~ 'm' if e.duration_min else '—' }}{% if e.distance_mi %} · {{ e.distance_mi }} mi{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+  {% else %}
+  <p class="empty-line">No activity yet. <a class="accent" href="{{ url_for('training.new_entry') }}">Log your first workout →</a></p>
+  {% endif %}
 </div>
 </div>{# /.stack #}
 {% endblock %}
