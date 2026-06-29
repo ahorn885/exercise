@@ -102,6 +102,40 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app'],
         'defaults': {'in_app': True},
     },
+    # ─── #964 reminder / staleness triggers ─────────────────────────────────
+    # Surfaced as in-app `account_nudges` rows reconciled by the daily cron
+    # (`routes.nudges.scan_reconcile_staleness`). Email is intentionally NOT an
+    # applicable channel: there is no nudge→email delivery path yet, and
+    # `email` is `available: True`, so listing it would render an enabled
+    # toggle that silently never delivers. `push` follows the project-wide
+    # "store the preference now, deliver once the app ships" posture.
+    {
+        'key': 'log_reminder',
+        'label': 'Log your workouts',
+        'description': "A nudge when you haven't logged a workout in a few "
+                       'days, so your training record stays current.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'body_metric_stale',
+        'label': 'Refresh your body metrics',
+        'description': "A reminder to update your weight / body metrics when "
+                       "they haven't been refreshed in a while.",
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'injury_review',
+        'label': 'Review your injuries',
+        'description': "A reminder to revisit an injury that's been marked "
+                       'active for a while — resolve it or update its status.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
 ]
 
 TYPES_BY_KEY = {t['key']: t for t in NOTIFICATION_TYPES}
