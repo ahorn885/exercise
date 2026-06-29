@@ -45,6 +45,7 @@ from flask import (
 )
 
 import notification_prefs
+import notification_schedules_repo
 from database import get_db
 from notification_preferences_repo import (
     build_matrix, disabled_in_app_types, save_from_form,
@@ -385,6 +386,41 @@ def settings():
     return render_template('nudges/settings.html',
                            channels=notification_prefs.CHANNELS,
                            matrix=matrix)
+
+
+@bp.route('/notifications/schedules', methods=['GET', 'POST'])
+def schedules():
+    """Recurring-send schedules (#964) — the per-type send-hour + timezone the
+    daily-cadence reminders fire on (supplement AM/PM, tomorrow's training, the
+    daily log ping).
+
+    GET renders an enable toggle + hour picker per schedule type plus a single
+    timezone selector. POST persists the whole submit (`save_schedules_from_form`)
+    — unchecked enable boxes don't post, so the off state is captured by iterating
+    the registry, not the form. Nothing fires until a timezone is set (the cron
+    can't localize the send hour without it). Degrades to defaults if the read
+    faults (e.g. SQLite dev), mirroring the settings matrix.
+    """
+    db = get_db()
+    uid = current_user_id()
+    if request.method == 'POST':
+        try:
+            n = notification_schedules_repo.save_schedules_from_form(
+                db, uid, request.form)
+            flash(f'Reminder schedule saved ({n} updated).', 'success')
+        except Exception as e:  # noqa: BLE001 — surface, don't 500
+            print(f'nudges: save_schedules_from_form failed: {e}')
+            flash('Could not save your reminder schedule. Please try again.',
+                  'error')
+        return redirect(url_for('nudges.schedules'))
+    view = notification_schedules_repo.build_schedule_view(db, uid)
+    return render_template(
+        'nudges/schedules.html',
+        rows=view['rows'],
+        timezone=view['timezone'],
+        hour_choices=notification_schedules_repo.HOUR_CHOICES,
+        timezones=notification_schedules_repo.TIMEZONES,
+    )
 
 
 @bp.route('/nudges/<int:nudge_id>/read', methods=['POST'])
