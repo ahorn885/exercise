@@ -29,11 +29,14 @@
     <div class="pl-id">
       <div class="pl-title">
         <a class="pl-name" href="{{ url_for('plan_create.view_plan', plan_version_id=c.id) }}">{{ c.display_name }}</a>
-        <span class="chip accent">Pattern {{ c.pattern }}</span>
+        {# Lifecycle is conveyed by the section header (Active / Upcoming /
+           Completed / Archived); the card surfaces only state that the header
+           can't. The internal Layer 4 `pattern` (A/B) and raw `created_via`
+           enum are engineering jargon, not athlete-facing — never shown (#958,
+           mirroring the #618 cleanup on the view-plan + log-wellness screens). #}
         {% if c.generation_status == 'generating' %}<span class="chip solid">Generating…</span>{% endif %}
         {% if c.generation_status == 'needs_review' %}<span class="chip solid">Needs review</span>{% endif %}
         {% if archived %}<span class="chip solid">Archived</span>{% elif c.completed_at %}<span class="chip solid">Marked complete</span>{% endif %}
-        <span class="chip solid">{{ c.created_via|replace('_', ' ') }}</span>
       </div>
       <p class="pl-meta mono">
         {{ c.scope_start_date }} → {{ c.scope_end_date }}{% if c.generation_status == 'ready' %} · {{ c.session_count or 0 }} session{{ '' if c.session_count == 1 else 's' }}{% endif %}

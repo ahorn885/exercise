@@ -190,6 +190,29 @@ def test_generated_plans_bucketed_by_scope_dates(monkeypatch):
     assert 'Generated plan' not in html
 
 
+def test_generated_card_hides_internal_pattern_and_created_via(monkeypatch):
+    # #958 (mirroring the #618 view-plan / log-wellness cleanup) — the internal
+    # Layer 4 `pattern` code ("Pattern A"/"Pattern B") and the raw `created_via`
+    # enum ("plan create", "plan refresh t3") are engineering jargon and must
+    # never surface on the athlete-facing card. Lifecycle is the section header.
+    today = date.today()
+    client = _client(monkeypatch, [], generated=[
+        _gen(id=11, pattern='A', created_via='plan_create',
+             scope_start_date=today - timedelta(days=3),
+             scope_end_date=today + timedelta(days=30)),
+    ])
+    resp = client.get('/plans/')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'Pattern A' not in html
+    assert 'Pattern B' not in html
+    assert 'plan create' not in html
+    assert 'plan refresh' not in html
+    # The card still renders (named after the no-race fallback) and is bucketed.
+    assert 'Active · 1' in html
+    assert 'Training plan' in html
+
+
 def test_generated_plan_named_after_target_race(monkeypatch):
     today = date.today()
     client = _client(monkeypatch, [], generated=[
