@@ -1,0 +1,88 @@
+{# #964 — Recurring reminder schedules.
+   Per-type enable toggle + local send-hour picker, plus a single timezone
+   selector, for the daily-cadence reminders (supplement AM/PM, tomorrow's
+   training, the daily log ping). Fields: `sched:<type>:enabled` (posts only when
+   on — off state captured by registry iteration server-side), `sched:<type>:hour`,
+   and `timezone`. Nothing fires until a timezone is set. No JS — one Save posts
+   the form; CSP-clean. `rows` / `hour_choices` / `timezones` / `timezone` come
+   from routes.nudges (repo-derived, so they can't drift). #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Reminder schedule — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('nudges.feed') }}">Notifications</a> · <a href="{{ url_for('nudges.settings') }}">Settings</a> · <b>Schedule</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Notifications · reminder schedule</p>
+    <h1 class="page-title">When your daily reminders arrive.</h1>
+    <p class="page-sub">Pick a local time for each daily reminder. Choose how they're delivered on the
+      <a href="{{ url_for('nudges.settings') }}">delivery preferences</a> page.</p>
+  </div>
+</div>
+
+<form method="post" action="{{ url_for('nudges.schedules') }}" class="stack ns-wrap">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  {# Timezone — without it the cron can't localize the send hour, so nothing fires. #}
+  <div class="card card-pad">
+    <p class="eyebrow">● Your timezone</p>
+    <label class="ns-row-label" for="ns-tz">Timezone</label>
+    <p class="ns-row-desc">Reminders arrive at your chosen local time in this zone.</p>
+    <select id="ns-tz" name="timezone" class="input">
+      <option value="" {% if not timezone %}selected{% endif %}>— Select your timezone —</option>
+      {% for tz in timezones %}
+      <option value="{{ tz }}" {% if tz == timezone %}selected{% endif %}>{{ tz.replace('_', ' ') }}</option>
+      {% endfor %}
+    </select>
+    {% if not timezone %}
+    <p class="ns-foot mono">Set your timezone so reminders arrive at the right local time — until then they won't send.</p>
+    {% endif %}
+  </div>
+
+  {# One row per recurring reminder: enable + local hour. #}
+  <div class="card card-pad">
+    <p class="eyebrow">● Daily reminders</p>
+    <table class="ns-matrix">
+      <thead>
+        <tr>
+          <th scope="col" class="ns-matrix-type">Reminder</th>
+          <th scope="col" class="ns-matrix-ch">On</th>
+          <th scope="col" class="ns-matrix-ch">Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="ns-matrix-row">
+          <th scope="row" class="ns-matrix-type">
+            <span class="ns-row-label">{{ row.label }}</span>
+            <span class="ns-row-desc">{{ row.description }}</span>
+          </th>
+          <td class="ns-matrix-cell">
+            <label class="ns-toggle">
+              <input type="checkbox" name="{{ row.enabled_field }}"{% if row.enabled %} checked{% endif %}>
+              <span class="ns-toggle-text">On</span>
+            </label>
+          </td>
+          <td class="ns-matrix-cell">
+            <label class="ns-na" for="{{ row.hour_field }}" aria-label="Send time for {{ row.label }}"></label>
+            <select id="{{ row.hour_field }}" name="{{ row.hour_field }}" class="input">
+              {% for value, label in hour_choices %}
+              <option value="{{ value }}" {% if value == row.send_hour %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="ns-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save schedule</button>
+    </div>
+  </div>
+
+  <p class="ns-foot mono">Delivery lands in your in-app notifications feed today. Push delivery arrives with the
+    native app — your schedule carries over automatically.</p>
+
+</form>
+{% endblock %}

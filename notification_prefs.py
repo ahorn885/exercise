@@ -162,6 +162,39 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app', 'push'],
         'defaults': {'in_app': True, 'push': True},
     },
+    # ─── #964 recurring time-of-day sends ───────────────────────────────────
+    # Fired on a per-user clock by the hourly cron (`scan_scheduled_sends`) off
+    # `notification_schedules`, not by a standing DB condition. Each surfaces as
+    # an in-app `account_nudges` row (re-stamped daily). Email non-applicable
+    # (no nudge→email path); push follows the wire-now/deliver-later posture. The
+    # two supplement send times share this one `supplement_reminder` toggle.
+    {
+        'key': 'supplement_reminder',
+        'label': 'Supplement reminders',
+        'description': 'Daily morning / evening reminders to take your '
+                       'supplements, at the times you choose.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'next_day_workouts',
+        'label': "Tomorrow's training preview",
+        'description': "An evening look at tomorrow's sessions, at the time "
+                       'you choose.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'daily_log_ping',
+        'label': 'Daily log reminder',
+        'description': 'A once-a-day nudge to log your training, at the time '
+                       'you choose.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
 ]
 
 TYPES_BY_KEY = {t['key']: t for t in NOTIFICATION_TYPES}
