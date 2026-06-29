@@ -25,7 +25,7 @@ from routes.race_events import (
     _disciplines_for_framework_sport,
     _extract_mapbox_locale_from_form,
     _framework_sport_choices,
-    _parse_discipline_id_filter,
+    _included_disciplines_from_terrain,
     _parse_first_time_at_distance,
     _parse_goal_outcome,
     _parse_pack_weight_kg,
@@ -33,12 +33,9 @@ from routes.race_events import (
     _parse_race_terrain,
     _parse_race_url,
     _race_saved_discipline_ids,
-    _remap_discipline_filter_on_sport_change,
-    _rescope_terrain_to_included,
+    _rescope_terrain_to_framework_sport,
     _resolve_effective_framework_sport,
     _run_mapbox_search,
-    _terrain_discipline_mismatch_flash,
-    _terrain_discipline_mismatches,
 )
 
 
@@ -46,23 +43,6 @@ class _FakeFormMapping(dict):
     """Stand-in for `request.form` (a `MultiDict`-shaped mapping). The
     helpers under test only call `.get(key)` which `dict.get` satisfies.
     """
-
-    def get(self, key, default=None):
-        return super().get(key, default)
-
-
-class _FakeMultiDict(dict):
-    """Stand-in for `request.form` with `.getlist()` (Flask MultiDict
-    semantics). Used for `_parse_discipline_id_filter` which calls
-    `.getlist('included_discipline_ids')` to read repeated checkbox values.
-    """
-
-    def __init__(self, base=None, lists=None):
-        super().__init__(base or {})
-        self._lists = lists or {}
-
-    def getlist(self, key):
-        return list(self._lists.get(key, []))
 
     def get(self, key, default=None):
         return super().get(key, default)
@@ -278,34 +258,38 @@ class TestRunMapboxSearch:
         assert results[0]['text'] == 'Nerstrand State Park'
 
 
-# ─── _parse_discipline_id_filter (D-73 Phase 5.2 Bucket E.(b)-B2) ────────────
+# ─── _included_disciplines_from_terrain (#949) ──────────────────────────────
 
 
-class TestParseDisciplineIdFilter:
-    """Parses the repeating `included_discipline_ids` form fields into a
-    canonical-id list, or None when no boxes are checked."""
+class TestIncludedDisciplinesFromTerrain:
+    """#949 — the included-discipline narrowing is derived from the terrain
+    breakdown: a discipline that scopes any row is included; race-wide rows
+    contribute nothing; no scoped rows → None (use bridge defaults)."""
 
-    def test_empty_form_returns_none(self):
-        assert _parse_discipline_id_filter(_FakeMultiDict()) is None
+    def test_empty_terrain_returns_none(self):
+        assert _included_disciplines_from_terrain([]) is None
+        assert _included_disciplines_from_terrain(None) is None
 
-    def test_returns_checked_subset(self):
-        form = _FakeMultiDict(
-            lists={'included_discipline_ids': ['D-001', 'D-010', 'D-015']}
-        )
-        assert _parse_discipline_id_filter(form) == ['D-001', 'D-010', 'D-015']
+    def test_all_race_wide_rows_return_none(self):
+        terrain = [
+            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': None},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 60.0, 'discipline_id': None},
+        ]
+        assert _included_disciplines_from_terrain(terrain) is None
 
-    def test_strips_whitespace_and_drops_blanks(self):
-        form = _FakeMultiDict(
-            lists={'included_discipline_ids': [' D-001 ', '', '  ', 'D-015']}
-        )
-        assert _parse_discipline_id_filter(form) == ['D-001', 'D-015']
+    def test_distinct_sorted_scoped_disciplines(self):
+        terrain = [
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-010'},
+            {'terrain_id': 'TRN-002', 'pct_of_race': 30.0, 'discipline_id': 'D-001'},
+            # Duplicate coupling + a race-wide row are both folded out.
+            {'terrain_id': 'TRN-003', 'pct_of_race': 20.0, 'discipline_id': 'D-010'},
+            {'terrain_id': 'TRN-004', 'pct_of_race': 20.0, 'discipline_id': None},
+        ]
+        assert _included_disciplines_from_terrain(terrain) == ['D-001', 'D-010']
 
-    def test_missing_getlist_method_returns_none(self):
-        """Form mapping without `.getlist` (plain dict) falls through to
-        None — defensive against test substrates that haven't loaded a
-        MultiDict."""
-        plain = {'included_discipline_ids': 'D-001'}
-        assert _parse_discipline_id_filter(plain) is None
+    def test_non_dict_entries_ignored(self):
+        terrain = ['junk', {'discipline_id': 'D-005'}]
+        assert _included_disciplines_from_terrain(terrain) == ['D-005']
 
 
 # ─── §H.2 goal-context parse helpers (2026-05-26) ───────────────────────────
@@ -460,79 +444,6 @@ class TestParseRaceTerrainDisciplineId:
         ]
 
 
-# ─── _terrain_discipline_mismatches (issue #342) ────────────────────────────
-
-
-class TestTerrainDisciplineMismatches:
-    """Issue #342 — terrain rows may not scope to a discipline that isn't in
-    the race's included disciplines."""
-
-    def test_none_included_filter_never_mismatches(self):
-        # included=None means "use bridge defaults" (full framework_sport
-        # set), so every per-row discipline the select could offer is in
-        # scope — nothing to block.
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
-        ]
-        assert _terrain_discipline_mismatches(terrain, None) == []
-
-    def test_empty_included_filter_never_mismatches(self):
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
-        ]
-        assert _terrain_discipline_mismatches(terrain, []) == []
-
-    def test_scoped_discipline_in_included_set_is_ok(self):
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
-        ]
-        assert _terrain_discipline_mismatches(terrain, ['D-001', 'D-010']) == []
-
-    def test_race_wide_rows_never_mismatch(self):
-        # discipline_id=None (race-wide) is always fine regardless of filter.
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': None},
-        ]
-        assert _terrain_discipline_mismatches(terrain, ['D-001']) == []
-
-    def test_scoped_discipline_outside_included_set_flagged(self):
-        # The pv=46 case: terrain scoped to D-006 (road cycling) but the race
-        # only includes D-001 / D-010.
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
-        ]
-        assert _terrain_discipline_mismatches(
-            terrain, ['D-001', 'D-010']
-        ) == ['D-006']
-
-    def test_multiple_offenders_deduped_and_sorted(self):
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 30.0, 'discipline_id': 'D-015'},
-            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-006'},
-            {'terrain_id': 'TRN-003', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
-        ]
-        assert _terrain_discipline_mismatches(
-            terrain, ['D-001']
-        ) == ['D-006', 'D-015']
-
-
-class TestTerrainDisciplineMismatchFlash:
-    """The athlete-facing flash copy is shared across all three save paths."""
-
-    def test_singular_phrasing(self):
-        msg = _terrain_discipline_mismatch_flash(['D-006'])
-        assert 'D-006' in msg
-        assert 'discipline (' in msg  # singular, no trailing 's'
-        assert 'is not' in msg
-        assert 'Race-wide' in msg
-
-    def test_plural_phrasing(self):
-        msg = _terrain_discipline_mismatch_flash(['D-006', 'D-015'])
-        assert 'D-006, D-015' in msg
-        assert 'disciplines (' in msg
-        assert 'are not' in msg
-
-
 # ─── _disciplines_for_framework_sport ───────────────────────────────────────
 
 
@@ -683,100 +594,65 @@ class TestDisciplineChoicesForRace:
         assert [c['id'] for c in out] == ['D-001']
 
 
-class TestRemapDisciplineFilterOnSportChange:
-    """#892 — sport change re-maps the narrowing instead of wiping it."""
+class TestRescopeTerrainToFrameworkSport:
+    """#892 / #949 — on a sport change, terrain couplings outside the new
+    event type's bridge fall back to race-wide (preserving terrain_id + pct)
+    instead of silently re-including an out-of-sport discipline."""
 
     def _bridge(self, *ids):
         return _FakeConn(rows=[
             {'discipline_id': i, 'discipline_name': i} for i in ids
         ])
 
-    def test_keeps_valid_drops_invalid(self):
-        # New sport's bridge has D-001 + D-002; prior picks D-001 + D-099.
+    def test_resets_coupling_outside_bridge(self):
         conn = self._bridge('D-001', 'D-002')
-        new_filter, dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Trail Running', ['D-001', 'D-099'], ['D-001', 'D-099']
-        )
-        assert new_filter == ['D-001']
-        assert dropped == ['D-099']
-
-    def test_falls_back_to_prior_when_submission_empty(self):
-        # Grid collapsed client-side → no checkboxes submitted; the prior
-        # selection is re-mapped rather than wiped.
-        conn = self._bridge('D-001', 'D-002')
-        new_filter, dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Trail Running', None, ['D-001', 'D-099']
-        )
-        assert new_filter == ['D-001']
-        assert dropped == ['D-099']
-
-    def test_prefers_fresh_submission_over_prior(self):
-        # Athlete actively re-picked D-002 for the new sport; honor it. D-001
-        # is still valid but unchecked → not reported as "dropped."
-        conn = self._bridge('D-001', 'D-002')
-        new_filter, dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Trail Running', ['D-002'], ['D-001']
-        )
-        assert new_filter == ['D-002']
-        assert dropped == []
-
-    def test_empty_intersection_falls_back_to_defaults(self):
-        # No prior pick survives the new sport → None ("use bridge defaults"),
-        # never an empty list (which would zero out Layer 2A).
-        conn = self._bridge('D-005')
-        new_filter, dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Triathlon', None, ['D-001']
-        )
-        assert new_filter is None
-        assert dropped == ['D-001']
-
-    def test_unresolved_sport_keeps_selection_verbatim(self):
-        # New sport doesn't resolve in the bridge at all — there's nothing to
-        # validate against, so keep the selection rather than wiping it.
-        conn = _FakeConn(rows=[])
-        new_filter, dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Custom Sport', ['D-001', 'D-099'], ['D-001']
-        )
-        assert new_filter == ['D-001', 'D-099']
-        assert dropped == []
-
-    def test_dedupes_kept(self):
-        conn = self._bridge('D-001')
-        new_filter, _dropped = _remap_discipline_filter_on_sport_change(
-            conn, 'Trail Running', ['D-001', 'D-001'], None
-        )
-        assert new_filter == ['D-001']
-
-
-class TestRescopeTerrainToIncluded:
-    """#892 — terrain couplings outside the included set fall back to race-wide
-    (preserving terrain_id + pct) rather than tripping the #342 block."""
-
-    def test_none_filter_leaves_terrain_untouched(self):
-        terrain = [
-            {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-006'},
-        ]
-        assert _rescope_terrain_to_included(terrain, None) == terrain
-
-    def test_resets_coupling_outside_included_set(self):
         terrain = [
             {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
             {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
             {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': None},
         ]
-        out = _rescope_terrain_to_included(terrain, ['D-001'])
+        out, dropped = _rescope_terrain_to_framework_sport(
+            conn, 'Trail Running', terrain
+        )
         assert out == [
             {'terrain_id': 'TRN-002', 'pct_of_race': 40.0, 'discipline_id': 'D-001'},
-            # D-099 not in the included set → reset to race-wide, pct preserved.
+            # D-099 not in the new bridge → reset to race-wide, pct preserved.
             {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': None},
             {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': None},
         ]
+        assert dropped == ['D-099']
 
-    def test_does_not_mutate_input_rows(self):
+    def test_unresolved_sport_keeps_couplings_verbatim(self):
+        # New sport doesn't resolve in the bridge — nothing to validate
+        # against, so couplings are kept (that's #885's concern, not data loss).
+        conn = _FakeConn(rows=[])
         terrain = [
             {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
         ]
-        _rescope_terrain_to_included(terrain, ['D-001'])
+        out, dropped = _rescope_terrain_to_framework_sport(
+            conn, 'Custom Sport', terrain
+        )
+        assert out == terrain
+        assert dropped == []
+
+    def test_dropped_is_sorted_and_deduped(self):
+        conn = self._bridge('D-001')
+        terrain = [
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
+            {'terrain_id': 'TRN-003', 'pct_of_race': 30.0, 'discipline_id': 'D-050'},
+            {'terrain_id': 'TRN-004', 'pct_of_race': 40.0, 'discipline_id': 'D-099'},
+        ]
+        _out, dropped = _rescope_terrain_to_framework_sport(
+            conn, 'Trail Running', terrain
+        )
+        assert dropped == ['D-050', 'D-099']
+
+    def test_does_not_mutate_input_rows(self):
+        conn = self._bridge('D-001')
+        terrain = [
+            {'terrain_id': 'TRN-017', 'pct_of_race': 30.0, 'discipline_id': 'D-099'},
+        ]
+        _rescope_terrain_to_framework_sport(conn, 'Trail Running', terrain)
         # Original row object is left intact (new dicts are returned).
         assert terrain[0]['discipline_id'] == 'D-099'
 
@@ -1073,17 +949,19 @@ class TestUpdateRaceMapboxRequired:
         # Update flow proceeds past the gate (no flash 'pick a race location').
 
 
-class TestUpdateRaceRemapsDisciplinesOnSportChange:
-    """#892 — changing the race event type must re-map (not wipe) the race's
-    disciplines. Reproduces the Pocket Gopher report end-to-end through the
-    `update_race` POST handler.
+class TestUpdateRaceRescopesTerrainOnSportChange:
+    """#892 / #949 — changing the race event type re-scopes terrain rows
+    pinned to a now-invalid discipline back to race-wide, and the included
+    set is then derived from the surviving (re-scoped) terrain breakdown.
+    Reproduces the Pocket Gopher report end-to-end through the `update_race`
+    POST handler.
     """
 
-    def test_sport_change_keeps_valid_picks_and_rescopes_terrain(self, monkeypatch):
+    def test_sport_change_rescopes_terrain_and_derives_included(self, monkeypatch):
         app = _make_app()
         conn = _RouteFakeConn()
         # The only live DB call on this path is the bridge SELECT inside the
-        # re-map helper; the new sport ("Trail Running") maps to D-001 + D-002.
+        # re-scope helper; the new sport ("Trail Running") maps to D-001 + D-002.
         conn.queue_response(rows=[
             {'discipline_id': 'D-001', 'discipline_name': 'Trail run'},
             {'discipline_id': 'D-002', 'discipline_name': 'Road run'},
@@ -1124,8 +1002,6 @@ class TestUpdateRaceRemapsDisciplinesOnSportChange:
                 'race_format': 'single_day',
                 # The athlete changed the race event type...
                 'framework_sport': 'Trail Running',
-                # ...and the picker round-tripped empty (collapsed client-side),
-                # so no discipline checkboxes are submitted.
                 # A terrain row still pinned to the now-invalid D-099:
                 'race_terrain[0][terrain_id]': 'TRN-002',
                 'race_terrain[0][pct_of_race]': '50',
@@ -1135,14 +1011,15 @@ class TestUpdateRaceRemapsDisciplinesOnSportChange:
             response = re_mod.update_race(10)
 
         assert response.status_code == 302
-        # D-001 survives the new sport's bridge; D-099 is dropped — but the
-        # filter is NOT wiped to None (the old data-loss bug).
-        assert captured['included_discipline_ids'] == ['D-001']
         # The terrain row is preserved (terrain_id + pct) with its orphaned
         # D-099 coupling re-scoped to race-wide rather than blocking the save.
         assert captured['race_terrain'] == [
             {'terrain_id': 'TRN-002', 'pct_of_race': 50.0, 'discipline_id': None},
         ]
+        # #949 — included is derived from the re-scoped terrain: the only
+        # coupling (D-099) was reset to race-wide, so no discipline is
+        # included → None (use the new sport's bridge defaults).
+        assert captured['included_discipline_ids'] is None
 
 
 class TestSetLocaleMapboxRequired:
