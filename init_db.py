@@ -3232,6 +3232,30 @@ _PG_MIGRATIONS = [
     "UPDATE injury_log SET body_part = regexp_replace(body_part, '^(Left|Right) ', '') WHERE body_part ~ '^(Left|Right) '",
     "UPDATE injury_log SET body_part = 'Lower back' WHERE body_part = 'Lower Back'",
     "UPDATE injury_log SET body_part = 'Upper back' WHERE body_part = 'Upper Back'",
+    # ── Recurring time-of-day notification schedules (#964) ───────────────
+    # The *when* for the recurring-send notification family (supplement AM/PM,
+    # next-day-workouts preview, daily log ping) — orthogonal to the
+    # notification_preferences *whether* matrix. One row per (user, schedule_type)
+    # holding the local send hour; the hourly cron (scan_scheduled_sends) fires a
+    # feed nudge when the user's local hour matches and re-stamps last_sent_on for
+    # once-per-day dedup. `schedule_type` == the account_nudges `nudge_type` it
+    # fires, so the cron's fire action is an identity mapping. PG-only (mirrors
+    # notification_preferences); SQLite dev has no such table and the repo's reads
+    # fail open. Composite PK is the upsert conflict target.
+    """CREATE TABLE IF NOT EXISTS notification_schedules (
+        user_id       INTEGER  NOT NULL REFERENCES users(id),
+        schedule_type TEXT     NOT NULL,
+        send_hour     SMALLINT NOT NULL,
+        enabled       BOOLEAN  NOT NULL DEFAULT TRUE,
+        last_sent_on  DATE,
+        updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, schedule_type)
+    )""",
+    # Per-user IANA timezone (e.g. 'America/Chicago'), captured on the schedule
+    # settings page. Localizes the send hour (NOW() AT TIME ZONE timezone in the
+    # cron). NULL ⇒ schedules never fire (fail-safe — can't localize the clock
+    # without it). Nullable so existing users need no backfill.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
 ]
 
 _CLOTHING_SEEDS = [
