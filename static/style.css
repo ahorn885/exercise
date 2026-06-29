@@ -1049,14 +1049,45 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .rail-actions .btn { justify-content: center; }
 .app .rail-actions form { margin: 0; }
 .app .rail-note { font-size: 12px; color: var(--fg-3); margin-top: 8px; }
-/* #826 — "science behind your plan" panel (plan view / race-week brief / race-day plan). */
-.app .science-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
-.app .science-item { padding-top: 12px; border-top: 1px solid var(--hairline-2); }
-.app .science-item:first-child { padding-top: 0; border-top: 0; }
-.app .science-item-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.app .science-title { font-weight: 600; }
-.app .science-summary { margin: 4px 0 0; font-size: 13px; color: var(--fg-2); }
-.app .science-cite { margin: 4px 0 0; font-size: 11px; color: var(--fg-3); }
+/* #943 — inline "science behind your plan" tooltips + compact source footnote.
+   Replaces the always-visible #826 science card (plan view / race-week brief /
+   race-day plan). A `.sci-term` is a focusable anchor carrying a `.sci-pop`
+   popover revealed on hover/focus; `.sci-footnote` is the compact "Why this
+   plan" source line at the foot of the plan. */
+.app .sci-term { position: relative; cursor: help; }
+/* Plain (non-chip) terms get a dotted underline to read as interactive. */
+.app .sci-term:not(.chip) { border-bottom: 1px dotted var(--fg-4); }
+.app .sci-pop {
+  position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 40;
+  width: max-content; max-width: 280px;
+  visibility: hidden; opacity: 0; transform: translateY(4px);
+  transition: opacity .12s ease, transform .12s ease;
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--hairline); border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  padding: 11px 13px; pointer-events: none;
+  /* Reset the inherited chip/mono skin so the popover reads as prose. */
+  font-family: var(--font-sans); font-size: 12px; font-weight: 400;
+  letter-spacing: normal; text-transform: none; line-height: 1.45;
+  white-space: normal; text-align: left;
+}
+.app .sci-term:hover > .sci-pop,
+.app .sci-term:focus > .sci-pop,
+.app .sci-term:focus-within > .sci-pop { visibility: visible; opacity: 1; transform: translateY(0); }
+.app .sci-pop .chip { margin-bottom: 7px; }
+.app .sci-pop-title { display: block; font-weight: 600; font-size: 13px; color: var(--fg); }
+.app .sci-pop-body { display: block; margin-top: 4px; color: var(--fg-2); }
+.app .sci-pop-cite { display: block; margin-top: 7px; font-size: 11px; color: var(--fg-3); }
+
+.app .sci-footnote {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hairline-2);
+}
+.app .sci-footnote-lead {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--fg-3);
+}
+.app .sci-footnote-src.chip { cursor: help; }
 .app .json-box { margin-top: 8px; font-family: var(--mono); font-size: 11px; padding: 10px; background: var(--bg); border: 1px solid var(--hairline-2); border-radius: var(--r-sm); max-height: 220px; overflow: auto; white-space: pre; }
 .app .field { display: block; margin-bottom: 12px; }
 .app .field > .lbl { display: block; font-family: var(--mono); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-3); margin-bottom: 5px; }
