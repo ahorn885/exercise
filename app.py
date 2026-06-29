@@ -401,6 +401,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # route (`routes.auth.cron_authorized`).
     'nudges.scan_connect_provider_14d',
     'nudges.scan_reconcile_staleness',
+    'nudges.scan_scheduled_sends',
     'plan_create.cron_generate_pending',
     'ride_with_gps.cron_process',
     'webhook_maintenance.cron_maintenance',

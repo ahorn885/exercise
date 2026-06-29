@@ -22,6 +22,7 @@ mirroring `tests/test_nudges_staleness.py`.
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
@@ -30,8 +31,18 @@ os.environ['DATABASE_URL'] = ''
 
 import notification_prefs as np  # noqa: E402
 import notification_schedules_repo as nsr  # noqa: E402
+from routes.nudges import (  # noqa: E402
+    NUDGE_REGISTRY,
+    _SCHEDULED_ADVANCE_LAST_SENT,
+    _SCHEDULED_DUE_SELECT,
+    _SCHEDULED_RESURFACE_UPSERT,
+)
 
 NEW_PREF_TYPES = ['supplement_reminder', 'next_day_workouts', 'daily_log_ping']
+# Feed-row types the delivery cron fires — one per schedule_type. AM + PM are
+# distinct rows but both roll up to the `supplement_reminder` in-app toggle.
+SCHEDULE_NUDGE_TYPES = ['supplement_am', 'supplement_pm',
+                        'next_day_workouts', 'daily_log_ping']
 
 
 # ─── Fake conn (mirrors tests/test_nudges_staleness.py) ─────────────────────
@@ -226,3 +237,115 @@ class TestGuards:
             def execute(self, sql, params=()):
                 raise RuntimeError('no such column')
         assert nsr.get_user_timezone(_Boom(), 1) is None
+
+
+# ─── 4. Delivery cron (Slice 2) ─────────────────────────────────────────────
+
+
+class TestScheduledSendRegistry:
+    @pytest.mark.parametrize('nt', SCHEDULE_NUDGE_TYPES)
+    def test_each_schedule_type_has_a_feed_entry(self, nt):
+        entry = NUDGE_REGISTRY[nt]
+        assert entry['message']
+        assert entry['cta_endpoint']
+        assert entry['category'] == 'info'
+        # The gate type must be a real preference type.
+        assert entry['notification_type'] in np.TYPES_BY_KEY
+
+    def test_supplement_times_share_one_pref_toggle(self):
+        assert (NUDGE_REGISTRY['supplement_am']['notification_type']
+                == 'supplement_reminder')
+        assert (NUDGE_REGISTRY['supplement_pm']['notification_type']
+                == 'supplement_reminder')
+
+    def test_registry_covers_every_schedule_type(self):
+        # Every `notification_schedules` schedule_type the cron can fire has a
+        # feed entry (identity mapping schedule_type == nudge_type).
+        for s in nsr.SCHEDULE_TYPES:
+            assert s['key'] in NUDGE_REGISTRY
+
+
+class TestDueSelectSql:
+    def test_localizes_and_guards_against_null_tz_and_dedup(self):
+        sql = ' '.join(_SCHEDULED_DUE_SELECT.split())
+        assert 'FROM notification_schedules s' in sql
+        assert 'JOIN users u ON u.id = s.user_id' in sql
+        assert 's.enabled' in sql
+        # NULL tz never fires (fail-safe).
+        assert 'u.timezone IS NOT NULL' in sql
+        # Local-hour match localizes via Postgres, not Python.
+        assert 'EXTRACT(HOUR FROM (NOW() AT TIME ZONE u.timezone)) = s.send_hour' in sql
+        # Once-per-local-day dedup.
+        assert 's.last_sent_on IS NULL' in sql
+        assert "s.last_sent_on < (NOW() AT TIME ZONE u.timezone)::date" in sql
+
+    def test_resurface_upsert_restamps_and_clears(self):
+        sql = ' '.join(_SCHEDULED_RESURFACE_UPSERT.split())
+        assert sql.startswith('INSERT INTO account_nudges (user_id, nudge_type)')
+        assert 'ON CONFLICT (user_id, nudge_type) DO UPDATE SET' in sql
+        assert 'created_at = NOW()' in sql
+        assert 'read_at = NULL' in sql
+        assert 'dismissed_at = NULL' in sql
+
+    def test_advance_writes_local_date_watermark(self):
+        sql = ' '.join(_SCHEDULED_ADVANCE_LAST_SENT.split())
+        assert sql.startswith('UPDATE notification_schedules SET last_sent_on =')
+        assert 'WHERE user_id = ? AND schedule_type = ?' in sql
+
+
+def _cron_client(monkeypatch, conn):
+    import app as _appmod
+    for mod in list(sys.modules.values()):
+        if mod is not None and getattr(mod, 'get_db', None) is not None:
+            monkeypatch.setattr(mod, 'get_db', lambda conn=conn: conn,
+                                raising=False)
+    _appmod.app.config['TESTING'] = True
+    return _appmod.app.test_client()
+
+
+class TestScheduledSendsRoute:
+    def test_unauthorized_without_token(self, monkeypatch):
+        monkeypatch.delenv('CRON_SECRET', raising=False)
+        conn = _FakeConn()
+        client = _cron_client(monkeypatch, conn)
+        resp = client.get('/cron/notifications/scheduled')
+        assert resp.status_code == 401
+        assert conn.calls == []  # never touched the DB
+
+    def test_fires_due_rows_upsert_then_advance(self, monkeypatch):
+        monkeypatch.setenv('CRON_SECRET', 's3cret')
+        conn = _FakeConn()
+        # One SELECT returning two due rows (one supplement_am, one daily_log_ping).
+        conn.queue([
+            {'user_id': 1, 'schedule_type': 'supplement_am',
+             'local_date': '2026-06-29'},
+            {'user_id': 2, 'schedule_type': 'daily_log_ping',
+             'local_date': '2026-06-29'},
+        ])
+        client = _cron_client(monkeypatch, conn)
+        resp = client.get('/cron/notifications/scheduled',
+                          headers={'Authorization': 'Bearer s3cret'})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body['sent'] == {'supplement_am': 1, 'daily_log_ping': 1}
+        # SELECT, then per row: upsert (INSERT) + advance (UPDATE), in order.
+        kinds = [c[0].split()[0] for c in conn.calls]
+        assert kinds == ['SELECT', 'INSERT', 'UPDATE', 'INSERT', 'UPDATE']
+        # The upsert targets (user_id, nudge_type); the advance carries the
+        # local-date watermark + the same key.
+        assert conn.calls[1][1] == (1, 'supplement_am')
+        assert conn.calls[2][1] == ('2026-06-29', 1, 'supplement_am')
+        assert conn.commits == 1
+
+    def test_no_due_rows_is_a_clean_noop(self, monkeypatch):
+        monkeypatch.setenv('CRON_SECRET', 's3cret')
+        conn = _FakeConn()
+        conn.queue([])  # SELECT → nothing due this hour
+        client = _cron_client(monkeypatch, conn)
+        resp = client.get('/cron/notifications/scheduled',
+                          headers={'Authorization': 'Bearer s3cret'})
+        assert resp.status_code == 200
+        assert resp.get_json()['sent'] == {}
+        # Only the SELECT ran; no upserts. Still commits once.
+        assert [c[0].split()[0] for c in conn.calls] == ['SELECT']
+        assert conn.commits == 1
