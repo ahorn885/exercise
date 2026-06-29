@@ -530,17 +530,18 @@ def _seed_edit_layer0_equipment(conn, names=('Barbell',)):
 
 def _patch_craft_save(monkeypatch, locales_mod, *, prior=None, calls=None):
     """Neutralise the #953 inline craft save in equipment-path tests that don't
-    seed its repo queries: `load_craft_locales` returns `prior` (default: none
-    kept here), `replace_craft_locale` records `(uid, locale, crafts)` into
-    `calls`, and the craft cache eviction is a no-op."""
-    monkeypatch.setattr(locales_mod, 'load_craft_locales',
+    seed its repo queries. #884 slice 5 cut the standing capture over to the
+    unified gear store, so this patches `load_gear_locales` (returns `prior`,
+    default none), `replace_gear_locale` (records `(uid, locale, crafts)` into
+    `calls`), and `evict_plan_caches_on_gear_locale_change` (no-op)."""
+    monkeypatch.setattr(locales_mod, 'load_gear_locales',
                         lambda *_a, **_k: dict(prior or {}))
 
     def _replace(_db, uid, locale, crafts):
         if calls is not None:
             calls.append((uid, locale, list(crafts)))
-    monkeypatch.setattr(locales_mod, 'replace_craft_locale', _replace)
-    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+    monkeypatch.setattr(locales_mod, 'replace_gear_locale', _replace)
+    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_gear_locale_change',
                         lambda *_a, **_k: None)
 
 
@@ -729,7 +730,7 @@ class TestEditLocaleSavesCraftInline:
         _patch_craft_save(monkeypatch, locales_mod,
                           prior={'cabin': prior_crafts}, calls=craft_calls)
         evicted: list = []
-        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_gear_locale_change',
                             lambda *_a, **_k: evicted.append(True))
 
         profile = _FakeRow({'locale_terrain_ids': []})

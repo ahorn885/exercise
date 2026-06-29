@@ -15,11 +15,11 @@ from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
 from athlete_crafts_repo import load_craft_catalog
-from athlete_craft_locale_repo import (
-    CraftLocaleError,
-    evict_plan_caches_on_craft_locale_change,
-    load_craft_locales,
-    replace_craft_locale,
+from athlete_gear_repo import (
+    GearSelectionError,
+    evict_plan_caches_on_gear_locale_change,
+    load_gear_locales,
+    replace_gear_locale,
 )
 
 bp = Blueprint('locales', __name__)
@@ -853,7 +853,13 @@ def save_locale_crafts(locale):
     `_edit_locale` save (one button for equipment + craft, no bounce-out), so the
     form no longer targets this route. It is kept as a still-valid standalone
     endpoint (direct POST / external callers) until the #884 model unification
-    retires the separate craft surface entirely."""
+    retires the separate craft surface entirely.
+
+    #884 slice 5 — the standing craft↔locale capture is cut over to the unified
+    `athlete_gear_locale` store (the away overlay now resolves off it, §7). The
+    picker catalog stays craft-only here (the unified gear picker is slice 6), so
+    `replace_gear_locale` only ever sees craft gear_ids — byte-identical to the
+    prior `athlete_craft_locale` write (the gear store was backfilled 1:1)."""
     db = get_db()
     uid = current_user_id()
     if not db.execute(
@@ -863,12 +869,12 @@ def save_locale_crafts(locale):
         flash('Unknown location.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     try:
-        replace_craft_locale(db, uid, locale, request.form.getlist('craft_slug'))
-    except CraftLocaleError as exc:
+        replace_gear_locale(db, uid, locale, request.form.getlist('craft_slug'))
+    except GearSelectionError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('locales.edit_profile', locale=locale))
     db.commit()
-    evict_plan_caches_on_craft_locale_change(db, uid)
+    evict_plan_caches_on_gear_locale_change(db, uid)
     flash('Craft kept at this location saved.', 'success')
     return redirect(url_for('locales.edit_profile', locale=locale))
 
@@ -941,8 +947,9 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # #953 — craft kept here is now part of this single save (folded off its
         # former standalone form). Snapshot the prior set so the craft-cache
         # eviction only fires on an actual change, mirroring the terrain/equipment
-        # guards below.
-        prior_crafts = load_craft_locales(db, uid).get(locale, [])
+        # guards below. #884 slice 5 — read off the unified `athlete_gear_locale`
+        # store (craft gear_ids only until the slice-6 picker offers all kinds).
+        prior_crafts = load_gear_locales(db, uid).get(locale, [])
         notes = request.form.get('notes', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
         # #446 — explicit privacy override. The form posts `private=1` when the
@@ -1012,8 +1019,8 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # only reaches here via a crafted POST, so roll the whole save back and
         # bounce to the editor (nothing was committed).
         try:
-            replace_craft_locale(db, uid, locale, submitted_crafts)
-        except CraftLocaleError as exc:
+            replace_gear_locale(db, uid, locale, submitted_crafts)
+        except GearSelectionError as exc:
             db.rollback()
             flash(str(exc), 'error')
             return redirect(url_for('locales.edit_profile', locale=locale))
@@ -1023,7 +1030,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
         if submitted != prior_effective:
             _evict_layer2c_on_equipment_change(db, uid)
         if sorted(submitted_crafts) != sorted(prior_crafts):
-            evict_plan_caches_on_craft_locale_change(db, uid)
+            evict_plan_caches_on_gear_locale_change(db, uid)
         flash(f'Saved {profile["locale_name"] if profile and _row_has(profile, "locale_name") and profile["locale_name"] else locale} '
               f'({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
@@ -1076,8 +1083,10 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            active_terrain_ids=set(prior_terrain_ids),
                            # WS-H #581 Slice 5 — craft-kept-here capture (the (b)
                            # craft↔locale surface, relocated from event-windows).
+                           # #884 slice 5 — checked state reads off the unified
+                           # `athlete_gear_locale` store (craft gear_ids only).
                            craft_catalog=load_craft_catalog(),
-                           crafts_here=load_craft_locales(db, uid).get(locale, []))
+                           crafts_here=load_gear_locales(db, uid).get(locale, []))
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────
