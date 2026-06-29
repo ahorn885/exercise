@@ -166,6 +166,7 @@ class TestGetTargetRaceRow:
             'event_locale_id': None,
             'notes': None,
             'race_terrain': [],
+            'sport_sub_format': 'Triathlon (Standard / Olympic)',
         })
 
         out = _get_target_race_row(conn, uid=42)
@@ -174,14 +175,18 @@ class TestGetTargetRaceRow:
         assert out['name'] == 'Pocket Gopher Extreme'
         assert out['race_format'] == 'continuous_multi_day'
         assert out['race_terrain'] == []
+        # #254 / D-17 B2 — the stored sub-format surfaces so the edit form
+        # repopulates the Sub-format select from the two stored columns.
+        assert out['sport_sub_format'] == 'Triathlon (Standard / Olympic)'
 
         # WHERE clause must scope by user_id AND is_target_event=TRUE.
         # SELECT must include race_terrain so the edit form pre-populates
         # on return-visits and the brief-only cache diff can compare prior
-        # values.
+        # values; sport_sub_format (B2) for the Sub-format select.
         sql, params = conn.calls[0]
         assert 'WHERE user_id = ? AND is_target_event = TRUE' in sql
         assert 'race_terrain' in sql
+        assert 'sport_sub_format' in sql
         assert params == (42,)
 
     def test_returns_none_on_miss(self):

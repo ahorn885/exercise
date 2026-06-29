@@ -39,6 +39,7 @@ from plan_sessions_repo import (
     fill_rest_gaps,
     load_active_plan_version_for_date,
     load_active_plan_version_id,
+    load_current_plan_start,
     load_active_window_with_rest,
     load_plan_sessions_by_version,
     load_prior_plan_session_window,
@@ -688,6 +689,44 @@ class TestLoadActivePlanVersionForDate:
         assert "ORDER BY created_at DESC" in sql
         # User + the date bound to both scope comparisons.
         assert params == (_USER_ID, date(2026, 6, 22), date(2026, 6, 22))
+
+
+# ─── load_current_plan_start ────────────────────────────────────────────────
+
+
+class TestLoadCurrentPlanStart:
+    """#1024 — resolves the running plan's ORIGIN (the `plan_create` row's
+    scope start) for `derive_current_phase`, distinct from the active version's
+    scope start (which is the last refresh window)."""
+
+    def test_returns_scope_start_of_latest_plan_create(self):
+        conn = _FakeConn()
+        conn.queue(row={"scope_start_date": date(2026, 4, 1)})
+
+        result = load_current_plan_start(conn, _USER_ID, date(2026, 6, 1))
+
+        assert result == date(2026, 4, 1)
+
+    def test_returns_none_when_no_plan_create_row(self):
+        """Athlete never created a plan — caller falls back to start_phase."""
+        conn = _FakeConn()
+        conn.queue(row=None)
+
+        assert load_current_plan_start(conn, _USER_ID, date(2026, 6, 1)) is None
+
+    def test_sql_filters_plan_create_origin_on_or_before_latest_first(self):
+        conn = _FakeConn()
+        conn.queue(row={"scope_start_date": date(2026, 4, 1)})
+
+        load_current_plan_start(conn, _USER_ID, date(2026, 6, 1))
+
+        sql, params = conn.calls[0]
+        # The original full plan is the `plan_create` row, NOT a refresh-scoped
+        # version; no archived/completed filter (the origin survives supersede).
+        assert "created_via = 'plan_create'" in sql
+        assert "scope_start_date <= ?" in sql
+        assert "ORDER BY created_at DESC" in sql
+        assert params == (_USER_ID, date(2026, 6, 1))
 
 
 # ─── fill_rest_gaps ─────────────────────────────────────────────────────────

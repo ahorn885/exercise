@@ -631,6 +631,35 @@ def load_active_plan_version_for_date(
     }
 
 
+def load_current_plan_start(
+    db: Any, user_id: int, on_or_before: date
+) -> date | None:
+    """Return the start date of the athlete's currently-running plan — the
+    `scope_start_date` of the most recent `created_via = 'plan_create'`
+    `plan_versions` row that began on or before `on_or_before` — or None when
+    the athlete has never created a plan.
+
+    Why not the active version's `scope_start_date`: `plan_versions` carries no
+    parent pointer, and a refresh writes a NEW version scoped to the *refresh*
+    window (`created_via = 'plan_refresh_t*'`). So the active version's scope
+    start is the last edit, not where periodization phase 0 began. The original
+    full plan is the `plan_create` row, and its `scope_start_date` is the anchor
+    `plan_management.derive_current_phase` (§5.1) needs to place today's phase
+    (#1024). The `<= on_or_before` filter + `created_at DESC` picks the latest
+    plan the athlete actually started, so a full re-create supersedes an older
+    plan rather than both being ambiguous. No `archived_at`/`completed_at`
+    filter: a `plan_create` row stays the origin even after refreshes supersede
+    it for the dates they re-plan."""
+    row = db.execute(
+        "SELECT scope_start_date FROM plan_versions "
+        "WHERE user_id = ? AND created_via = 'plan_create' "
+        "AND scope_start_date <= ? "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (user_id, on_or_before),
+    ).fetchone()
+    return row["scope_start_date"] if row else None
+
+
 def _coerce_day(value: Any) -> date | None:
     """Coerce a session-map key to a `date`. psycopg returns DATE as `date`
     already; tolerate ISO strings (and the render harness's fake keys) and
