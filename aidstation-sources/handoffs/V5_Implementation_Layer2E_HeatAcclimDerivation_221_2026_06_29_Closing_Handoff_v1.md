@@ -3,7 +3,12 @@
 Implementation handoff. Created 2026-06-29 on branch
 `claude/layer2e-heat-destub-221-c5l13a`. Implements the **producer** half of the
 `PlanManagementState` contract authored in #215 (`specs/Plan_Management_Spec_v1.md`).
-PR not yet opened — push + bookkeep + wait for Andy's go.
+PR opened + auto-merge enabled (merge commit) on Andy's go 2026-06-29.
+
+> **➡️ This work continues directly into #220 — that is the next session's job.**
+> #221 built the *producer* (the heat-acclim state + current phase); #220 is the
+> *consumer* that wires it into the live Layer 2E §5.8 overlay and adds the last
+> contract leg (`expected_race_temp_c` + the forecast fetch). Pick up at **§4**.
 
 ## 1. What this session did
 
@@ -60,9 +65,10 @@ Layer 4 renders into, which *minimizes* the PM-1 divergence the spec flags as
 #220 must pass the same `total_weeks` the plan was built with** so the phase
 read matches the rendered calendar.
 
-## 4. Next session — #220 (the consumer)
+## 4. Next session — #220 (the consumer) — CONTINUE HERE
 
-#221 produced the state; **#220 consumes it.** Per
+#221 produced the state; **#220 consumes it — this is the direct continuation
+of this work.** Per
 `handoffs/V5_Spec_Layer2E_HeatDestub_220_2026_06_29_Kickoff_Handoff_v1.md`:
 
 1. Add **`weather_client.get_forecast_high(lat, lng, target_date, *, fetcher=None)`**
