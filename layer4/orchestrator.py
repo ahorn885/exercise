@@ -125,7 +125,11 @@ from layer4.hashing import (
 )
 from layer4.phase_structure import phase_structure_from_3b
 from layer4.plan_create import _compute_total_weeks
-from plan_management import derive_expected_race_temp_c, derive_heat_acclim_state
+from plan_management import (
+    derive_current_phase,
+    derive_expected_race_temp_c,
+    derive_heat_acclim_state,
+)
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -1048,6 +1052,7 @@ def _upstream_full_cone(
     cache: Layer4Cache,
     target_race_event: RaceEventPayload | None,
     viability_current_date: date | None = None,
+    plan_start: date | None = None,
 ) -> _UpstreamFullCone:
     """Compose the full upstream cone (Layer 1 → 2A → 2B → 2D → 2C → 3A →
     3B → 2E) shared by race_week_brief + plan_refresh + plan_create.
@@ -1328,10 +1333,8 @@ def _upstream_full_cone(
     ]
 
     # Plan Management contract (`Plan_Management_Spec_v1.md` §3) — assembled at
-    # read time for the 2E §5.8 heat overlay (#220). `current_phase` keeps the
-    # 3B start-phase derivation; the week-indexed §5.1 `derive_current_phase`
-    # stays unwired (a #221 gap, tracked) and is out of scope here. Coordinates
-    # for `expected_race_temp_c` come from the race-event payload (the 2E
+    # read time for the 2E §5.8 heat overlay (#220). Coordinates for
+    # `expected_race_temp_c` come from the race-event payload (the 2E
     # target-event shape doesn't carry them), keyed by the same str event_id.
     heat_acclim_state, heat_acclim_data_sparse = derive_heat_acclim_state(
         db, user_id, today
@@ -1342,8 +1345,41 @@ def _upstream_full_cone(
             target_race_event.event_locale_lat,
             target_race_event.event_locale_lng,
         )
+
+    # `current_phase` (§5.1 `derive_current_phase`, #1024) — the periodization
+    # phase active TODAY, so the 2E nutrition baseline scales to the athlete's
+    # current block instead of always the plan's first block (`start_phase`).
+    # plan_create supplies `plan_start` directly (its plan isn't persisted yet,
+    # and today == week 0 → first block, so this is a no-op there). plan_refresh
+    # + race_week_brief leave it None, so the running plan's origin is read from
+    # `plan_versions` (`load_current_plan_start` — the `plan_create` row's scope
+    # start; a refresh writes a refresh-scoped row, so the active version's scope
+    # start is NOT the origin). Falls back to `start_phase` when no origin is
+    # resolvable (the athlete has no `plan_create` row, or a T1/T2 refresh path
+    # with none on disk yet) — logged so the substitution isn't silent (Rule #15).
+    origin_plan_start = plan_start
+    if origin_plan_start is None:
+        # Lazy import: `plan_sessions_repo` -> `layer4.payload` -> `layer4`
+        # -> this module (the same cycle the #732 brief helpers dodge).
+        from plan_sessions_repo import load_current_plan_start
+
+        origin_plan_start = load_current_plan_start(db, user_id, today)
+    if origin_plan_start is not None:
+        current_phase = derive_current_phase(
+            layer3b_payload,
+            origin_plan_start,
+            today,
+            _compute_total_weeks(layer3b_payload, origin_plan_start, target_race_event),
+        )
+    else:
+        current_phase = layer3b_payload.periodization_shape.start_phase
+        print(
+            f"_upstream_full_cone: current_phase fallback to start_phase="
+            f"{current_phase} user_id={user_id} (no plan_create origin on disk)"
+        )
+
     plan_management_state = PlanManagementState(
-        current_phase=layer3b_payload.periodization_shape.start_phase,
+        current_phase=current_phase,
         heat_acclim_state=heat_acclim_state,
         expected_race_temp_c=derive_expected_race_temp_c(
             target_events, coords_by_event_id, today
@@ -1881,6 +1917,9 @@ def orchestrate_plan_create(
     cone = _upstream_full_cone(
         db, user_id, today, cache=cache, target_race_event=race_event,
         viability_current_date=plan_start_date,
+        # §5.1 current_phase (#1024): the plan being created isn't persisted yet,
+        # so hand its start in directly rather than reading `plan_versions`.
+        plan_start=plan_start_date,
     )
 
     layer2c_payloads = cone.layer2c_payloads
