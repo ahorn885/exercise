@@ -4,7 +4,7 @@
 **Date:** 2026-06-29
 **Predecessor handoff:** `V5_Implementation_UnifiedGearCraftModel_884_DesignV3_Slice4_3_RedumpRetire_EquipmentStrip_2026_06_29_Closing_Handoff_v1.md` (slice 4.3, merged `5576a59` / PR #1008; redump-fold baked into `v1.10.0`).
 **Branch:** `claude/884-unified-gear-craft-fbhabu` (off `main` HEAD `f209f58`).
-**Status:** code done, **suite 3874/30 green**, ruff clean on changed files, **2 substantive files** (`routes/locales.py` + `layer4/orchestrator.py`) under the ceiling. **No migration / no Neon apply owed** (public-schema reads only; the gear-locale store is already live from the slice-3 backfill). **PR not yet opened — awaiting Andy's go** (operating model). **#884 CONTINUES — next is slice 6** (capture UX + unified gear registry).
+**Status:** code done, **suite 3874/30 green**, ruff clean on changed files, **2 substantive files** (`routes/locales.py` + `layer4/orchestrator.py`) under the ceiling. **No migration / no Neon apply owed** (public-schema reads only; the gear-locale store is already live from the slice-3 backfill). **PR opening + auto-merge MERGE (Andy's go 2026-06-29).** **#884 CONTINUES — next is slice 6** (capture UX + unified gear registry — Andy ratified the full 6a/6b/6c plan + decisions D1/D2; see §6.2).
 
 > **Andy decision this session (AskUserQuestion, 2026-06-29):** slice-5 scope = **"Feasibility now, 2C later."** Ship the away **feasibility** generalization onto the unified store; **defer** the full per-segment **2C** re-resolve (away equipment pool driving the strength-substitute exercise pool) to slice 6. Rationale below (§2).
 
@@ -83,8 +83,13 @@ Investigation finding (corroborated by a code-map sweep): **Layer 2C is built on
 - **Per-segment 2C re-resolve (the deferred "+2C" half of §7)** — fold into slice 6: thread an away-cluster 2C payload (away equipment pool + away gear-toggle states) through `EventWindowSegment` → `per_phase` so an away week's strength-substitute pool + `toggle_off_for_discipline` flag reflect the destination, not the home gym.
 - **`replace_gear_locale` replace-all trap (for slice 6):** it replaces *all* gear at a locale. Safe now (only craft gear can be there). When slice 6's picker offers ski/climbing/swim at a locale, the form must submit the full owned-at-locale set (or switch to a kind-scoped replace) so a craft-only save can't wipe stationed ski/climbing gear.
 
-### 6.2 Next session — CONTINUE #884 → slice 6 (capture UX + unified gear registry)
-The "Your gear" surface (crafts + gear grouped by `group_kind`, each row own/have-access + a "bring it" affordance), onboarding parity, and the unified gear registry (folds `sport_specific_gear_toggles` catalog + craft labels, keyed by §5.5) as the picker + validator source — **replaces the two craft pickers; first capture for gear** (design v3 §10). This is what makes slice-5's plumbing observable (stations/brings ski/climbing gear) and is the natural home for the deferred per-segment 2C re-resolve (§6.1).
+### 6.2 Next session — CONTINUE #884 → slice 6 (capture UX + unified gear registry) — RATIFIED
+**This is the next step. Andy ratified the full slice-6 plan (2026-06-29):** build **all three sub-PRs 6a/6b/6c**; **D1 = consolidate the "Your gear" surface on the existing profile Gear & skills tab** (not a new page); **D2 = a runtime gear registry** folding the two catalogs (no new Layer-0 surface). Execute against **`plans/UnifiedGearCraft_884_Slice6_CaptureUX_Plan_v1.md`** (the full file map, sub-PR breakdown, and §4 decision record):
+- **6a** — unified gear registry + the consolidated owned "Your gear" surface (fold the craft picker + gear-toggle form into one grouped-by-`group_kind` section on the profile gear tab; behavior-preserving capture).
+- **6b** — "bring it" + the standing/brought pickers generalized to **all** gear kinds + cut the brought read `brought_craft`→`brought_gear`. **This is the slice that makes slice-5's plumbing observable** (station/bring ski/climbing gear → feasible away; the design §17 climbing-at-away scenario). Watch the `replace_gear_locale` replace-all trap (§6.1).
+- **6c** — onboarding gear-toggle parity + retire the now-app-dead `athlete_craft_locale_repo` (+ legacy craft columns) via a redump-fold (the slice-4.3 pattern).
+
+Slice 6 is also the home for the **deferred per-segment 2C re-resolve** (§2 / §6.1). Slice 6 should start on a **fresh branch off main once slice 5 merges** (don't stack on the slice-5 branch). **STAY ON THE #884 THREAD until 6 is done.**
 
 ### 6.3 Open follow-ons (carried, not owed by this slice)
 - **`Provider_Inbound_Matrix_v2` §12 rollerski footnote** (CARRY_FORWARD doc-nit, #884 design v3 Decision 10).
