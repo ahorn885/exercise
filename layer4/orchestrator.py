@@ -2048,11 +2048,14 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     "discipline_training_gaps": "0A",
     "modality_groups": "0A",
     "discipline_modality_membership": "0A",
-    "craft_discipline_aliases": "0A",
     # gear_discipline_aliases (#884 migration 0024) — the unified gear/craft alias
     # table the feasibility + substitution cascade reads as of slice 4a. Tracked
     # so a re-seed (the D-028 ladder, gear-toggle aliases) invalidates the 0A
-    # digest. craft_discipline_aliases stays mapped until slice 4c retires it.
+    # digest. The legacy `craft_discipline_aliases` it replaced was DROPPED in
+    # slice 4.3 (migration 0030) and removed from this map; it is bridged in the
+    # drift guard's _FAMILY_MAP_EXCEPTIONS until the redump folds it out of the
+    # baseline. (Deploy-order: this map removal must ship before 0030 applies —
+    # see 0030's header.)
     "gear_discipline_aliases": "0A",
     # craft_terrain_compatibility (#586 WS-I) is created by migration 0004, not
     # schema.sql (like terrain_gap_rules); read by the unified craft/terrain

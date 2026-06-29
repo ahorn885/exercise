@@ -2235,6 +2235,14 @@ class TestLayer0TableFamilyMap:
         # discipline_technique_foci is 0B-versioned but has no reader anywhere in
         # app code (dead serving data) — no cache for its edits to invalidate.
         "discipline_technique_foci",
+        # craft_discipline_aliases — #884 slice 4.3 RETIRED it: generalized into
+        # gear_discipline_aliases (0024), readers cut over in 4a, DROPPED by
+        # migration 0030. It is removed from _LAYER0_TABLE_FAMILY, but the
+        # committed baseline still carries its DDL, so this exception bridges the
+        # drift guard until the slice-4.3 follow-up `layer0-redump` folds 0030
+        # out of the baseline — at which point THIS exception is removed too
+        # (TEMPORARY; do not treat as a standing exception like the two above).
+        "craft_discipline_aliases",
     })
 
     def _baseline_versioned_tables(self) -> set[str]:
