@@ -395,6 +395,44 @@ class TestReviewRoutes:
         assert "/progress" in resp.headers["Location"]
         assert any("generation_status = 'generating'" in c[0] for c in conn.calls)
 
+    # ─── #960: explicit re-check + no-store on the review screen ──────────────
+
+    def test_review_sets_no_store_so_back_button_refetches(self, monkeypatch):
+        # The review response must not be served from the bfcache on browser
+        # back/forward — otherwise the staleness re-check never fires after a fix.
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate("blocked", items=[_blocker_item()]))
+        client = self._client(monkeypatch, conn)
+        resp = client.get("/plans/v2/7/review")
+        assert resp.status_code == 200
+        assert "no-store" in resp.headers.get("Cache-Control", "")
+
+    def test_review_renders_recheck_button_when_blocked(self, monkeypatch):
+        # A non-green gate offers an explicit "Re-check" next step (the only path
+        # past a blocker), not just a dead, disabled [Generate plan].
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate("blocked", items=[_blocker_item()]))
+        client = self._client(monkeypatch, conn)
+        body = client.get("/plans/v2/7/review").get_data(as_text=True)
+        assert "Re-check" in body
+        assert "/review/recheck" in body
+
+    def test_recheck_rekicks_to_generating(self, monkeypatch):
+        conn = _GateConn(plan_row=_plan_row("needs_review"))
+        plan_sessions_repo.save_hitl_gate(conn, 3, 7, _gate("blocked", items=[_blocker_item()]))
+        client = self._client(monkeypatch, conn)
+        resp = client.post("/plans/v2/7/review/recheck")
+        assert resp.status_code == 302
+        assert "/progress" in resp.headers["Location"]
+        assert any("generation_status = 'generating'" in c[0] for c in conn.calls)
+
+    def test_recheck_rejects_non_parked_plan(self, monkeypatch):
+        # A plan that isn't parked at needs_review has nothing to re-check.
+        conn = _GateConn(plan_row=_plan_row("ready"))
+        client = self._client(monkeypatch, conn)
+        resp = client.post("/plans/v2/7/review/recheck")
+        assert resp.status_code == 404
+
 
 # ─── Reading-B staleness re-check (#213) ─────────────────────────────────────
 

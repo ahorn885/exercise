@@ -13,6 +13,16 @@
       a plan. Clear the blockers, decide on the warnings, then build.</p>
   </div>
 
+  {% set has_blockers = grouped.get('blocker', [])|length > 0 %}
+  {% if has_blockers %}
+  <div class="card plan-card">
+    <p class="eyebrow bad">● How to clear a blocker</p>
+    <p class="pl-meta">Use <b>Fix this</b> to edit the input behind it, then come back and hit
+      <b>Re-check &amp; continue</b> below — we re-run the checks against your changes. No need
+      to reload the page.</p>
+  </div>
+  {% endif %}
+
   {% if gate.gate_status == 'blocked' %}
   <p class="eyebrow bad">● Blocked — fix the items below to continue</p>
   {% elif gate.gate_status == 'needs_review' %}
@@ -87,7 +97,17 @@
         </button>
       </form>
       {% else %}
-      <button type="button" class="btn btn-primary" disabled title="Resolve every item first">Generate plan</button>
+      {# Non-green: the next step after a fix is an explicit re-check, which
+         re-runs the pipeline and re-evaluates the gate against current inputs
+         (#960). This is the only path past a blocker, which can't be
+         acknowledged. #}
+      <form method="post" action="{{ recheck_url }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-primary" title="Re-run the checks against your latest changes">
+          <svg class="icon" width="13" height="13" aria-hidden="true"><use href="#i-bolt"></use></svg> Re-check &amp; continue
+        </button>
+      </form>
+      <button type="button" class="btn btn-ghost" disabled title="Resolve every item first">Generate plan</button>
       {% endif %}
       <a href="{{ plans_url }}" class="btn btn-ghost">Save as pending &amp; exit</a>
       <form method="post" action="{{ cancel_url }}"
@@ -99,4 +119,21 @@
   </section>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+{# Defeat the back/forward cache: when the athlete clicks [Fix this], edits the
+   blocker, and hits Back, some browsers restore this page from the bfcache
+   without a server round-trip — so the staleness re-check never fires and the
+   page shows the now-fixed item as still blocking ("nothing happened"). On a
+   bfcache restore, force a real reload so the GET re-evaluates the gate against
+   the edit (#960). `no-store` on the response covers browsers that skip the
+   bfcache entirely; this covers the rest. #}
+<script nonce="{{ csp_nonce() }}">
+  window.addEventListener('pageshow', function (event) {
+    if (event.persisted) {
+      window.location.reload();
+    }
+  });
+</script>
 {% endblock %}
