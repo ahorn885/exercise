@@ -761,13 +761,25 @@ Per-user equipment profiles for the 4 locale slots: `home`, `hotel`,
 `partner`, `airport`.
 
 - Columns: `user_id` + `locale` (composite PK), `equipment` (legacy
-  serialized — unused since Session 3), `notes`, `city`, `updated_at`.
+  serialized — unused since Session 3), `notes`, `updated_at`, plus the
+  D-59 Mapbox-anchor columns (`locale_name`, `mapbox_id`, `lat`, `lng`,
+  `place_payload`, …) and `preferred` (the single home flag).
 - Two users can each own a `home` row.
 - Writes: `routes/locales.py` only. UPSERT on `(user_id, locale)` with
-  `DO UPDATE SET notes=excluded.notes, city=excluded.city,
+  `DO UPDATE SET notes=excluded.notes,
+  sharing_opt_out=excluded.sharing_opt_out,
+  locale_terrain_ids=excluded.locale_terrain_ids,
   updated_at=excluded.updated_at`.
 - Note on the `equipment` TEXT column: legacy, replaced by
   `locale_equipment` rows. Never read or written by current code.
+- **#941:** the free-text `city` column was **dropped**. Weather / clothing
+  resolution now reads the Mapbox-anchored `lat`/`lng`
+  (`athlete_event_windows_repo.resolve_weather_location`): an `away` event
+  window's destination wins, else the preferred-home coords. The typed city
+  caused the wrong-location bug — travel locales left it blank and the away
+  window silently fell back to home weather. Manual-entry locales (no geocode)
+  stash their typed address in `place_payload` (Mapbox-feature shape) for
+  display and resolve no weather.
 
 #### `locale_equipment`
 

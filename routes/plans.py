@@ -12,7 +12,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from database import get_db
 from routes.auth import current_user_id
 from plan_naming import target_race_name, generated_plan_name
-from athlete_event_windows_repo import resolve_weather_city
+from athlete_event_windows_repo import resolve_weather_location
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
 
@@ -738,11 +738,11 @@ def view_plan(plan_id):
     clothing_recs = []
     try:
         from coaching import get_clothing_context
-        # City for weather/clothing: an 'away' event window covering today wins,
-        # else the preferred-home city. Athlete-scoped — replaces the retired
-        # per-plan plan_travel read.
-        city = resolve_weather_city(db, uid, date_type.today())
-        clothing_recs = get_clothing_context(db, plan_id, city)
+        # Location for weather/clothing: an 'away' event window covering today
+        # wins, else the preferred-home location. Resolved as Mapbox lat/lng
+        # (#941) — athlete-scoped, replaces the retired per-plan plan_travel read.
+        location = resolve_weather_location(db, uid, date_type.today())
+        clothing_recs = get_clothing_context(db, plan_id, location)
     except Exception:
         pass
 

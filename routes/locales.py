@@ -715,7 +715,6 @@ def _edit_locale(db, uid: int, locale: str, profile):
     if request.method == 'POST':
         submitted = {t for t in request.form.getlist('equipment') if t in valid_names}
         notes = request.form.get('notes', '').strip()
-        city = request.form.get('city', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
         # #446 — explicit privacy override. The form posts `private=1` when the
         # athlete opts a shareable-category locale out of crowd-source sharing.
@@ -729,15 +728,14 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # cast: see the Bucket B #3 fix (psycopg2 list adapter landed empty
         # arrays in prod without it).
         db.execute(
-            '''INSERT INTO locale_profiles (user_id, locale, notes, city, sharing_opt_out, locale_terrain_ids, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
+            '''INSERT INTO locale_profiles (user_id, locale, notes, sharing_opt_out, locale_terrain_ids, updated_at)
+               VALUES (?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
-                 city=excluded.city,
                  sharing_opt_out=excluded.sharing_opt_out,
                  locale_terrain_ids=excluded.locale_terrain_ids,
                  updated_at=excluded.updated_at''',
-            (uid, locale, notes, city, opt_out, new_terrain_ids)
+            (uid, locale, notes, opt_out, new_terrain_ids)
         )
         # First-locale-auto-home (Track 1 §10) — the first locale saved
         # before any home exists becomes home.
@@ -783,8 +781,8 @@ def _edit_locale(db, uid: int, locale: str, profile):
 
     # GET — effective set drives the checked state; inherit mode adds override
     # chips. `mode` keeps the template's existing branches working: 'legacy'
-    # for own/build (city field, plain save), 'shared_inherit' for peer inherit
-    # (override chips, no city).
+    # for own/build (plain save), 'shared_inherit' for peer inherit (override
+    # chips).
     adds, removes = _load_overrides(db, uid, locale)
     mode = 'shared_inherit' if inherit else 'legacy'
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
@@ -812,7 +810,6 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            adds=adds, removes=removes,
                            shared=shared,
                            notes=(profile['notes'] if profile and profile['notes'] else ''),
-                           city=(profile['city'] if profile and _row_has(profile, 'city') and profile['city'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
                            is_deletable=True,
@@ -1029,12 +1026,19 @@ def save_manual_locale():
         flash('Locale name needs at least one letter or number.', 'danger')
         return redirect(url_for('locales.new_locale', manual=1))
     slug = _unique_slug(db, uid, base_slug)
+    # #941 — the typed address has no Mapbox geocode (manual entry carries no
+    # coords), so it can't drive weather; stash it in `place_payload` shaped
+    # like a Mapbox feature so `_display_address` still renders it on the list /
+    # form. Replaces the retired free-text `city` column.
+    place_payload = (
+        json.dumps({'properties': {'full_address': address}}) if address else None
+    )
     db.execute(
         '''INSERT INTO locale_profiles
-           (user_id, locale, locale_name, city, notes,
+           (user_id, locale, locale_name, place_payload, notes,
             category, manual_entry, sharing_opt_out, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP)''',
-        (uid, slug, locale_name, address, '', category or None, opt_out),
+        (uid, slug, locale_name, place_payload, '', category or None, opt_out),
     )
     _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()

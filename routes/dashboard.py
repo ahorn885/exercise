@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_active_window_with_rest
 from plan_naming import target_race_name, generated_plan_name
-from athlete_event_windows_repo import resolve_weather_city
+from athlete_event_windows_repo import resolve_weather_location
 
 bp = Blueprint('dashboard', __name__)
 
@@ -204,7 +204,7 @@ def _get_weather(db):
     ts_now = time.time()
     uid = current_user_id()
 
-    loc = resolve_weather_city(db, uid, date.today())
+    loc = resolve_weather_location(db, uid, date.today())
     if not loc:
         loc = os.environ.get('WEATHER_LOCATION', '')
 
@@ -372,8 +372,8 @@ def index():
             (uid,)
         ).fetchone()
         if active_plan:
-            city = resolve_weather_city(db, uid, date.today())
-            clothing_recs = get_clothing_context(db, active_plan['id'], city)
+            location = resolve_weather_location(db, uid, date.today())
+            clothing_recs = get_clothing_context(db, active_plan['id'], location)
     except Exception:
         pass
 

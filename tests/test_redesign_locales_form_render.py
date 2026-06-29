@@ -39,9 +39,9 @@ def _form_ctx(**kw):
     base = dict(
         mode='legacy', locale='home',
         profile={'locale_name': None, 'chain_name': None, 'category': None,
-                 'notes': '', 'city': ''},
+                 'notes': ''},
         equipment_categories=_EQUIP, active={'db'},
-        notes='', city='', is_manual=False, is_mapbox_anchored=False,
+        notes='', is_manual=False, is_mapbox_anchored=False,
         is_deletable=False, display_address='',
         privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
         terrain_choices=_TERRAIN, active_terrain_ids={'trail'},
@@ -61,7 +61,7 @@ def test_form_legacy_renders():
     # Field names preserved for the POST handler.
     assert 'name="equipment"' in html
     assert 'name="locale_terrain_ids"' in html
-    assert 'name="city"' in html          # legacy-only field present
+    assert 'name="city"' not in html      # #941 — free-text city field retired
     assert 'name="notes"' in html
     assert 'Dumbbells' in html and 'Trail' in html
     # Terrain `notes` render as a hover tooltip on the label (issue #444).
@@ -75,7 +75,7 @@ def test_form_shared_inherit_shows_override_chips():
     html = _render('locales/form.html', **_form_ctx(
         mode='shared_inherit',
         profile={'locale_name': 'Planet Fitness', 'chain_name': 'Planet Fitness',
-                 'category': None, 'notes': '', 'city': ''},
+                 'category': None, 'notes': ''},
         active={'db'}, shared_tags={'bb'}, adds={'db'}, removes=set(),
         shared={'last_confirmed_at': '2026-05-01', 'contribution_count': 3},
         is_mapbox_anchored=True,
