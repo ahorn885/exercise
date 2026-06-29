@@ -72,6 +72,8 @@ For non-AR sports with sub-format expansions — Triathlon, Skimo, Long Distance
 
 **For v1 implementation:** assume input is whatever name appears in `phase_load_allocation` (the more specific table). For AR this is "Adventure Racing"; for Triathlon this is e.g. "Triathlon (Standard / Olympic)". `sport_discipline_map` lookups for non-AR sports require an additional step to strip the sub-format suffix and match the top-level name — implementation detail handled in §5.2.
 
+**#254 resolution (2026-06-29, in progress) — `Onboarding_SportSubFormat_D17_254_Design_v1.md`.** Onboarding now owns producing a resolved sub-format `framework_sport` via the ratified **default + override** model (the five parents — Triathlon, Skimo, LDC, Canoe/Kayak Marathon, OWMS — carry a Layer-0-curated default sub-format the athlete may override), so 2A always receives a real PLA `sport_name`. The §5.2 strip-for-SDM logic is unchanged. **Guard (shipped slice 2):** if a *bare* sub-format parent (exactly a `_SUB_FORMAT_SPORTS` key, e.g. `"Triathlon"`) still reaches 2A — legacy row or capture regression — disciplines load from SDM but every PLA band joins NULL; 2A now emits an `error` `UnresolvedFlag` + forces `hitl_required` + logs (Rule #15), instead of silently returning a no-volume plan. A correctly-resolved input carries the parenthetical and is not in the whitelist, so the guard fires only on the bug case.
+
 ### 5.2 Primary query — disciplines for sport
 
 ```sql
@@ -214,7 +216,7 @@ Procedure (in `_fold_cross_training_disciplines`):
 |---|---|---|
 | D-05 | `phase_load_allocation` has 33 aggregator rows polluting the table. **Standing filter `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`** is applied in §5.2 query. Mandatory until ETL fix lands. | Mitigated by filter |
 | D-08 | 3 rows missing in `sport_discipline_map` (LDC -2, Triathlon -1). AR has all 15 disciplines. | Non-blocking for AR |
-| D-17 | Sport naming convention mismatch — AR uses same name in both tables, but non-AR sports use top-level in SDM and sub-format in PLA. Handled in §5.1 by strip-and-re-lookup logic. | Workaround in place; design owner is Layer 1 race-goal capture |
+| D-17 | Sport naming convention mismatch — AR uses same name in both tables, but non-AR sports use top-level in SDM and sub-format in PLA. Handled in §5.1 by strip-and-re-lookup logic. | **In progress #254** — capture-side fix designed + ratified (`Onboarding_SportSubFormat_D17_254_Design_v1.md`); §5.1 loud guard **shipped** (slice 2); onboarding default+override capture + Layer-0 `sport_sub_format_map` to land. |
 
 ## 7. Payload schema
 
@@ -388,7 +390,7 @@ For non-AR sports with sub-format mapping, add ~10ms for the regex strip. Neglig
 |---|---|---|---|
 | 2A-1 | Rationale template quality bar — needs content review pass per athlete-facing UX | Product / content | 🟡 Partial-close 2026-05-20. v1 templates shipped Andy-quality 2026-05-19 (Phase 2.1) per Andy's "don't defer" call. Full athlete-facing content review naturally falls out of Phase 5.1 orchestrator vertical slice when `race_week_brief` surfaces the strings to Andy in production. |
 | 2A-2 | Conditional rule encoding — currently code-side; candidate for `discipline_conditional_rules` table if rules proliferate | Future | Defer until rule count grows |
-| 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding spec | Layer 1 race-goal capture | Tracked in `Project_Backlog.md` |
+| 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding | Layer 1 | 🟡 In progress #254 (2026-06-29) — design ratified (`Onboarding_SportSubFormat_D17_254_Design_v1.md`); §5.1 loud guard shipped; capture UX + Layer-0 `sport_sub_format_map` remaining. |
 | 2A-4 | D-05 ETL fix to filter aggregator rows from PLA — will allow removing the defensive `LIKE` filter | FC-1 | Tracked in `Project_Backlog.md` |
 | 2A-5 | D-08 LDC/Triathlon SDM missing rows — when those sports come online | FC-1 | Tracked in `Project_Backlog.md` |
 

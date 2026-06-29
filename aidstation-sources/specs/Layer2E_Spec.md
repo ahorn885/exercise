@@ -146,7 +146,7 @@ class PlanManagementState:
     expected_race_temp_c: dict[str, float | None]  # event_id → temp; None means unknown
 ```
 
-The exact §I sub-field shapes for `FuelingFormatPref`, `FuelingShiftTrigger`, `GITriggerCategory`, `SleepDepProfile`, `AltitudeAcclimRecord`, and `PlanManagementState.HeatAcclimState` are not yet committed to a Layer 1 spec file as of this draft. The handoff describes the intent. 2E treats them as the structured-data contract it expects; if Layer 1 spec lands different sub-field names, 2E's signature updates accordingly. Tracked in §12 open items.
+`PlanManagementState` + `HeatAcclimState` are now defined in `Plan_Management_Spec_v1.md` §3 (matching the shapes above byte-for-byte). The exact §I sub-field shapes for `FuelingFormatPref`, `FuelingShiftTrigger`, `GITriggerCategory`, `SleepDepProfile`, and `AltitudeAcclimRecord` are not yet committed to a Layer 1 spec file as of this draft. The handoff describes the intent. 2E treats them as the structured-data contract it expects; if Layer 1 spec lands different sub-field names, 2E's signature updates accordingly. Tracked in §12 open items.
 
 ### Return type
 
@@ -782,7 +782,7 @@ def _hot_event_adjustment(
     return na_mod, fluid_mod, flag
 ```
 
-**HeatAcclimState contract** (Plan Management spec, not yet written):
+**HeatAcclimState contract** (now defined — `Plan_Management_Spec_v1.md` §3 / §5.2):
 
 ```python
 @dataclass
@@ -792,7 +792,8 @@ class HeatAcclimState:
     last_assessment: date
 ```
 
-2E names this contract. Plan Management spec must honor it when it lands. Tracked in §12.
+2E names this contract; `Plan_Management_Spec_v1.md` §3 honors it byte-for-byte
+and §5.2 derives it from `conditions_log`. Tracked in §12 (2E-2 ✅ Resolved).
 
 ### 5.9 HITL triggers
 
@@ -1132,9 +1133,9 @@ If athlete has 5+ target events, scaling is linear in event count. Per-event bud
 | # | Item | Owner | Status |
 |---|---|---|---|
 | 2E-1 | **FFM field promotion to §A or §F** (current §A captures body weight, §F captures performance test values, but neither captures FFM_kg) | Layer 1 onboarding v3 | Awaiting onboarding session |
-| 2E-2 | **Plan Management `HeatAcclimState` contract** (§5.8 names the contract; Plan Management spec must honor) | Plan Management spec | Spec not yet written; will land post-Layer-3 |
-| 2E-3 | **Plan Management `expected_race_temp_c` derivation** (location + date + weather API) | Plan Management spec | Same |
-| 2E-4 | **Plan Management `current_phase` source-of-truth** (athlete is in a plan; phase is derived) | Plan Management spec | Same |
+| 2E-2 | **Plan Management `HeatAcclimState` contract** (§5.8 names the contract; Plan Management spec must honor) | Plan Management spec | ✅ Resolved — `Plan_Management_Spec_v1.md` §3 / §5.2 (#215) |
+| 2E-3 | **Plan Management `expected_race_temp_c` derivation** (location + date + weather API) | Plan Management spec | ✅ Resolved — `Plan_Management_Spec_v1.md` §5.3 (climate-normal + forecast blend); de-stub tracked #220 |
+| 2E-4 | **Plan Management `current_phase` source-of-truth** (athlete is in a plan; phase is derived) | Plan Management spec | ✅ Resolved — `Plan_Management_Spec_v1.md` §5.1 (3B shape + plan start; #215) |
 | 2E-5 | **D-17 sub-format selection in §H** — for non-AR sports, athlete's race goal must drive sub-format ("Triathlon (Standard / Olympic)" vs "Triathlon (Half Ironman)" etc.). 2E inherits the contract from 2A. | Layer 1 race-goal capture | Tracked in `Project_Backlog.md`; not 2E-blocking but a Layer 1 design gap |
 | 2E-6 | **D-26 supplement_vocabulary table** — 25 seed entries. ~~Hard blocker.~~ ✅ Table shipped (FC-1, 2026-05-11). Remaining 2E-6 work is the §I.1 structured-supplement form refresh that de-stubs §5.5 (input-shape gap: free-text `supplement_protocol_notes` → structured `AthleteSupplementRecord` records), NOT the vocab table. | Onboarding §I.1 form refresh | Table ✅ Resolved; §5.5 de-stub awaiting structured-supplement capture |
 | 2E-7 | **Race-day fueling band promotion to Layer 0** — §5.4.2 bands ship in code v1; promote to `race_fueling_bands` table when curation pressure rises | Future FC | Tracked in §6.2 |

@@ -2454,6 +2454,35 @@ _PG_MIGRATIONS = [
     # (race_route_locale_equipment is a separate table).
     "DROP TABLE IF EXISTS locale_equipment",
     "ALTER TABLE locale_profiles DROP COLUMN IF EXISTS equipment",
+    # #582 — purge the auto-created legacy enum slot rows (home/hotel/partner/
+    # airport) the retired LOCALES force-render left behind in locale_profiles.
+    # Now that the list is driven purely off real rows, these bare slots are the
+    # reason the legacy locations still render in prod — the code retirement
+    # removed the force-render but nothing cleaned up the rows the old
+    # auto-create-on-save seeded. Scope is deliberately tight so genuine athlete
+    # data survives untouched: only a categoryless slot with no geocoding
+    # (mapbox_id/lat), no linked gym, that is NOT the preferred home, has no
+    # manual-entry address, no athlete-set name/notes/terrain, and no
+    # equipment/toggle overrides is removed. Dependent override rows cascade;
+    # event-window references (event_locale_id) SET NULL. Idempotent.
+    """
+    DELETE FROM locale_profiles lp
+     WHERE lp.locale IN ('home', 'hotel', 'partner', 'airport')
+       AND lp.category IS NULL
+       AND lp.mapbox_id IS NULL
+       AND lp.lat IS NULL
+       AND lp.gym_profile_id IS NULL
+       AND lp.place_payload IS NULL
+       AND COALESCE(lp.manual_entry, FALSE) = FALSE
+       AND COALESCE(lp.preferred, FALSE) = FALSE
+       AND COALESCE(lp.locale_name, '') = ''
+       AND COALESCE(lp.notes, '') = ''
+       AND COALESCE(array_length(lp.locale_terrain_ids, 1), 0) = 0
+       AND NOT EXISTS (SELECT 1 FROM locale_equipment_overrides o
+                        WHERE o.user_id = lp.user_id AND o.locale = lp.locale)
+       AND NOT EXISTS (SELECT 1 FROM locale_toggle_overrides t
+                        WHERE t.user_id = lp.user_id AND t.locale = lp.locale)
+    """,
     # #941 — retire the free-text `city` column. Weather / clothing resolution
     # moved off the typed city onto the Mapbox-anchored `lat`/`lng` already
     # captured on every geocoded locale (away event-window destination wins,
@@ -3180,6 +3209,29 @@ _PG_MIGRATIONS = [
         END IF;
     END $$;""",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coach_notes",
+    # #255 — system_category canonical retag (8 → 11). Remap existing
+    # health_conditions_log rows off the retired slugs so they keep matching the
+    # canonical enum + the Layer 2E supplement screen. endocrine/metabolic fold
+    # into endocrine_metabolic; gi_immune maps to gi (the GI-distress reading the
+    # curated v3 list led with — an athlete whose condition was actually an
+    # autoimmune one can re-pick immune_autoimmune in the editor). Idempotent: a
+    # no-op once no legacy slugs remain.
+    """UPDATE health_conditions_log
+          SET system_category = CASE system_category
+              WHEN 'metabolic'  THEN 'endocrine_metabolic'
+              WHEN 'endocrine'  THEN 'endocrine_metabolic'
+              WHEN 'gi_immune'  THEN 'gi'
+              ELSE system_category END
+        WHERE system_category IN ('metabolic', 'endocrine', 'gi_immune')""",
+    # #255 — body-part half. The injury picker is now side-less canonical with a
+    # dedicated `side` field; existing rows encoded the side in the body_part
+    # string ('Left Wrist'). Strip the leading Left/Right (the side already lives
+    # in injury_log.side, derived at the old save path) and align the back labels
+    # to canonical casing. Idempotent: the predicates exclude already-migrated
+    # rows.
+    "UPDATE injury_log SET body_part = regexp_replace(body_part, '^(Left|Right) ', '') WHERE body_part ~ '^(Left|Right) '",
+    "UPDATE injury_log SET body_part = 'Lower back' WHERE body_part = 'Lower Back'",
+    "UPDATE injury_log SET body_part = 'Upper back' WHERE body_part = 'Upper Back'",
 ]
 
 _CLOTHING_SEEDS = [

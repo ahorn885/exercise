@@ -102,6 +102,66 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app'],
         'defaults': {'in_app': True},
     },
+    # ─── #964 reminder / staleness triggers ─────────────────────────────────
+    # Surfaced as in-app `account_nudges` rows reconciled by the daily cron
+    # (`routes.nudges.scan_reconcile_staleness`). Email is intentionally NOT an
+    # applicable channel: there is no nudge→email delivery path yet, and
+    # `email` is `available: True`, so listing it would render an enabled
+    # toggle that silently never delivers. `push` follows the project-wide
+    # "store the preference now, deliver once the app ships" posture.
+    {
+        'key': 'log_reminder',
+        'label': 'Log your workouts',
+        'description': "A nudge when you haven't logged a workout in a few "
+                       'days, so your training record stays current.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'body_metric_stale',
+        'label': 'Refresh your body metrics',
+        'description': "A reminder to update your weight / body metrics when "
+                       "they haven't been refreshed in a while.",
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    {
+        'key': 'injury_review',
+        'label': 'Review your injuries',
+        'description': "A reminder to revisit an injury that's been marked "
+                       'active for a while — resolve it or update its status.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    # A plan parked at the Layer 3D review gate (`generation_status =
+    # 'needs_review'`) can never finish until the athlete resolves it. Distinct
+    # from `plan_failed` (a generation *error* event): this is a still-open plan
+    # the athlete must act on. Reconciled by the same daily cron; `warning`
+    # category since it blocks a plan from completing.
+    {
+        'key': 'plan_needs_review',
+        'label': 'Plan needs your review',
+        'description': "A reminder when a plan you started is waiting on you to "
+                       'resolve its review items before it can finish.',
+        'category': 'warning',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
+    # Target race within the 14-day race-week window with no race-week brief
+    # generated yet for the active plan version. A reminder to act, not a blocker
+    # (`info`), reconciled by the same daily cron.
+    {
+        'key': 'race_week_plan_due',
+        'label': 'Generate your race-week brief',
+        'description': "A reminder to generate your race-week brief once your "
+                       'target race is within two weeks.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
 ]
 
 TYPES_BY_KEY = {t['key']: t for t in NOTIFICATION_TYPES}

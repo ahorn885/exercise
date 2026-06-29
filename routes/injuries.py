@@ -6,6 +6,7 @@ from routes.auth import current_user_id
 from athlete import (
     KNOWN_INJURY_TYPES,
     KNOWN_INJURY_SEVERITIES,
+    KNOWN_INJURY_SIDES,
     KNOWN_MOVEMENT_CONSTRAINTS,
     BODY_PART_CONSTRAINTS,
 )
@@ -14,27 +15,25 @@ from layer0_catalog import strength_catalog
 bp = Blueprint('injuries', __name__)
 
 STATUSES = ['Active', 'Managing', 'Resolved']
-BODY_PARTS = [
-    'Left Hand', 'Right Hand',
-    'Left Wrist', 'Right Wrist',
-    'Left Elbow', 'Right Elbow',
-    'Left Shoulder', 'Right Shoulder',
-    'Left Knee', 'Right Knee',
-    'Left Ankle', 'Right Ankle',
-    'Left Foot', 'Right Foot',
-    'Left Hip', 'Right Hip',
-    'Left Hamstring', 'Right Hamstring',
-    'Left Quad', 'Right Quad',
-    'Left Glute', 'Right Glute',
-    'Left Calf', 'Right Calf',
-    'Left Shin', 'Right Shin',
-    'Left Achilles', 'Right Achilles',
-    'Groin',
-    'Abdomen',
-    'Chest',
-    'Left Rib', 'Right Rib',
-    'Lower Back', 'Upper Back',
-    'Neck',
+# #255 — the body-part picker is now the side-less canonical vocab
+# (`layer0.body_parts.canonical_name`), grouped by region for the <optgroup>
+# select; side is captured by a separate field. Keys mirror BODY_PART_CONSTRAINTS.
+BODY_PART_GROUPS = [
+    ('Head / Neck',  ['Neck', 'Jaw', 'Trapezius']),
+    ('Shoulder',     ['Shoulder', 'Rotator cuff', 'AC joint', 'Shoulder blade',
+                      'Collarbone']),
+    ('Arm',          ['Elbow', 'Forearm', 'Wrist', 'Hand', 'Biceps', 'Triceps',
+                      'Fingers', 'Thumb', 'Finger pulley', 'DIP joint',
+                      'CMC joint']),
+    ('Back',         ['Upper back', 'Lower back', 'Spine (general)', 'SI joint',
+                      'Sciatica']),
+    ('Hip',          ['Hip', 'Groin', 'Hip flexor', 'Glute',
+                      'Hip crest (iliac crest)', 'TFL']),
+    ('Upper leg',    ['Quad', 'Hamstring', 'IT band']),
+    ('Knee',         ['Knee', 'Kneecap', 'Meniscus', 'ACL', 'PCL', 'MCL', 'LCL']),
+    ('Lower leg',    ['Calf', 'Soleus', 'Shin', 'Achilles', 'Peroneal']),
+    ('Foot / Ankle', ['Ankle', 'Plantar fascia', 'Foot', 'Toes']),
+    ('Trunk',        ['Rib', 'Chest']),
 ]
 
 MOD_TYPES = [
@@ -112,7 +111,8 @@ def new_entry():
         flash('Injury logged.', 'success')
         return _after_save_redirect()
     return render_template('injuries/form.html', entry=None,
-                           statuses=STATUSES, body_parts=BODY_PARTS,
+                           statuses=STATUSES, body_part_groups=BODY_PART_GROUPS,
+                           sides=KNOWN_INJURY_SIDES,
                            injury_types=KNOWN_INJURY_TYPES,
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
@@ -146,7 +146,8 @@ def edit_entry(entry_id):
             raw_mc = []
     entry_mc = raw_mc or []
     return render_template('injuries/form.html', entry=entry,
-                           statuses=STATUSES, body_parts=BODY_PARTS,
+                           statuses=STATUSES, body_part_groups=BODY_PART_GROUPS,
+                           sides=KNOWN_INJURY_SIDES,
                            injury_types=KNOWN_INJURY_TYPES,
                            severities=KNOWN_INJURY_SEVERITIES,
                            movement_constraints=KNOWN_MOVEMENT_CONSTRAINTS,
@@ -237,15 +238,9 @@ def _save(db, entry_id):
         return value if value in allowed else None
     severity = enum_or_none(f.get('severity'), KNOWN_INJURY_SEVERITIES)
     injury_type = enum_or_none(f.get('injury_type'), KNOWN_INJURY_TYPES)
-    # Side is derived from the body_part prefix ('Left Wrist' → 'Left')
-    # rather than a dedicated form field; side-less parts default to 'N/A'.
-    body_part = f.get('body_part') or ''
-    if body_part.startswith('Left '):
-        side = 'Left'
-    elif body_part.startswith('Right '):
-        side = 'Right'
-    else:
-        side = 'N/A'
+    # Side is its own form field now (#255 — the body_part picker is side-less
+    # canonical); out-of-enum / missing values coerce to 'N/A'.
+    side = f.get('side') if f.get('side') in KNOWN_INJURY_SIDES else 'N/A'
     mc_raw = f.getlist('movement_constraints')
     mc = [c for c in mc_raw if c in KNOWN_MOVEMENT_CONSTRAINTS]
     mc_json = json.dumps(mc)

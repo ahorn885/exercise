@@ -400,6 +400,7 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # the `Authorization: Bearer $CRON_SECRET` header verified inside the
     # route (`routes.auth.cron_authorized`).
     'nudges.scan_connect_provider_14d',
+    'nudges.scan_reconcile_staleness',
     'plan_create.cron_generate_pending',
     'ride_with_gps.cron_process',
     'webhook_maintenance.cron_maintenance',

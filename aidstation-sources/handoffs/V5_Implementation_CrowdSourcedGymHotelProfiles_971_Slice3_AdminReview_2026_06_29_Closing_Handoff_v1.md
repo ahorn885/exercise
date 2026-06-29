@@ -4,7 +4,7 @@
 **Date:** 2026-06-29
 **Predecessor handoff:** `handoffs/V5_Implementation_CrowdSourcedGymHotelProfiles_971_Slice1_NameGeoDedup_2026_06_29_Closing_Handoff_v1.md` (#971 Slice 1 — name+geo dedup; merged PR #1009).
 **Branch:** `claude/971-name-geo-dedup-hfnko6`
-**Status:** 5 code/template substantive files + 3 test files (one edit is a 1-line dashboard nav link; the explicit "report as wrong" flag was added mid-review at Andy's request — §7 #2). PR **not yet opened** — awaiting Andy's go per the PR-gated operating model. Full suite green locally (3775 passed, 30 skipped).
+**Status:** 5 code/template substantive files + 3 test files (one edit is a 1-line dashboard nav link; the explicit "report as wrong" flag was added mid-review at Andy's request — §7 #2). **PR opening + auto-merge (merge commit) on Andy's go (2026-06-29).** Full suite green locally (3775 passed, 30 skipped). **#971 is PAUSED after this slice (Andy 2026-06-29) — Slices 1 + 3 shipped; the committed next step is Slice 2 (photos), storage backend = Vercel Blob (§6.1).**
 
 ---
 
@@ -103,15 +103,20 @@ Exercisable on Vercel once ≥2 accounts exist:
 
 ## 6. Next session pointers
 
-### 6.1 Architect-recommended next forward move
-**#971 Slice 2 — photos** (the only remaining slice). `gym_profile_photos` table (FK to `gym_profiles`, uploader `user_id`, storage ref, created_at) + capture/display in `templates/locales/form.html` + `routes/locales._edit_locale`. **Storage backend (Vercel Blob vs a URL field) is an Andy decision** — decide it before building. This slice was deliberately picked over Slice 2 to avoid pre-empting that call.
+**#971 is PAUSED here (Andy 2026-06-29).** Slices 1 + 3 are shipped; the work below is the committed next step when #971 resumes — not started this session.
 
-### 6.2 Alternative pivots
-- **#971 Slice 3 follow-up** (this slice's one remaining deferral): the cross-layer **plan-gen "disputed item ⇒ not-available" treatment** (D-60 §5) — a Layer-2C slice that derives disputed *tags* from open proposals' `removes`. *(The explicit "report as wrong" opt-in affordance, previously listed here as deferred, was built this session at Andy's request.)*
-- Back to **#884** (gear/craft) if Andy redirects — see that thread's predecessor handoff.
+### 6.1 The committed next step — #971 Slice 2: photos (storage = Vercel Blob)
+**Decided (Andy 2026-06-29): build Slice 2 with the Vercel Blob backend** (real in-app photo upload, not a paste-a-URL field). Scope:
+- **New `gym_profile_photos` table** — FK to `gym_profiles(id)`, uploader `user_id`, the Blob storage ref (URL/pathname returned by the Blob put), `created_at`. Public-schema migration in `init_db._PG_MIGRATIONS` (auto-applies on deploy — no `layer0-apply` owed).
+- **Upload plumbing** — add the Vercel Blob SDK + a `BLOB_READ_WRITE_TOKEN` (Andy provisions in Vercel + as a container/CI secret if tests need it); an upload route (or a direct-to-Blob client-upload handshake) that writes the blob then inserts the `gym_profile_photos` row.
+- **Capture + display** — a file input in the locale equipment form (`templates/locales/form.html`) and a thumbnail strip; wire capture/read through `routes/locales._edit_locale`. The issue's scope asks for photos both at first-capture and on user updates.
+- **Decisions still owed before/while building:** whether photos attach to the shared `gym_profiles` row (visible to every inheritor) or per-athlete; max count/size + content-type allowlist; whether to gate display behind the same `private` rule the equipment uses. Surface these as you scope — they affect the table shape.
+
+### 6.2 Also approved for a later slice — plan-gen disputed-item treatment
+**Approved (Andy 2026-06-29): a disputed item should be treated as not-available for plan generation** (D-60 §5). This is the Slice-3 follow-up: a **Layer-2C slice** that derives disputed *tags* from open proposals' `removes` on a locale's shared profile and removes them from the equipment set Layer 2C resolves. It's a **cross-layer change (stop-and-ask trigger #3)** — its own slice, scoped + confirmed before building. *(The explicit "report as wrong" affordance, once listed here as deferred, was built this session.)*
 
 ### 6.3 Operating notes for next session
-(1) Rule #13 read order: `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`. (2) Postgres-only repo (`get_db()` raises without `DATABASE_URL`); the `_FakeConn` substrate in `tests/test_locales.py` and the `_Conn`/`_GymEditConn` substrate in `tests/test_redesign_admin_render.py` are how route logic is unit-tested without a live DB. (3) **No Neon/layer0 apply owed** — `disputed_items` already exists; this slice enriches its JSON in place. (4) PR not yet opened — awaiting Andy's go.
+(1) Rule #13 read order: `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`. (2) Postgres-only repo (`get_db()` raises without `DATABASE_URL`); the `_FakeConn` substrate in `tests/test_locales.py` and the `_Conn`/`_GymEditConn` substrate in `tests/test_redesign_admin_render.py` are how route logic is unit-tested without a live DB. (3) **No Neon/layer0 apply owed by Slices 1+3** — both columns already exist; Slice 2 will owe a public-schema migration for `gym_profile_photos` (auto-applies on deploy). (4) This slice's PR opened + auto-merged on Andy's go (2026-06-29); #971 paused after it.
 
 ---
 
