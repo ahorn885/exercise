@@ -43,15 +43,28 @@ No new infrastructure. Added one `{nudge_type, insert, delete}` entry to `_STALE
 - **Conditions advisory** (rain / freezing / >100°) — overlaps **#289** (Layer-5 conditions advisor).
 - **Race-day-plan reminder (7d out)** / **share-with-crew (2–3d before)** — depend on **#939** and **remain not-buildable** (re-confirmed predecessor §5): `race_day_plan_due` has **no race-day-plan artifact or generator** yet (only "future race-day plan" placeholders in `layer5/`) → a dead CTA; `share_with_crew` needs #939's crew-sharing feature.
 
-## 6. NEXT
+## 6. NEXT — STAY ON #964: the recurring time-of-day reminder / recurring-send mechanism (DECIDED — Andy 2026-06-29)
 
-The reconcile framework remains the reusable spine — a new **condition** nudge is still: a notification type, a `NUDGE_REGISTRY` entry (with `notification_type`), and an `{insert, delete}` spec appended to `_STALENESS_RECONCILE` (add `app.py` auth-exempt + `vercel.json` only for a *new* cron endpoint). With `race_week_plan_due` shipped, the **remaining buildable #964 work is blocked on new mechanisms / other epics** (§5). Options for the next slice, in rough order:
+**The next session continues the #964 thread by designing + building the recurring time-of-day reminder mechanism.** Andy decided (2026-06-29) to stay on #964 rather than step off to #884 — this is the immediate next step, not an open question.
 
-1. **Recurring time-of-day mechanism** — design a recurring-send scheduler (supplements AM/PM, next-day workouts, literal daily log ping). Larger; new infra; its own design doc. The biggest remaining #964 chunk.
-2. **Conditions advisory** → coordinate with / fold into **#289**.
-3. *(Blocked on #939)* race-day-plan (7d) + share-with-crew — do **not** start until #939 lands the race-day-plan artifact + crew-sharing.
+**Why this is now a design slice, not another reconcile-spec append.** Every #964 trigger shipped so far (the 3 reminder/staleness types, `plan_needs_review`, and `race_week_plan_due`) is a **one-shot _condition_ nudge**: a row exists in `account_nudges` while some DB condition holds and is reconciled away when it clears. The remaining trigger family is structurally different — **recurring scheduled _sends_** that fire on a clock regardless of any standing condition:
 
-Alternatively **return to the standing #884 arc** (slice 5 — away overlay), the main thread before the #964 detour. **Open question for Andy:** design the recurring-send mechanism next, or step off #964 back to #884? (The remaining #964 triggers are all either new-infra or #939/#289-blocked — there's no more "clean reconcile-spec addition" low-hanging fruit.)
+- **Supplement AM/PM reminders** — "take your morning/evening supplements" at the athlete's chosen times.
+- **Next-day's workouts** — an evening preview of tomorrow's sessions.
+- **The literal daily log ping** — a once-a-day "log your training" prompt (distinct from `log_reminder`, which only fires after ~5 stale days; this one is an opt-in daily cadence).
+
+The current `account_nudges` model (`UNIQUE (user_id, nudge_type)`, reconciled daily) **cannot express "fire every day at 7am"** — there's no per-user schedule, no time-of-day, and the one-shot uniqueness constraint actively fights a recurring send. So the next slice needs a **recurring-schedule mechanism the model doesn't have yet**. This is the biggest remaining #964 chunk and warrants its own **design doc** before any code (Stop-and-ask Trigger #5 — architectural alternatives with real tradeoffs; surface options + recommendation to Andy first).
+
+**Grounding to do first (next session):**
+- Scope the schedule store: a new `notification_schedules` table (per-user, per-type, time-of-day + cadence + enabled) vs. extending `notification_preferences`. The §22 preference matrix (`notification_prefs.py`) already gates per-type × per-channel — the schedule is the *when*, orthogonal to the *whether*.
+- Decide the **fire mechanism**: the existing daily cron can't do time-of-day. Options: a more frequent cron (e.g. hourly) that checks "is it this user's send-time this hour" (needs a `vercel.json` schedule change + an `app.py` auth-exempt entry for any new endpoint), vs. a single daily cron that batches a day's worth. Push delivery is still undeliverable (no native app — `channel_available('push')` is False), so the first deliverable surface is **in-app** (the feed) + the stored preference; confirm whether a time-of-day in-app "send" even makes sense before the app ships, or whether this slice is schedule-capture + storage now, delivery later (the #963 "wire now, deliver later" posture).
+- Confirm the supplement-times source (does the athlete already store dose times anywhere — `athlete_supplements`? — or is time-of-day new capture?).
+
+**Then (still open on #964, after the recurring mechanism):**
+- **Conditions advisory** (rain / freezing / >100°) → coordinate with / fold into **#289** (Layer-5 conditions advisor).
+- *(Blocked on #939)* **race-day-plan (7d)** + **share-with-crew** — do **not** start until #939 lands the race-day-plan artifact + crew-sharing (§5).
+
+**After #964:** return to the standing **#884** arc (slice 5 — away overlay), the main thread before the notifications detour.
 
 ## 7. Verification
 
