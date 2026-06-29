@@ -1,9 +1,10 @@
 {# Redesign (Phase 6 secondary form) — Add a location. Companion to §16;
-   migrated off base_legacy onto the new shell. Preserves the three states
-   (manual entry · Mapbox-disclosure ack · place search + results) and the
-   upgrade-an-existing-manual-row flow, with every field name + POST action
-   intact: save_manual_locale, acknowledge_mapbox_disclosure, the GET search,
-   and the per-result new_locale POST (mapbox_id / text / place_name). #}
+   migrated off base_legacy onto the new shell. Two states (Mapbox-disclosure
+   ack · place search + results) plus the upgrade-an-existing-manual-row flow,
+   with every field name + POST action intact: acknowledge_mapbox_disclosure,
+   the GET search, and the per-result new_locale POST (mapbox_id / text /
+   place_name). #941 retired the coordinate-less manual-entry state — every
+   location is Mapbox-anchored so it carries lat/lng for weather. #}
 {% extends 'base.html' %}
 {% set nav_active = 'locations' %}
 {% block title %}{% if upgrade_slug %}Look up on map{% else %}New location{% endif %} — AIDSTATION{% endblock %}
@@ -29,50 +30,7 @@
 
 <div class="stack loc-new-wrap">
 
-{% if manual %}
-  {# Manual fallback — no place lookup. #}
-  <form method="post" action="{{ url_for('locales.save_manual_locale') }}" class="card card-pad pf-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <p class="loc-hint">No place lookup. Coordinates and chain detection stay empty; plan-gen treats
-      this as a no-proximity-cluster locale.</p>
-    <label class="field"><span class="lbl">Locale name</span>
-      <input type="text" name="locale_name" class="form-control form-control-sm" required maxlength="80"
-             placeholder="e.g. Home gym, Hotel Rapid City"></label>
-    <label class="field"><span class="lbl">Address</span>
-      <textarea name="address" class="form-control form-control-sm" rows="2" maxlength="240" required
-                placeholder="Street, city, state — so we know where this is"></textarea></label>
-    <label class="field"><span class="lbl">Type</span>
-      <select name="category" class="form-select form-select-sm" id="loc-manual-category">
-        <option value="">— choose —</option>
-        {% for value, label in manual_categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-      </select></label>
-
-    {# #446 — surface the inferred privacy state as the category is picked, with
-       an explicit opt-out for shareable categories. Residences (and an
-       un-categorized place, which the model treats as a residence) are always
-       private; the toggle hides and a locked note shows instead. #}
-    <div class="field loc-privacy" id="loc-privacy"
-         data-residential="{{ (residential_categories or [])|tojson }}">
-      <span class="lbl">Visibility</span>
-      <p class="loc-privacy-state">
-        <span class="chip" data-privacy-chip>Private — only used in your own plans</span>
-      </p>
-      <label class="form-check loc-privacy-toggle" data-privacy-toggle hidden>
-        <input class="form-check-input" type="checkbox" name="private" value="1" data-privacy-input>
-        <span class="form-check-label">Keep this location private — don't share its equipment
-          with other athletes near this place.</span>
-      </label>
-      <p class="loc-hint" data-privacy-locked-note>Residences are always private — they never appear
-        in crowd-sourced discovery near this place.</p>
-    </div>
-
-    <div class="pf-save">
-      <a href="{{ url_for('locales.new_locale') }}" class="btn btn-ghost btn-sm">Use place lookup instead</a>
-      <button type="submit" class="btn btn-primary btn-sm">Save</button>
-    </div>
-  </form>
-
-{% elif not acked %}
+{% if not acked %}
   {# Mapbox disclosure — acknowledge once per version. #}
   <div class="card card-pad loc-disclosure">
     <p class="eyebrow">● Place lookup uses Mapbox</p>
@@ -88,9 +46,6 @@
         {% if upgrade_slug %}<input type="hidden" name="upgrade_slug" value="{{ upgrade_slug }}">{% endif %}
         <button type="submit" class="btn btn-primary btn-sm">Acknowledge &amp; continue</button>
       </form>
-      {% if not upgrade_slug %}
-      <a href="{{ url_for('locales.new_locale', manual=1) }}" class="btn btn-ghost btn-sm">Use manual entry instead</a>
-      {% endif %}
     </div>
   </div>
 
@@ -104,9 +59,8 @@
                placeholder="e.g. Planet Fitness Minneapolis" required>
         <button type="submit" class="btn btn-primary btn-sm">Search</button>
       </div></label>
-    {% if not upgrade_slug %}
-    <p class="loc-hint">Or <a href="{{ url_for('locales.new_locale', manual=1) }}">enter address manually</a>.</p>
-    {% endif %}
+    <p class="loc-hint">Search by address or business name — we'll geocode it via Mapbox so the
+      location has coordinates for weather and nearby-gym matching.</p>
   </form>
 
   {% if error %}<div class="note-card loc-error">{{ error }}</div>{% endif %}
@@ -151,54 +105,4 @@
 {% endif %}
 
 </div>
-{% endblock %}
-
-{% block scripts %}
-{# #446 — live privacy chip for the manual-entry form. CSP enforces a nonce;
-   without it the browser silently drops this block. #}
-<script nonce="{{ csp_nonce() }}">
-  (function () {
-    const wrap = document.getElementById('loc-privacy');
-    const select = document.getElementById('loc-manual-category');
-    if (!wrap || !select) return;
-
-    let residential = [];
-    try { residential = JSON.parse(wrap.dataset.residential || '[]'); } catch (e) { residential = []; }
-
-    const chip = wrap.querySelector('[data-privacy-chip]');
-    const toggle = wrap.querySelector('[data-privacy-toggle]');
-    const input = wrap.querySelector('[data-privacy-input]');
-    const lockedNote = wrap.querySelector('[data-privacy-locked-note]');
-
-    const PRIVATE = 'Private — only used in your own plans';
-    const SHARED = 'Shared — appears for other athletes near this place';
-
-    // An un-categorized place is stored as a residence (gym_profiles defaults
-    // category-less locales to home_gym), so empty counts as private here too.
-    function isResidential(value) {
-      return !value || residential.indexOf(value) !== -1;
-    }
-
-    function render() {
-      const locked = isResidential(select.value);
-      if (locked) {
-        if (input) input.checked = false;
-        if (toggle) toggle.hidden = true;
-        if (lockedNote) lockedNote.hidden = false;
-        chip.textContent = PRIVATE;
-        chip.classList.add('solid');
-      } else {
-        if (toggle) toggle.hidden = false;
-        if (lockedNote) lockedNote.hidden = true;
-        const priv = input && input.checked;
-        chip.textContent = priv ? PRIVATE : SHARED;
-        chip.classList.toggle('solid', !!priv);
-      }
-    }
-
-    select.addEventListener('change', render);
-    if (input) input.addEventListener('change', render);
-    render();
-  })();
-</script>
 {% endblock %}

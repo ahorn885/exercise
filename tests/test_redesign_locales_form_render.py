@@ -115,22 +115,10 @@ def test_form_renders_craft_kept_here():
 # ─── locales/new.html ───────────────────────────────────────────────────
 
 def _new_ctx(**kw):
-    base = dict(manual=False, query='', acked=True, results=[], error=None,
-                manual_categories=[('home', 'Home gym')],
-                residential_categories=['home_gym', 'other_residence'],
+    base = dict(query='', acked=True, results=[], error=None,
                 disclosure_version='v1', upgrade_slug='', upgrade_locale=None)
     base.update(kw)
     return base
-
-
-def test_new_manual_renders():
-    html = _render('locales/new.html', **_new_ctx(manual=True))
-    assert 'app-shell' in html
-    assert 'name="locale_name"' in html
-    assert 'name="address"' in html
-    assert 'name="category"' in html
-    assert '/locales/new/manual' in html
-    assert 'style="' not in html
 
 
 def test_new_disclosure_gate_renders():
@@ -138,6 +126,9 @@ def test_new_disclosure_gate_renders():
     assert 'Place lookup uses Mapbox' in html
     assert '/locales/new/acknowledge' in html
     assert 'Acknowledge' in html
+    # #941 — the manual-entry escape hatch is retired; every location is
+    # Mapbox-anchored, so the gate no longer offers a manual fallback.
+    assert 'manual' not in html.lower()
     assert 'style="' not in html
 
 
@@ -149,6 +140,8 @@ def test_new_search_results_render():
     assert 'Planet Fitness' in html
     assert 'name="mapbox_id"' in html          # per-result save form
     assert 'Save this' in html
+    # No manual-entry path anywhere in the add-location flow (#941).
+    assert '/locales/new/manual' not in html
     assert 'style="' not in html and 'onclick=' not in html
 
 

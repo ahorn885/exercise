@@ -777,9 +777,12 @@ Per-user equipment profiles for the 4 locale slots: `home`, `hotel`,
   (`athlete_event_windows_repo.resolve_weather_location`): an `away` event
   window's destination wins, else the preferred-home coords. The typed city
   caused the wrong-location bug — travel locales left it blank and the away
-  window silently fell back to home weather. Manual-entry locales (no geocode)
-  stash their typed address in `place_payload` (Mapbox-feature shape) for
-  display and resolve no weather.
+  window silently fell back to home weather. To guarantee every locale has
+  coordinates, the coordinate-less **manual-entry create path was retired** —
+  all new locations go through the Mapbox search→pick flow (`lat`/`lng` always
+  set). Legacy manual rows (no geocode) keep their typed address in
+  `place_payload` for display and resolve no weather until re-anchored via the
+  `?upgrade=<slug>` flow.
 
 #### `locale_equipment`
 

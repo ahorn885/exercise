@@ -832,18 +832,22 @@ def _edit_locale(db, uid: int, locale: str, profile):
 def new_locale():
     """Athlete-typed Mapbox-anchored locale creation (D-59 §3 + §4).
 
-    GET renders the search form (or the manual fallback when ?manual=1).
-    Search results render in-template when ?q= is set and disclosure is
-    acked. POST writes the selected Mapbox feature as a locale_profiles
-    row, runs chain detection, and redirects to /locales/<slug>/nearby on
-    a chain hit (D-59 §5) or back to /locales otherwise.
+    GET renders the Mapbox place-search form. Search results render
+    in-template when ?q= is set and disclosure is acked. POST writes the
+    selected Mapbox feature as a locale_profiles row, runs chain detection,
+    and redirects to /locales/<slug>/nearby on a chain hit (D-59 §5) or back
+    to /locales otherwise.
+
+    #941 — every location is Mapbox-anchored (lat/lng), so weather/clothing
+    can resolve. The coordinate-less manual-entry fallback was retired; the
+    `?upgrade=<slug>` flow below stays so any legacy manual rows can be
+    re-anchored.
     """
     db = get_db()
     uid = current_user_id()
     if request.method == 'POST':
         return _save_mapbox_anchored(db, uid)
     _stash_return_to()
-    manual = request.args.get('manual') == '1'
     query = (request.args.get('q') or '').strip()
     # D-59 §6 step 3 — `?upgrade=<slug>` lets athletes flip an existing
     # manual_entry=TRUE row to Mapbox-anchored. The upgrade row is shown
@@ -862,20 +866,18 @@ def new_locale():
     acked = _disclosure_acked(db, uid)
     results: list[dict] = []
     error: str | None = None
-    if query and acked and not manual:
+    if query and acked:
         try:
             results = mapbox_client.search_places(query, limit=5)
         except mapbox_client.MapboxTokenMissing:
-            error = 'Place lookup is not configured on the server. Use the manual entry option below.'
+            error = 'Place lookup is not configured on the server. Please try again later.'
         except mapbox_client.MapboxNoResults:
-            error = f'No matches for {query!r}. Try a broader search or use manual entry.'
+            error = f'No matches for {query!r}. Try a broader search (address or business name).'
         except mapbox_client.MapboxError as e:
-            error = f'Place lookup unavailable ({e}). Try again or use manual entry.'
+            error = f'Place lookup unavailable ({e}). Try again.'
     return render_template('locales/new.html',
-                           manual=manual, query=query,
+                           query=query,
                            acked=acked, results=results, error=error,
-                           manual_categories=MANUAL_CATEGORIES,
-                           residential_categories=sorted(RESIDENTIAL_CATEGORIES),
                            disclosure_version=MAPBOX_DISCLOSURE_VERSION,
                            upgrade_slug=upgrade_slug,
                            upgrade_locale=upgrade_locale)
@@ -1001,56 +1003,10 @@ def _save_mapbox_anchored(db, uid: int):
     return _locale_flow_redirect()
 
 
-@bp.route('/locales/new/manual', methods=['POST'])
-def save_manual_locale():
-    """Manual-entry path (D-59 §6). No Mapbox round-trip; coords +
-    chain stay NULL; manual_entry=TRUE so plan-gen knows the row lacks
-    proximity-cluster membership."""
-    db = get_db()
-    uid = current_user_id()
-    locale_name = (request.form.get('locale_name') or '').strip()
-    address = (request.form.get('address') or '').strip()
-    category = (request.form.get('category') or '').strip()
-    valid_categories = {c[0] for c in MANUAL_CATEGORIES}
-    if category and category not in valid_categories:
-        category = None
-    # #446 — explicit opt-out for shareable categories. Residential categories
-    # are private regardless; `_resolve_private` ORs the category default in
-    # when the gym_profile is later built.
-    opt_out = request.form.get('private') == '1'
-    if not locale_name:
-        flash('Locale name is required.', 'danger')
-        return redirect(url_for('locales.new_locale', manual=1))
-    # A manual locale must record *where* it is — an address-less row has no
-    # coordinates and no place, so it can never resolve weather/clothing and
-    # shows up as an empty location. Require the address (the Mapbox path
-    # already guarantees a place via lat/lng).
-    if not address:
-        flash('An address is required so we know where this location is.', 'danger')
-        return redirect(url_for('locales.new_locale', manual=1))
-    base_slug = _slugify(locale_name)
-    if not base_slug:
-        flash('Locale name needs at least one letter or number.', 'danger')
-        return redirect(url_for('locales.new_locale', manual=1))
-    slug = _unique_slug(db, uid, base_slug)
-    # #941 — the typed address has no Mapbox geocode (manual entry carries no
-    # coords), so it can't drive weather; stash it in `place_payload` shaped
-    # like a Mapbox feature so `_display_address` still renders it on the list /
-    # form. Replaces the retired free-text `city` column.
-    place_payload = (
-        json.dumps({'properties': {'full_address': address}}) if address else None
-    )
-    db.execute(
-        '''INSERT INTO locale_profiles
-           (user_id, locale, locale_name, place_payload, notes,
-            category, manual_entry, sharing_opt_out, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP)''',
-        (uid, slug, locale_name, place_payload, '', category or None, opt_out),
-    )
-    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
-    db.commit()
-    flash(f'Saved {locale_name} (manual entry).', 'success')
-    return _locale_flow_redirect()
+# #941 — the coordinate-less manual-entry create path (`/locales/new/manual`,
+# D-59 §6) was retired. Every location is now Mapbox-anchored via the
+# search→pick flow so it carries lat/lng for weather/clothing resolution.
+# Legacy manual rows are migrated through `new_locale`'s `?upgrade=<slug>` flow.
 
 
 @bp.route('/locales/<locale>/nearby', methods=['GET', 'POST'])
