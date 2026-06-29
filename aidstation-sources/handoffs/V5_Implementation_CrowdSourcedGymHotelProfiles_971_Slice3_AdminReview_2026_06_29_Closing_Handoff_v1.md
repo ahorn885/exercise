@@ -1,0 +1,162 @@
+# Crowd-Sourced Gym/Hotel Profiles (#971) — Slice 3: Admin Review of Peer Corrections — Closing Handoff
+
+**Session:** Third slice of #971 — build the issue's "allow user-based updates, with an administrative review step." Activates the dormant `gym_profiles.disputed_items` column as a peer-correction proposal store + an admin approve/reject queue.
+**Date:** 2026-06-29
+**Predecessor handoff:** `handoffs/V5_Implementation_CrowdSourcedGymHotelProfiles_971_Slice1_NameGeoDedup_2026_06_29_Closing_Handoff_v1.md` (#971 Slice 1 — name+geo dedup; merged PR #1009).
+**Branch:** `claude/971-name-geo-dedup-hfnko6`
+**Status:** 4 code/template substantive files + 2 test files (one edit is a 1-line dashboard nav link). PR **not yet opened** — awaiting Andy's go per the PR-gated operating model. Full suite green locally (3773 passed, 30 skipped).
+
+---
+
+## 1. Session-start verification (Rule #9)
+
+Verified Slice 1 actually landed before opening Slice 3 (it's the precondition this slice builds beside).
+
+| Claim | Anchor | Result |
+|---|---|---|
+| Slice 1 (`_address_fingerprint` / `_find_gym_profile_by_fingerprint`) on-disk + merged | `grep -n` `routes/locales.py` → present at `:384`/`:411`; `git log` shows PR #1009 merged (e970a52) | ✅ |
+| `verify-handoff.sh` clean | `aidstation-sources/scripts/verify-handoff.sh` → working tree clean, no ❌ | ✅ |
+| `gym_profiles.disputed_items` column exists, dormant | `grep -rn disputed_items` → only `init_db.py:1240` (DDL) + design docs; never written/read in code | ✅ dormant |
+| `/admin/curation-flags` queue pattern to mirror | `routes/admin.py:693` + `templates/admin/curation_flags.html` + `evidence_repo` helpers | ✅ |
+| D-60 defines `disputed_items` semantics | `designs/Onboarding_D60_Design_v1.md` §5 (row 5 of decision table) + §10 — curator-review deferred as TBD | ✅ |
+
+**Reconciliation note:** clean. Slice 3 is the curator-review mechanism the D-60 design explicitly left as TBD (§10: "Avoids voting/curator-review overhead at v1… resolution TBD").
+
+---
+
+## 2. Session narrative
+
+**Scope-pick gate.** With Slice 1 merged, "keep working on 971" means the next slice. Two remained: **Slice 2 (photos)** — architect-recommended, but blocked on a storage-backend choice (Vercel Blob vs URL field) that's a mandatory stop-and-ask (Andy decision) — and **Slice 3 (admin review)** — self-contained, mirrors the existing `/admin/curation-flags` queue, no new infra decision. An `AskUserQuestion` to confirm the slice + storage didn't go through (tool error); Andy said "continue." Picked **Slice 3** because it's fully within execution authority and doesn't gamble on the storage decision Slice 2 needs. Slice 2 stays available the moment Andy picks a backend.
+
+**Key grounding finding (shaped the design).** Two things: (1) peer edits to a shared profile today only write **personal** `locale_equipment_overrides` — there was **no** mechanism for a peer to propose a change to the *shared* profile, so crowd-sourced corrections never propagated. (2) `disputed_items` is **dormant** (declared at D-60 §5 for exactly this, never written/read — the same shape of move as Slice 1's dormant `address_fingerprint`). So Slice 3 = activate `disputed_items` as the proposal store + build the admin review loop the D-60 design deferred.
+
+**The capture insight.** The inherit path already computes the peer's shared-vs-submitted delta (for `_save_overrides`). That same delta **is** the crowd-sourced correction. So capture is a one-liner addition next to `_save_overrides` — no new form UI, no separate "dispute" affordance — recording the delta as a proposal on the shared profile.
+
+**Cross-layer line held.** The D-60 design also calls for plan-gen to treat disputed items as not-available (a Layer-2C change). That's a **cross-layer surface change (stop-and-ask trigger #3)** — explicitly **deferred** to a follow-up slice. Approving a proposal in this slice updates the shared `equipment` set, which flows to every inheritor through the **existing** `_shared_equipment_set` resolution — so approvals take effect entirely through the already-shipped contract, touching no inter-layer surface.
+
+---
+
+## 3. File-by-file edits
+
+### 3.1 `routes/locales.py` (modified)
+
+- **import** `from datetime import datetime, timezone` (proposal timestamp).
+- **`_parse_profile_edits(payload)`** (new): tolerant JSON→`list[dict]` parse of `disputed_items` (NULL/empty/malformed → `[]`).
+- **`_load_profile_edits(db, gym_profile_id)`** (new): current proposals for one profile.
+- **`_record_profile_edit(db, gym_profile_id, proposer_uid, shared_tags, athlete_tags, valid_names, *, now=None)`** (new): the capture. Diff = `athlete_tags` vs `shared_tags` (filtered to `valid_names`); upserts one proposal per (profile, peer) as `{by, adds, removes, at}`; empty diff withdraws any prior proposal; writes `disputed_items` whole (NULL when none remain). Rule #15 `print()` of inputs + outcome.
+- **`_list_pending_profile_edits(db, limit=500)`** (new): admin queue — non-private profiles with non-empty `disputed_items`, each with shared equipment + parsed proposals; skips rows whose proposals don't parse.
+- **`_review_profile_edit(db, gym_profile_id, proposer_uid, approve)`** (new): approve folds `adds`/`removes` into the shared `equipment` set (`(shared ∪ adds) − removes`) + advances `last_confirmed_by`/`_at` to the proposer; reject leaves equipment untouched; either way removes the proposal. Returns the applied proposal or `None` (no such open proposal / missing profile). Rule #15 `print()`.
+- **`_edit_locale`** (modified): in the inherit branch, after `_save_overrides`, calls `_record_profile_edit(db, shared['id'], uid, shared_tags, submitted, valid_names)`.
+
+### 3.2 `routes/admin.py` (modified)
+
+- **import** `_list_pending_profile_edits`, `_review_profile_edit` from `routes.locales` (consistent with admin already importing `from routes.auth`).
+- **`GET /admin/gym-profile-edits`** (`gym_profile_edits`, new): admin-only; renders the queue.
+- **`POST /admin/gym-profile-edits/<int:gym_profile_id>/review`** (`review_gym_profile_edit`, new): `action` ∈ {`approve`,`reject`} + `proposer_id`; calls `_review_profile_edit`; writes an `admin_audit` row in the same transaction (mirrors `resolve_flag`); flashes + redirects.
+
+### 3.3 `templates/admin/gym_profile_edits.html` (new)
+
+Mirrors `curation_flags.html` (extends `base.html`, redesign shell). One card per profile (name + category + shared equipment), a row per proposal (proposer → `admin.user_detail`, add chips, remove chips, when) with Approve/Reject forms (CSRF + `proposer_id` hidden). Empty state when no proposals.
+
+### 3.4 `templates/admin/dashboard.html` (modified)
+
+One-line nav link "Gym profile reviews" → `admin.gym_profile_edits`, between "Curation gaps" and "Evidence sources".
+
+---
+
+## 4. Code / tests
+
+**`tests/test_locales.py` (+10 → 62 passing in the file):**
+- `TestRecordProfileEdit` (4): records delta as proposal; empty delta withdraws; upsert replaces same-peer + keeps others; invalid names dropped.
+- `TestListPendingProfileEdits` (2): SQL shape excludes private + parses shared tags + proposals; skips rows with empty/malformed proposals.
+- `TestReviewProfileEdit` (4): approve folds into shared equipment (`(Barbell,Squat rack ∪ Treadmill) − Squat rack` → `[Barbell, Treadmill]`) + clears + `last_confirmed_by`=proposer; reject leaves equipment untouched; unknown proposal → `None`; missing profile → `None`.
+
+Imports added: `_list_pending_profile_edits`, `_record_profile_edit`, `_review_profile_edit`.
+
+**`tests/test_redesign_admin_render.py` (+2):**
+- `test_gym_profile_edits_renders`: `_GymEditConn` routes the `FROM gym_profiles` query to a seeded proposal; asserts the queue page renders the proposal + the `/admin/gym-profile-edits/77/review` actions + `User #2`.
+- `test_dashboard_links_to_gym_profile_edits`: the dashboard nav link resolves.
+
+**Verification:** `python -m pytest tests/test_locales.py tests/test_routes_admin.py tests/test_redesign_admin_render.py` → 101 passed; **full `tests/` → 3773 passed, 30 skipped** (skips are API-key-gated real-LLM). `import routes.admin, routes.locales` clean (no circular-import regression from the new cross-module import).
+
+---
+
+## 5. Manual §5.0 verification steps
+
+Exercisable on Vercel once ≥2 accounts exist:
+
+1. Account A: add a hotel, log equipment, save (creates a shared `gym_profiles` row).
+2. Account B: add the **same** hotel (resolves to A's shared profile via mapbox_id or the Slice-1 name+geo fallback), inherit it, then save a **changed** equipment view (add one item, remove one).
+3. Admin (`/admin` → "Gym profile reviews" → `/admin/gym-profile-edits`): B's proposal shows (proposer, +adds, −removes). **Approve** → A's shared profile equipment updates (A and every other inheritor now resolve the corrected set). **Reject** → shared set unchanged, proposal cleared.
+4. Negative: B re-saves a view that **matches** the (current) shared profile → B's proposal **withdraws** (disappears from the queue).
+
+(Recorded in `CARRY_FORWARD.md` under the #971 entry as an owed live exercise.)
+
+---
+
+## 6. Next session pointers
+
+### 6.1 Architect-recommended next forward move
+**#971 Slice 2 — photos** (the only remaining slice). `gym_profile_photos` table (FK to `gym_profiles`, uploader `user_id`, storage ref, created_at) + capture/display in `templates/locales/form.html` + `routes/locales._edit_locale`. **Storage backend (Vercel Blob vs a URL field) is an Andy decision** — decide it before building. This slice was deliberately picked over Slice 2 to avoid pre-empting that call.
+
+### 6.2 Alternative pivots
+- **#971 Slice 3 follow-ups** (this slice's deferrals): (a) the cross-layer **plan-gen "disputed item ⇒ not-available" treatment** (D-60 §5) — a Layer-2C slice that derives disputed *tags* from open proposals' `removes`; (b) an explicit per-item "dispute" **opt-in affordance** in `form.html` (replacing the current auto-record-any-divergence capture).
+- Back to **#884** (gear/craft) if Andy redirects — see that thread's predecessor handoff.
+
+### 6.3 Operating notes for next session
+(1) Rule #13 read order: `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`. (2) Postgres-only repo (`get_db()` raises without `DATABASE_URL`); the `_FakeConn` substrate in `tests/test_locales.py` and the `_Conn`/`_GymEditConn` substrate in `tests/test_redesign_admin_render.py` are how route logic is unit-tested without a live DB. (3) **No Neon/layer0 apply owed** — `disputed_items` already exists; this slice enriches its JSON in place. (4) PR not yet opened — awaiting Andy's go.
+
+---
+
+## 7. Decisions pinned
+
+| # | Decision | Picked by | Rationale |
+|---|---|---|---|
+| 1 | Ship **Slice 3 (admin review)**, not Slice 2 (photos), this session | Claude (under "continue", AskUserQuestion failed) | Slice 2 is blocked on a storage-backend Andy decision; Slice 3 is self-contained + mirrors an existing pattern + needs no new infra decision. Reversible — Slice 2 still open. |
+| 2 | **Auto-record any peer divergence** as a correction proposal (no separate opt-in affordance) | Claude (grounded) | For objective equipment-presence at a shared physical location a divergence *is* a correction worth reviewing; nothing auto-applies (admin gates it); avoids touching `form.html`. Upsert (one open per peer) keeps the queue legible. The explicit opt-in affordance is a documented follow-up if the auto-capture proves noisy. |
+| 3 | **Reuse the dormant `disputed_items` column**, enriched from "array of tags" to proposal objects `{by, adds, removes, at}` | Claude (grounded) | No migration (column already exists, never read → no back-compat). Forward-compatible with the D-60 plan-gen intent: a future "disputed tag ⇒ not-available" slice derives disputed *tags* from open proposals' `removes`. |
+| 4 | **Defer the cross-layer plan-gen treatment** (disputed ⇒ not-available, D-60 §5) | Claude | It's a Layer-2C inter-layer change (stop-and-ask trigger #3). Approvals already take effect through the existing shared-equipment contract, so this slice ships value without crossing that surface. |
+| 5 | Approve folds into shared `equipment` + advances `last_confirmed_by`; **does not** bump `contribution_count` | Claude | The proposer already bumped `contribution_count` on inherit (`_touch_gym_profile_confirmation`); bumping again on approve would double-count. `last_confirmed_by`=proposer is the right provenance for "their correction is now the confirmed state." |
+
+---
+
+## 8. Session-end verification (Rule #10)
+
+| Check | Result |
+|---|---|
+| `_record_profile_edit` / `_list_pending_profile_edits` / `_review_profile_edit` present | ✅ grep `routes/locales.py` |
+| `_edit_locale` inherit branch calls `_record_profile_edit` | ✅ `routes/locales.py` inherit branch |
+| `/admin/gym-profile-edits` GET + `/review` POST present; audited | ✅ `routes/admin.py` |
+| `templates/admin/gym_profile_edits.html` exists; dashboard nav link added | ✅ both templates |
+| `tests/test_locales.py` 62 passed; `tests/test_redesign_admin_render.py` +2; full suite 3773 passed / 30 skipped | ✅ pytest |
+| No circular-import regression (`import routes.admin, routes.locales`) | ✅ |
+| Bookkeeping (`CURRENT_STATE.md` + `CARRY_FORWARD.md` + this handoff) committed with the slice | ✅ git |
+
+---
+
+## 9. Files shipped this session
+
+**Substantive (4 code/template + 2 test):**
+1. `routes/locales.py`
+2. `routes/admin.py`
+3. `templates/admin/gym_profile_edits.html` (new)
+4. `templates/admin/dashboard.html` (1-line nav link)
+5. `tests/test_locales.py`
+6. `tests/test_redesign_admin_render.py`
+
+A hair over the ~5 soft ceiling on a single cohesive slice (one edit is a 1-line nav link, two are test files) — noted, not split.
+
+**Bookkeeping (3 files, outside the count):**
+- `aidstation-sources/CURRENT_STATE.md`
+- `aidstation-sources/CARRY_FORWARD.md`
+- this handoff
+
+---
+
+## 10. Carry-forward updates
+
+`## #971` section in `CARRY_FORWARD.md` updated: Slices 1 + 3 DONE, Slice 2 (photos) the only remaining slice (storage backend = Andy decision); Slice-3 deferred follow-ups (plan-gen disputed treatment + explicit opt-in affordance) recorded; the Slice-3 §5.0 two-account walkthrough recorded as an owed live exercise.
+
+---
+
+**End of handoff.**
