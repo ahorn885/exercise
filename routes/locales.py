@@ -645,7 +645,13 @@ def save_locale_crafts(locale):
     event-windows page (craft kept at a place is a property of the place). Replace
     the crafts the athlete keeps at this locale (replace-all; save with none
     checked to clear), validate the slugs + locale via the repo, then evict the
-    plan caches it feeds. Resolution is unchanged — only the capture point moved."""
+    plan caches it feeds. Resolution is unchanged — only the capture point moved.
+
+    #953: the editor's craft checkboxes now post through the unified
+    `_edit_locale` save (one button for equipment + craft, no bounce-out), so the
+    form no longer targets this route. It is kept as a still-valid standalone
+    endpoint (direct POST / external callers) until the #884 model unification
+    retires the separate craft surface entirely."""
     db = get_db()
     uid = current_user_id()
     if not db.execute(
@@ -714,6 +720,12 @@ def _edit_locale(db, uid: int, locale: str, profile):
 
     if request.method == 'POST':
         submitted = {t for t in request.form.getlist('equipment') if t in valid_names}
+        submitted_crafts = request.form.getlist('craft_slug')
+        # #953 — craft kept here is now part of this single save (folded off its
+        # former standalone form). Snapshot the prior set so the craft-cache
+        # eviction only fires on an actual change, mirroring the terrain/equipment
+        # guards below.
+        prior_crafts = load_craft_locales(db, uid).get(locale, [])
         notes = request.form.get('notes', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
         # #446 — explicit privacy override. The form posts `private=1` when the
@@ -770,11 +782,24 @@ def _edit_locale(db, uid: int, locale: str, profile):
                 _link_gym_profile(db, uid, locale, shared['id'])
                 _touch_gym_profile_confirmation(db, uid, shared['id'])
             _save_overrides(db, uid, locale, shared_tags, submitted, valid_names)
+        # #953 — replace the craft kept here in the same transaction as the
+        # equipment/terrain save so a single submit covers both surfaces.
+        # `edit_profile` already verified the locale exists; an invalid slug
+        # only reaches here via a crafted POST, so roll the whole save back and
+        # bounce to the editor (nothing was committed).
+        try:
+            replace_craft_locale(db, uid, locale, submitted_crafts)
+        except CraftLocaleError as exc:
+            db.rollback()
+            flash(str(exc), 'error')
+            return redirect(url_for('locales.edit_profile', locale=locale))
         db.commit()
         if sorted(new_terrain_ids) != sorted(prior_terrain_ids):
             _evict_layer2b_on_terrain_change(db, uid)
         if submitted != prior_effective:
             _evict_layer2c_on_equipment_change(db, uid)
+        if sorted(submitted_crafts) != sorted(prior_crafts):
+            evict_plan_caches_on_craft_locale_change(db, uid)
         flash(f'Saved {profile["locale_name"] if profile and _row_has(profile, "locale_name") and profile["locale_name"] else locale} '
               f'({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
