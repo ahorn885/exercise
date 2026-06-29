@@ -87,6 +87,9 @@ class _FakeConn:
     def commit(self):
         pass
 
+    def rollback(self):
+        pass
+
 
 class _FakeForm:
     """`request.form`-shaped fake — supports `getlist(key)`."""
@@ -518,6 +521,22 @@ def _seed_edit_layer0_equipment(conn, names=('Barbell',)):
     ])
 
 
+def _patch_craft_save(monkeypatch, locales_mod, *, prior=None, calls=None):
+    """Neutralise the #953 inline craft save in equipment-path tests that don't
+    seed its repo queries: `load_craft_locales` returns `prior` (default: none
+    kept here), `replace_craft_locale` records `(uid, locale, crafts)` into
+    `calls`, and the craft cache eviction is a no-op."""
+    monkeypatch.setattr(locales_mod, 'load_craft_locales',
+                        lambda *_a, **_k: dict(prior or {}))
+
+    def _replace(_db, uid, locale, crafts):
+        if calls is not None:
+            calls.append((uid, locale, list(crafts)))
+    monkeypatch.setattr(locales_mod, 'replace_craft_locale', _replace)
+    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+                        lambda *_a, **_k: None)
+
+
 class TestEditLocaleTerrainPersists:
     """Track 1 — the unified `_edit_locale` POST persists `locale_terrain_ids`
     via the INSERT ... ON CONFLICT upsert (param index 4) on the build path
@@ -539,6 +558,7 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         profile = _FakeRow({'locale_terrain_ids': []})
         with app.test_request_context(
@@ -587,6 +607,7 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         # No 'category' key → categoryless (legacy 'home' slug shape).
         profile = _FakeRow({'locale_terrain_ids': []})
@@ -629,6 +650,7 @@ class TestEditLocaleTerrainPersists:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
         profile = _FakeRow({
             'mapbox_id': 'mb_chisenhall',
@@ -668,6 +690,62 @@ class TestEditLocaleTerrainPersists:
         ]
         # Submitted {'Squat rack'} on a shared base of {'Barbell'} → add 'Squat rack'.
         assert any('Squat rack' in p and 'add' in p for p in ovr_inserts)
+
+
+# ─── #953 — craft kept here folded into the single location save ────────────
+
+
+class TestEditLocaleSavesCraftInline:
+    """#953 — the unified editor save persists "craft kept here" in the same
+    POST as equipment/terrain (folded off its standalone form/button so editing
+    both no longer bounces back to the list), and evicts the craft plan caches
+    only when the kept set actually changes."""
+
+    def _post(self, monkeypatch, *, craft_slugs, prior_crafts):
+        app = _make_app()
+        conn = _FakeConn()
+        _seed_edit_layer0_equipment(conn)
+        conn.queue_response(row={'gym_profile_id': None})  # locale_effective_tags
+        conn.queue_response(rows=[])                        # overrides
+        conn.queue_response(row={'preferred': 1})           # _ensure_home
+        conn.queue_response(row={'id': 7})                  # _create_gym_profile RETURNING
+        import routes.locales as locales_mod
+        monkeypatch.setattr(locales_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(locales_mod, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(locales_mod, '_evict_layer2b_on_terrain_change',
+                            lambda *_a, **_k: None)
+        monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
+                            lambda *_a, **_k: None)
+        craft_calls: list = []
+        _patch_craft_save(monkeypatch, locales_mod,
+                          prior={'cabin': prior_crafts}, calls=craft_calls)
+        evicted: list = []
+        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+                            lambda *_a, **_k: evicted.append(True))
+
+        profile = _FakeRow({'locale_terrain_ids': []})
+        with app.test_request_context(
+            '/locales/cabin/edit', method='POST',
+            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+                  'locale_terrain_ids': [], 'craft_slug': craft_slugs},
+        ):
+            _edit_locale(conn, 1, 'cabin', profile)
+        return craft_calls, evicted
+
+    def test_post_replaces_craft_and_evicts_on_change(self, monkeypatch):
+        craft_calls, evicted = self._post(
+            monkeypatch, craft_slugs=['kayak', 'mountain_bike'], prior_crafts=[])
+        # The submitted craft set is replace-all'd in the same POST...
+        assert craft_calls == [(1, 'cabin', ['kayak', 'mountain_bike'])]
+        # ...and the craft plan caches evict because the kept set changed.
+        assert evicted, 'craft cache must evict when the kept set changes'
+
+    def test_post_skips_craft_eviction_when_unchanged(self, monkeypatch):
+        craft_calls, evicted = self._post(
+            monkeypatch, craft_slugs=['kayak'], prior_crafts=['kayak'])
+        # Still replace-all'd (idempotent), but no cache churn on a no-op change.
+        assert craft_calls == [(1, 'cabin', ['kayak'])]
+        assert not evicted, 'unchanged craft set must not evict the plan caches'
 
 
 # ─── #446 — explicit privacy override (private/shared) ──────────────────────
@@ -737,6 +815,7 @@ class TestEditPrivacyOverride:
                             lambda *_a, **_k: None)
         monkeypatch.setattr(locales_mod, '_evict_layer2c_on_equipment_change',
                             lambda *_a, **_k: None)
+        _patch_craft_save(monkeypatch, locales_mod)
 
     def test_opt_out_forces_shareable_build_private(self, monkeypatch):
         app = _make_app()

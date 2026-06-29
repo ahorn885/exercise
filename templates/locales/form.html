@@ -106,6 +106,35 @@
     </fieldset>
     {% endif %}
 
+    {# #953 — craft kept at this location, folded into the single location save.
+       Was a separate form/Save button (the WS-H #581 Slice 5 (b) craft↔locale
+       surface) that bounced back to the list, so editing equipment + craft
+       meant two round-trips; now it saves in one submit alongside equipment and
+       terrain. Replace-all per location; save with none checked to clear. The
+       full craft/gear-kit model unification is tracked separately in #884. #}
+    {% if craft_catalog %}
+    <fieldset class="loc-craft">
+      <legend>Craft you keep here</legend>
+      <p class="loc-hint">A bike at the cabin, a kayak at the lake house — craft that lives here, not
+        brought per trip. It counts whenever this location is your away destination's cluster, with no
+        need to re-declare it each window. Replace-all · save with none checked to clear.</p>
+      <div class="loc-eq-grid">
+        {% for group, items in craft_catalog.items() %}
+        <fieldset class="loc-eq-cat">
+          <legend>{{ group | capitalize }}</legend>
+          {% for c in items %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="craft_slug" value="{{ c.slug }}"
+                   id="kept_{{ c.slug }}" {% if c.slug in crafts_here %}checked{% endif %}>
+            <label class="form-check-label" for="kept_{{ c.slug }}">{{ c.label }}</label>
+          </div>
+          {% endfor %}
+        </fieldset>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
+
     {% if mode == 'legacy' %}
     <label class="field loc-mw"><span class="lbl">City <span class="loc-opt">(optional — e.g. "Minneapolis, MN")</span></span>
       <input type="text" name="city" class="form-control form-control-sm" value="{{ city }}"
@@ -150,39 +179,6 @@
       </button>
     </div>
   </form>
-
-  {# WS-H #581 Slice 5 — craft you keep at this location (the (b) craft↔locale
-     surface, relocated here from the event-windows page: craft kept at a place is
-     a property of the place, available whenever this locale falls in an away
-     cluster). Replace-all per location; save with none checked to clear. #}
-  {% if craft_catalog %}
-  <form method="post" action="{{ url_for('locales.save_locale_crafts', locale=locale) }}"
-        class="card card-pad loc-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <p class="eyebrow">● Craft you keep here</p>
-    <p class="loc-hint">A bike at the cabin, a kayak at the lake house — craft that lives here, not
-      brought per trip. It counts whenever this location is your away destination's cluster, with no
-      need to re-declare it each window.</p>
-    <div class="loc-eq-grid">
-      {% for group, items in craft_catalog.items() %}
-      <fieldset class="loc-eq-cat">
-        <legend>{{ group | capitalize }}</legend>
-        {% for c in items %}
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="craft_slug" value="{{ c.slug }}"
-                 id="kept_{{ c.slug }}" {% if c.slug in crafts_here %}checked{% endif %}>
-          <label class="form-check-label" for="kept_{{ c.slug }}">{{ c.label }}</label>
-        </div>
-        {% endfor %}
-      </fieldset>
-      {% endfor %}
-    </div>
-    <div class="pf-save">
-      <span class="pf-saved mono">Replace-all · save with none checked to clear</span>
-      <button type="submit" class="btn btn-primary btn-sm">Save craft kept here</button>
-    </div>
-  </form>
-  {% endif %}
 
   {% if is_deletable %}
   <form method="post" action="{{ url_for('locales.delete_locale', locale=locale) }}"

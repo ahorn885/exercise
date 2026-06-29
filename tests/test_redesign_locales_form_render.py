@@ -97,15 +97,21 @@ def test_form_deletable_shows_delete():
 
 
 def test_form_renders_craft_kept_here():
-    """WS-H #581 Slice 5 — the (b) standing craft↔locale capture, relocated off the
-    event-windows page onto the per-locale edit page (craft kept at a place is a
-    property of the place), posting to the locale-scoped `save_locale_crafts`."""
+    """#953 — the (b) standing craft↔locale capture (WS-H #581 Slice 5) is now
+    folded into the single equipment editor form: one Save covers equipment +
+    craft, no separate `save_locale_crafts` round-trip that bounced out. The
+    craft checkboxes render inside the main form, not a second one."""
     html = _render('locales/form.html', **_form_ctx())
     assert 'Craft you keep here' in html
     assert 'name="craft_slug"' in html
-    assert '/locales/home/crafts' in html          # locale-scoped save route
     assert 'Mountain bike' in html and 'Kayak' in html
     assert 'id="kept_kayak"' in html               # crafts_here drives checked state
+    # The craft surface no longer posts to its own route — it shares the
+    # unified location save (#953).
+    assert '/locales/home/crafts' not in html
+    # Exactly one form carries the toggles + save (plus the separate delete
+    # form when deletable); there is no second craft-only save button.
+    assert 'Save craft kept here' not in html
     # Hidden when no catalog (e.g. pre-Slice-5 callers) — guarded render.
     bare = _render('locales/form.html', **_form_ctx(craft_catalog=None))
     assert 'Craft you keep here' not in bare
