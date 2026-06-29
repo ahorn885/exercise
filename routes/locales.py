@@ -1,6 +1,7 @@
 import json
 import re
 import uuid
+from datetime import datetime, timezone
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    flash, session)
@@ -14,11 +15,11 @@ from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
 from routes.auth import current_user_id
 from athlete_crafts_repo import load_craft_catalog
-from athlete_craft_locale_repo import (
-    CraftLocaleError,
-    evict_plan_caches_on_craft_locale_change,
-    load_craft_locales,
-    replace_craft_locale,
+from athlete_gear_repo import (
+    GearSelectionError,
+    evict_plan_caches_on_gear_locale_change,
+    load_gear_locales,
+    replace_gear_locale,
 )
 
 bp = Blueprint('locales', __name__)
@@ -550,6 +551,153 @@ def _touch_gym_profile_confirmation(db, uid: int, gym_profile_id: int) -> None:
     )
 
 
+# ── #971 Slice 3 — peer-proposed corrections + admin review ──────────────────
+#
+# When a peer (an athlete who doesn't own the shared profile) saves a view that
+# differs from the shared base, that delta is a crowd-sourced *correction*
+# proposal. We stash it on the dormant `gym_profiles.disputed_items` column
+# (declared at D-60 §5 for exactly this, never populated until now) as a JSON
+# list of `{by, adds, removes, at}` objects — one open proposal per peer
+# (re-saving replaces theirs; matching the shared base withdraws it). An admin
+# reviews the queue and either *approves* (folds the adds/removes into the
+# shared `equipment` so every inheritor picks it up through the existing
+# `_shared_equipment_set` resolution) or *rejects* (drops the proposal). No
+# plan-gen / Layer-2C change here: the D-60 "disputed item ⇒ not-available for
+# plan-gen" treatment is a separate cross-layer slice; this is the review loop
+# the design left as TBD (§10).
+
+
+def _parse_profile_edits(payload) -> list:
+    """Parse `gym_profiles.disputed_items` JSON into a list of proposal dicts.
+    Tolerant of NULL / empty / malformed (returns [])."""
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        return []
+    return [p for p in data if isinstance(p, dict)]
+
+
+def _load_profile_edits(db, gym_profile_id: int) -> list:
+    """Current pending correction proposals for one shared profile."""
+    row = db.execute(
+        'SELECT disputed_items FROM gym_profiles WHERE id = ?',
+        (gym_profile_id,),
+    ).fetchone()
+    if not row or not _row_has(row, 'disputed_items'):
+        return []
+    return _parse_profile_edits(row['disputed_items'])
+
+
+def _record_profile_edit(db, gym_profile_id: int, proposer_uid: int,
+                         shared_tags: set, athlete_tags: set,
+                         valid_names: set, *, report: bool,
+                         now: str | None = None) -> None:
+    """Upsert this peer's proposed correction to a shared profile.
+
+    The peer must **explicitly flag** the shared profile as wrong (`report`)
+    for a proposal to be recorded — a routine personal override (`report`
+    falsy) only withdraws any prior proposal, so personal edits don't flood
+    the admin queue. When flagged, the proposal is the diff of the peer's
+    submitted set vs. the shared base; a flagged-but-empty diff (their view
+    already matches the shared profile) also withdraws. One open proposal per
+    (profile, peer) — re-flagging replaces it. Caller owns the transaction
+    boundary."""
+    adds, removes = [], []
+    if report:
+        adds = sorted(t for t in (athlete_tags - shared_tags) if t in valid_names)
+        removes = sorted(t for t in (shared_tags - athlete_tags) if t in valid_names)
+    proposals = [p for p in _load_profile_edits(db, gym_profile_id)
+                 if p.get('by') != proposer_uid]
+    if adds or removes:
+        stamp = now or datetime.now(timezone.utc).isoformat(timespec='seconds')
+        proposals.append({'by': proposer_uid, 'adds': adds,
+                          'removes': removes, 'at': stamp})
+    # Instrument (Rule #15): the flag + inputs the decision used + the outcome.
+    print(f'_record_profile_edit: profile={gym_profile_id} peer={proposer_uid} '
+          f'report={bool(report)} adds={adds} removes={removes} '
+          f'-> {"recorded" if (adds or removes) else "withdrawn"} '
+          f'({len(proposals)} open)')
+    db.execute(
+        'UPDATE gym_profiles SET disputed_items = ? WHERE id = ?',
+        (json.dumps(proposals) if proposals else None, gym_profile_id),
+    )
+
+
+def _list_pending_profile_edits(db, limit: int = 500) -> list:
+    """Admin queue: shared profiles carrying open correction proposals, newest
+    profile first. Each entry exposes the profile's current shared equipment +
+    its pending proposals so the operator can judge each one. Private profiles
+    are excluded (no peer ever inherits them, so they carry no proposals)."""
+    rows = db.execute(
+        "SELECT id, display_name, category, equipment, disputed_items "
+        "FROM gym_profiles "
+        "WHERE disputed_items IS NOT NULL AND disputed_items <> '' "
+        "AND COALESCE(private, FALSE) = FALSE "
+        "ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        proposals = _parse_profile_edits(
+            r['disputed_items'] if _row_has(r, 'disputed_items') else None)
+        if not proposals:
+            continue
+        out.append({
+            'id': r['id'],
+            'display_name': r['display_name'] if _row_has(r, 'display_name') else None,
+            'category': r['category'] if _row_has(r, 'category') else None,
+            'shared_tags': sorted(_shared_equipment_set(r)),
+            'proposals': proposals,
+        })
+    return out
+
+
+def _review_profile_edit(db, gym_profile_id: int, proposer_uid: int,
+                         approve: bool) -> dict | None:
+    """Approve or reject one peer's proposed correction. On approve the peer's
+    adds/removes are folded into the shared `equipment` set (every inheritor
+    then resolves the corrected base) and the profile's confirmation provenance
+    advances to the proposer; on reject the shared set is untouched. Either way
+    the proposal is removed from `disputed_items`. Returns the applied proposal,
+    or None when no open proposal by that peer exists. Caller owns the
+    transaction boundary."""
+    row = db.execute(
+        'SELECT equipment, disputed_items FROM gym_profiles WHERE id = ?',
+        (gym_profile_id,),
+    ).fetchone()
+    if not row:
+        return None
+    proposals = _parse_profile_edits(
+        row['disputed_items'] if _row_has(row, 'disputed_items') else None)
+    match = next((p for p in proposals if p.get('by') == proposer_uid), None)
+    if match is None:
+        return None
+    remaining = [p for p in proposals if p.get('by') != proposer_uid]
+    remaining_json = json.dumps(remaining) if remaining else None
+    if approve:
+        new_tags = ((_shared_equipment_set(row) | set(match.get('adds') or []))
+                    - set(match.get('removes') or []))
+        db.execute(
+            'UPDATE gym_profiles SET equipment = ?, disputed_items = ?, '
+            'last_confirmed_by = ?, last_confirmed_at = CURRENT_TIMESTAMP '
+            'WHERE id = ?',
+            (json.dumps(sorted(new_tags)), remaining_json, proposer_uid,
+             gym_profile_id),
+        )
+    else:
+        db.execute(
+            'UPDATE gym_profiles SET disputed_items = ? WHERE id = ?',
+            (remaining_json, gym_profile_id),
+        )
+    print(f'_review_profile_edit: profile={gym_profile_id} peer={proposer_uid} '
+          f'action={"approve" if approve else "reject"} '
+          f'adds={match.get("adds")} removes={match.get("removes")} '
+          f'-> {len(remaining)} open remain')
+    return match
+
+
 def _display_address(profile_row) -> str:
     """Pull the human-readable street address out of `place_payload` JSON
     for UI rendering (PR18 item A — athletes need to distinguish two rows
@@ -705,7 +853,13 @@ def save_locale_crafts(locale):
     `_edit_locale` save (one button for equipment + craft, no bounce-out), so the
     form no longer targets this route. It is kept as a still-valid standalone
     endpoint (direct POST / external callers) until the #884 model unification
-    retires the separate craft surface entirely."""
+    retires the separate craft surface entirely.
+
+    #884 slice 5 — the standing craft↔locale capture is cut over to the unified
+    `athlete_gear_locale` store (the away overlay now resolves off it, §7). The
+    picker catalog stays craft-only here (the unified gear picker is slice 6), so
+    `replace_gear_locale` only ever sees craft gear_ids — byte-identical to the
+    prior `athlete_craft_locale` write (the gear store was backfilled 1:1)."""
     db = get_db()
     uid = current_user_id()
     if not db.execute(
@@ -715,12 +869,12 @@ def save_locale_crafts(locale):
         flash('Unknown location.', 'danger')
         return redirect(url_for('locales.list_profiles'))
     try:
-        replace_craft_locale(db, uid, locale, request.form.getlist('craft_slug'))
-    except CraftLocaleError as exc:
+        replace_gear_locale(db, uid, locale, request.form.getlist('craft_slug'))
+    except GearSelectionError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('locales.edit_profile', locale=locale))
     db.commit()
-    evict_plan_caches_on_craft_locale_change(db, uid)
+    evict_plan_caches_on_gear_locale_change(db, uid)
     flash('Craft kept at this location saved.', 'success')
     return redirect(url_for('locales.edit_profile', locale=locale))
 
@@ -793,8 +947,9 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # #953 — craft kept here is now part of this single save (folded off its
         # former standalone form). Snapshot the prior set so the craft-cache
         # eviction only fires on an actual change, mirroring the terrain/equipment
-        # guards below.
-        prior_crafts = load_craft_locales(db, uid).get(locale, [])
+        # guards below. #884 slice 5 — read off the unified `athlete_gear_locale`
+        # store (craft gear_ids only until the slice-6 picker offers all kinds).
+        prior_crafts = load_gear_locales(db, uid).get(locale, [])
         notes = request.form.get('notes', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
         # #446 — explicit privacy override. The form posts `private=1` when the
@@ -851,14 +1006,21 @@ def _edit_locale(db, uid: int, locale: str, profile):
                 _link_gym_profile(db, uid, locale, shared['id'])
                 _touch_gym_profile_confirmation(db, uid, shared['id'])
             _save_overrides(db, uid, locale, shared_tags, submitted, valid_names)
+            # #971 Slice 3 — the peer's delta becomes a crowd-sourced correction
+            # proposal for admin review ONLY when they explicitly flag the
+            # shared profile as wrong; an unflagged save just keeps the edit
+            # personal (and withdraws any prior proposal).
+            report_correction = request.form.get('report_correction') == '1'
+            _record_profile_edit(db, shared['id'], uid, shared_tags, submitted,
+                                  valid_names, report=report_correction)
         # #953 — replace the craft kept here in the same transaction as the
         # equipment/terrain save so a single submit covers both surfaces.
         # `edit_profile` already verified the locale exists; an invalid slug
         # only reaches here via a crafted POST, so roll the whole save back and
         # bounce to the editor (nothing was committed).
         try:
-            replace_craft_locale(db, uid, locale, submitted_crafts)
-        except CraftLocaleError as exc:
+            replace_gear_locale(db, uid, locale, submitted_crafts)
+        except GearSelectionError as exc:
             db.rollback()
             flash(str(exc), 'error')
             return redirect(url_for('locales.edit_profile', locale=locale))
@@ -868,7 +1030,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
         if submitted != prior_effective:
             _evict_layer2c_on_equipment_change(db, uid)
         if sorted(submitted_crafts) != sorted(prior_crafts):
-            evict_plan_caches_on_craft_locale_change(db, uid)
+            evict_plan_caches_on_gear_locale_change(db, uid)
         flash(f'Saved {profile["locale_name"] if profile and _row_has(profile, "locale_name") and profile["locale_name"] else locale} '
               f'({len(submitted)} items).', 'success')
         return redirect(url_for('locales.list_profiles'))
@@ -879,6 +1041,11 @@ def _edit_locale(db, uid: int, locale: str, profile):
     # chips).
     adds, removes = _load_overrides(db, uid, locale)
     mode = 'shared_inherit' if inherit else 'legacy'
+    # #971 Slice 3 — pre-check the "report as wrong" box when this peer already
+    # has a correction pending admin review, so re-saving doesn't silently
+    # withdraw it.
+    reported = bool(inherit and shared and any(
+        p.get('by') == uid for p in _load_profile_edits(db, shared['id'])))
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
     is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
     # #446 — privacy state for the form chip + opt-out toggle. The backing
@@ -903,6 +1070,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            shared_tags=shared_tags,
                            adds=adds, removes=removes,
                            shared=shared,
+                           reported=reported,
                            notes=(profile['notes'] if profile and profile['notes'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
@@ -915,8 +1083,10 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            active_terrain_ids=set(prior_terrain_ids),
                            # WS-H #581 Slice 5 — craft-kept-here capture (the (b)
                            # craft↔locale surface, relocated from event-windows).
+                           # #884 slice 5 — checked state reads off the unified
+                           # `athlete_gear_locale` store (craft gear_ids only).
                            craft_catalog=load_craft_catalog(),
-                           crafts_here=load_craft_locales(db, uid).get(locale, []))
+                           crafts_here=load_gear_locales(db, uid).get(locale, []))
 
 
 # ── D-59 — Mapbox-anchored locale creation ──────────────────────────────

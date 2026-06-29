@@ -23,6 +23,10 @@ from evidence_repo import (
     list_evidence_sources,
     resolve_curation_flag,
 )
+from routes.locales import (
+    _list_pending_profile_edits,
+    _review_profile_edit,
+)
 
 bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -763,3 +767,60 @@ def resolve_flag(flag_id):
         return redirect(url_for('admin.curation_flags'))
     flash(f'Curation gap #{flag_id} {detail}.', 'success')
     return redirect(url_for('admin.curation_flags'))
+
+
+# ─── #971 Slice 3: crowd-sourced gym-profile correction review ───────────────
+
+
+@bp.route('/gym-profile-edits')
+def gym_profile_edits():
+    """Review queue for peer-proposed corrections to shared gym/hotel equipment
+    profiles (#971). When an athlete inherits a shared profile and saves a view
+    that differs from the shared base, that delta is captured as a correction
+    proposal; an operator approves it (folding it into the shared profile so
+    every inheritor benefits) or rejects it. Admin-only."""
+    _require_admin()
+    db = get_db()
+    return render_template(
+        'admin/gym_profile_edits.html',
+        pending=_list_pending_profile_edits(db),
+    )
+
+
+@bp.route('/gym-profile-edits/<int:gym_profile_id>/review', methods=['POST'])
+def review_gym_profile_edit(gym_profile_id):
+    """Approve or reject one peer's proposed correction (#971).
+
+    `action`:
+    - `approve` — fold the proposal's adds/removes into the shared profile's
+      equipment set and clear the proposal.
+    - `reject`  — clear the proposal, leaving the shared set unchanged.
+
+    Audited in the same transaction as the mutation (mirrors `resolve_flag`)."""
+    _require_admin()
+    db = get_db()
+    action = (request.form.get('action') or '').strip()
+    proposer_id = int(request.form.get('proposer_id') or 0)
+    if action not in ('approve', 'reject') or proposer_id <= 0:
+        flash('Unknown action.', 'danger')
+        return redirect(url_for('admin.gym_profile_edits'))
+    try:
+        applied = _review_profile_edit(
+            db, gym_profile_id, proposer_id, approve=(action == 'approve'))
+        if applied is None:
+            flash('That proposal is no longer pending.', 'warning')
+            return redirect(url_for('admin.gym_profile_edits'))
+        detail = (f'{action} profile {gym_profile_id} from user {proposer_id}: '
+                  f"+{applied.get('adds')} -{applied.get('removes')}")
+        db.execute(
+            'INSERT INTO admin_audit '
+            '(actor_user_id, action, details) VALUES (?,?,?)',
+            (current_user_id(), 'review_gym_profile_edit', detail),
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — surface the fault to the operator
+        db.rollback()
+        flash(f'Could not review proposal: {e}', 'danger')
+        return redirect(url_for('admin.gym_profile_edits'))
+    flash(f'Profile #{gym_profile_id} correction {action}d.', 'success')
+    return redirect(url_for('admin.gym_profile_edits'))

@@ -273,7 +273,7 @@ class TestOverlayBuilder:
     def _patch(self, monkeypatch, fi, windows):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
-        monkeypatch.setattr(orch, "load_craft_locales", lambda db, uid: {})
+        monkeypatch.setattr(orch, "load_gear_locales", lambda db, uid: {})
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
 
     def test_changed_segment_emitted_noop_dropped(self, monkeypatch):
@@ -332,7 +332,7 @@ class TestPerDateVolumeExpansion:
     def _patch(self, monkeypatch, fi, windows):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
-        monkeypatch.setattr(orch, "load_craft_locales", lambda db, uid: {})
+        monkeypatch.setattr(orch, "load_gear_locales", lambda db, uid: {})
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
 
     def _fi_home(self):
@@ -407,11 +407,11 @@ class TestAwayWindows:
     away feasibility for the grid (counts-follow-away, §4.1)."""
 
     def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip,
-               craft_locales=None):
+               gear_locales=None):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
         monkeypatch.setattr(
-            orch, "load_craft_locales", lambda db, uid: dict(craft_locales or {})
+            orch, "load_gear_locales", lambda db, uid: dict(gear_locales or {})
         )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
         monkeypatch.setattr(
@@ -516,16 +516,19 @@ class TestAwayWindows:
         assert segments[0].away_feasibility["D-001"].tier == "exact"
 
 
-# ─── away craft (Slice 4): brought-craft (c) ∪ standing craft↔locale (b) ─────
+# ─── away craft: brought-craft (c) ∪ standing gear↔locale (b) ────────────────
 
 class TestAwayCraft:
     """The away segment's `owned_crafts` is the union of the window's brought-craft
-    (c) and the standing craft kept at any locale in the destination cluster (b).
-    Verified by spying the craft set passed to `_resolve_included_feasibility` —
-    Slice 4 changes only that value (the cascade itself is reused)."""
+    (c) and the standing gear kept at any locale in the destination cluster (b),
+    filtered to the craft cascade kinds. Verified by spying the craft set passed to
+    `_resolve_included_feasibility` — only that value changes (the cascade is
+    reused). #884 slice 5 cut the standing (b) read over from the legacy
+    craft-locale store to the unified `athlete_gear_locale` store + added the
+    craft-kind filter; bike/paddle is byte-identical (backfilled 1:1)."""
 
     def _captured_owned_crafts(self, monkeypatch, windows, *, cluster,
-                               craft_locales=None):
+                               gear_locales=None):
         import layer4.orchestrator as orch
         fi = _mk_inputs(
             cluster=["home"], terrain_by_locale={"home": set()},
@@ -540,7 +543,7 @@ class TestAwayCraft:
 
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
         monkeypatch.setattr(
-            orch, "load_craft_locales", lambda db, uid: dict(craft_locales or {})
+            orch, "load_gear_locales", lambda db, uid: dict(gear_locales or {})
         )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
         monkeypatch.setattr(orch, "_resolve_included_feasibility", _spy)
@@ -580,21 +583,21 @@ class TestAwayCraft:
     def test_standing_craft_at_cluster_locale_unioned(self, monkeypatch):
         got = self._captured_owned_crafts(
             monkeypatch, [self._away_win("cabin")], cluster=["cabin"],
-            craft_locales={"cabin": ["mountain_bike"]},
+            gear_locales={"cabin": ["mountain_bike"]},
         )
         assert got == ["mountain_bike"]
 
     def test_brought_and_standing_union_deduped_and_sorted(self, monkeypatch):
         got = self._captured_owned_crafts(
             monkeypatch, [self._away_win("cabin", ("packraft",))], cluster=["cabin"],
-            craft_locales={"cabin": ["packraft", "mountain_bike"]},
+            gear_locales={"cabin": ["packraft", "mountain_bike"]},
         )
         assert got == ["mountain_bike", "packraft"]
 
     def test_standing_craft_outside_away_cluster_excluded(self, monkeypatch):
         got = self._captured_owned_crafts(
             monkeypatch, [self._away_win("belfast")], cluster=["belfast"],
-            craft_locales={"home": ["road_bike"]},
+            gear_locales={"home": ["road_bike"]},
         )
         assert got == []
 
@@ -603,6 +606,26 @@ class TestAwayCraft:
             monkeypatch, [self._away_win("belfast")], cluster=["belfast"],
         )
         assert got == []
+
+    # ── #884 slice 5: the unified gear store feeds non-bike/paddle kinds ──────
+    def test_standing_gear_toggle_kind_unioned(self, monkeypatch):
+        # Climbing gear stationed at the away locale (a discipline-unlocking gear
+        # toggle, group_kind 'climb') now flows into the away cascade's owned_crafts
+        # — the win the unified store buys over the bike/paddle-only craft-locale.
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("crag")], cluster=["crag"],
+            gear_locales={"crag": ["climbing_gear"]},
+        )
+        assert got == ["climbing_gear"]
+
+    def test_non_craft_gear_filtered_out(self, monkeypatch):
+        # Swim gear (group_kind 'swim') is drill-gating only, never a craft cascade
+        # input — the craft-kind filter drops it so it can't leak into owned_crafts.
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("pool_town")], cluster=["pool_town"],
+            gear_locales={"pool_town": ["paddles", "pull_buoy", "mountain_bike"]},
+        )
+        assert got == ["mountain_bike"]
 
 
 class TestCountsFollowAway:
