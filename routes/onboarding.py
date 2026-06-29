@@ -902,7 +902,7 @@ def _get_target_race_row(db, uid):
         '       goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg, '
         '       event_locale_name, event_locale_mapbox_id, event_locale_place_name, '
         '       event_locale_lat, event_locale_lng, race_url, framework_sport, '
-        '       included_discipline_ids '
+        '       sport_sub_format, included_discipline_ids '
         '  FROM race_events '
         ' WHERE user_id = ? AND is_target_event = TRUE '
         ' LIMIT 1',
@@ -973,6 +973,7 @@ def _render_target_race_form(db, uid, target):
         _resolve_effective_framework_sport,
         _discipline_choices_for_race,
         _framework_sport_choices,
+        _sub_format_context,
     )
     initial_framework_sport = _resolve_effective_framework_sport(db, uid, target)
     # #892 — union the bridge set with the target race's own saved disciplines
@@ -995,6 +996,7 @@ def _render_target_race_form(db, uid, target):
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
         framework_sport_choices=framework_sport_choices,
+        **_sub_format_context(db, target),
         race_formats=VALID_RACE_FORMATS,
         post_step3c_target=_POST_STEP3C_TARGET,
         mapbox_acked=_disclosure_acked(db, uid),
@@ -1076,6 +1078,7 @@ def target_race_save():
     new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
     new_primary_metric = _parse_primary_metric(request.form)
     new_framework_sport = _parse_str_field(request.form, 'framework_sport')
+    new_sport_sub_format = _parse_str_field(request.form, 'sport_sub_format')
     # §H.2 goal context
     new_goal_outcome = _parse_goal_outcome(request.form)
     new_first_time_at_distance = _parse_first_time_at_distance(request.form)
@@ -1099,6 +1102,7 @@ def target_race_save():
     # sport to compare against.
     if target:
         prior_framework_sport = target.get('framework_sport')
+        prior_sport_sub_format = target.get('sport_sub_format')
         prior_discipline_filter = target.get('included_discipline_ids')
         if prior_framework_sport != new_framework_sport:
             new_race_terrain, dropped_disciplines = (
@@ -1116,6 +1120,7 @@ def target_race_save():
                 )
     else:
         prior_framework_sport = None
+        prior_sport_sub_format = None
         prior_discipline_filter = None
 
     # #949 — included disciplines are derived from the (re-scoped) terrain
@@ -1138,6 +1143,7 @@ def target_race_save():
             previous_attempts=new_previous_attempts,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
+            sport_sub_format=new_sport_sub_format,
             included_discipline_ids=new_discipline_filter,
             goal_outcome=new_goal_outcome,
             first_time_at_distance=new_first_time_at_distance,
@@ -1175,6 +1181,11 @@ def target_race_save():
         # the target row → wider Layer 2A eviction (supersets periodization
         # + brief-only). Mirrors `routes/race_events.py:update_race`.
         framework_sport_changed = prior_framework_sport != new_framework_sport
+        # #254 / D-17 D6 — a sport_sub_format-only change shifts the composed
+        # Layer 2A sport input onto a different PLA band (same cache axis as
+        # framework_sport), so it fires the same layer2a-wide eviction. Mirrors
+        # routes/race_events.py:update_race.
+        sport_sub_format_changed = prior_sport_sub_format != new_sport_sub_format
         # D-73 Phase 5.2 Bucket E.(b)-B2 — included_discipline_ids change
         # uses same `layer2a` policy as framework_sport (both reshape Layer
         # 2A's discipline output). Subsumed when framework_sport drives
@@ -1191,7 +1202,7 @@ def target_race_save():
             or prior_mapbox_id != new_locale_fields['event_locale_mapbox_id']
             or target['primary_metric'] != new_primary_metric
         )
-        if framework_sport_changed:
+        if framework_sport_changed or sport_sub_format_changed:
             evict_on_target_event_framework_sport_change(db, uid)
         elif discipline_filter_changed:
             evict_on_target_event_included_discipline_ids_change(db, uid)
@@ -1216,6 +1227,7 @@ def target_race_save():
             previous_attempts=new_previous_attempts,
             race_url=new_race_url,
             framework_sport=new_framework_sport,
+            sport_sub_format=new_sport_sub_format,
             included_discipline_ids=new_discipline_filter,
             goal_outcome=new_goal_outcome,
             first_time_at_distance=new_first_time_at_distance,

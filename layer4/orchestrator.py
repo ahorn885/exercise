@@ -2200,6 +2200,15 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
 # family prefix, and was never part of `etl_version_set`. It reads
 # `WHERE superseded_at IS NULL` directly, so its edits serve live without a
 # cache-key dependency (unchanged by slice 3b).
+# Note: `layer0.sport_sub_format_map` (#254 / D-17, read by `default_sub_format`
+# to compose the Layer 2A sport) is also intentionally absent. The athlete's
+# *chosen* `sport_sub_format` is stored on `race_events` and is the cached plan
+# input; this table only supplies the form's option list + the default applied
+# at capture/compose time — a lookup, not a versioned serving axis. Re-curating
+# a default is a deliberate Layer-0 act that, if it ever needed to re-flow to
+# default-relying athletes, would pair with an explicit cache bump rather than
+# this digest. (Folded into the v1.10.1 baseline; mirrored in the
+# `_FAMILY_MAP_EXCEPTIONS` drift-guard list.)
 
 
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:

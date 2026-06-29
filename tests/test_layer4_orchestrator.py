@@ -2344,6 +2344,12 @@ class TestLayer0TableFamilyMap:
         # discipline_technique_foci is 0B-versioned but has no reader anywhere in
         # app code (dead serving data) — no cache for its edits to invalidate.
         "discipline_technique_foci",
+        # sport_sub_format_map (#254 / D-17) supplies the race-event form's
+        # sub-format options + the default applied at capture/compose time. The
+        # athlete's chosen sport_sub_format (on race_events) is the cached plan
+        # input; this table is a lookup, not a versioned serving axis — see the
+        # note on _LAYER0_TABLE_FAMILY. Folded into the v1.10.1 baseline.
+        "sport_sub_format_map",
     })
 
     def _baseline_versioned_tables(self) -> set[str]:
