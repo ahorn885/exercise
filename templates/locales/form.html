@@ -139,6 +139,21 @@
     <label class="field loc-mw"><span class="lbl">Notes <span class="loc-opt">(optional — e.g. "DB up to 50 lb, no rack")</span></span>
       <textarea name="notes" class="form-control form-control-sm" rows="2">{{ notes }}</textarea></label>
 
+    {# #971 Slice 3 — explicit "this shared profile is wrong" flag. Editing
+       equipment in inherit mode only writes a personal override by default; the
+       change is submitted to admin review as a shared-profile correction ONLY
+       when this box is checked, so routine personal tweaks don't flood the
+       queue. Pre-checked when this athlete already has a correction pending. #}
+    {% if mode == 'shared_inherit' %}
+    <label class="form-check loc-mw loc-report-wrong">
+      <input class="form-check-input" type="checkbox" name="report_correction" value="1"
+             {% if reported %}checked{% endif %}>
+      <span class="form-check-label">The shared profile is wrong — submit my changes for review so
+        every athlete at this location gets the correction. Leave unchecked to keep your edits to
+        yourself.</span>
+    </label>
+    {% endif %}
+
     {# #446 — privacy state + explicit opt-out. Only the own/build mode owns the
        backing profile, so the toggle is hidden in shared_inherit mode (the
        shared profile's privacy is its creator's). Residences are locked private. #}

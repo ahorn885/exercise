@@ -39,9 +39,12 @@ from routes.locales import (
     _find_gym_profile,
     _find_gym_profile_by_fingerprint,
     _hydrate_locale_terrain_ids,
+    _list_pending_profile_edits,
     _parse_locale_terrain,
+    _record_profile_edit,
     _resolve_private,
     _resolve_shared_profile,
+    _review_profile_edit,
     _terrain_choices,
     delete_locale,
 )
@@ -1030,3 +1033,171 @@ class TestResolveSharedProfileFingerprintFallback:
         assert shared['id'] == 5
         # No fingerprint query — the exact mapbox_id match wins.
         assert not any('address_fingerprint' in sql for sql, _ in conn.calls)
+
+
+# ─── #971 Slice 3 — peer-proposed corrections + admin review ─────────────────
+
+
+import json as _json  # noqa: E402 — local alias for asserting JSON payloads
+
+
+def _last_disputed_write(conn):
+    """The JSON written to disputed_items by the most recent UPDATE, parsed."""
+    writes = [
+        params for sql, params in conn.calls
+        if 'UPDATE gym_profiles' in sql and 'disputed_items' in sql
+    ]
+    assert writes, 'expected a disputed_items UPDATE'
+    payload = writes[-1][0]  # disputed_items is the first param in these writes
+    return None if payload is None else _json.loads(payload)
+
+
+class TestRecordProfileEdit:
+    """`_record_profile_edit` stashes a peer's shared-vs-submitted delta as a
+    correction proposal on `gym_profiles.disputed_items` — but ONLY when the
+    peer explicitly flags the shared profile as wrong (`report=True`)."""
+
+    def test_records_delta_as_proposal_when_flagged(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': None})  # _load_profile_edits
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell', 'Squat rack'}, {'Barbell', 'Treadmill'},
+            {'Barbell', 'Squat rack', 'Treadmill'}, report=True,
+            now='2026-06-29T12:00:00+00:00')
+        proposals = _last_disputed_write(conn)
+        assert proposals == [{
+            'by': 42, 'adds': ['Treadmill'], 'removes': ['Squat rack'],
+            'at': '2026-06-29T12:00:00+00:00',
+        }]
+
+    def test_unflagged_edit_records_nothing(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': None})
+        # A real delta, but the peer did NOT flag the shared profile → personal
+        # override only, no proposal lands in the admin queue.
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell'}, {'Barbell', 'Treadmill'},
+            {'Barbell', 'Treadmill'}, report=False, now='t')
+        assert _last_disputed_write(conn) is None
+
+    def test_unflagged_save_withdraws_prior_proposal(self):
+        conn = _FakeConn()
+        # The peer flagged a correction before, then saves again unflagged...
+        conn.queue_response(row={'disputed_items': _json.dumps(
+            [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}])})
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell'}, {'Barbell', 'Treadmill'},
+            {'Barbell', 'Treadmill'}, report=False)
+        assert _last_disputed_write(conn) is None  # their report is retracted
+
+    def test_flagged_empty_delta_withdraws_proposal(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': _json.dumps(
+            [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}])})
+        # Flagged, but the peer's view now matches the shared base → withdraw.
+        _record_profile_edit(conn, 77, 42, {'Barbell'}, {'Barbell'},
+                             {'Barbell'}, report=True)
+        assert _last_disputed_write(conn) is None
+
+    def test_upsert_replaces_same_peer_keeps_others(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': _json.dumps([
+            {'by': 42, 'adds': ['Old'], 'removes': [], 'at': 't0'},
+            {'by': 99, 'adds': ['Kept'], 'removes': [], 'at': 't1'},
+        ])})
+        _record_profile_edit(
+            conn, 77, 42, {'Barbell'}, {'Barbell', 'Dumbbells'},
+            {'Barbell', 'Dumbbells'}, report=True, now='t2')
+        proposals = _last_disputed_write(conn)
+        assert {p['by'] for p in proposals} == {42, 99}
+        p42 = next(p for p in proposals if p['by'] == 42)
+        assert p42['adds'] == ['Dumbbells']  # replaced, not appended
+        assert next(p for p in proposals if p['by'] == 99)['adds'] == ['Kept']
+
+    def test_invalid_names_dropped_from_proposal(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'disputed_items': None})
+        _record_profile_edit(
+            conn, 77, 42, set(), {'Barbell', 'Bogus'}, {'Barbell'},
+            report=True, now='t')
+        proposals = _last_disputed_write(conn)
+        assert proposals[0]['adds'] == ['Barbell']  # 'Bogus' rejected
+
+
+class TestListPendingProfileEdits:
+    """`_list_pending_profile_edits` surfaces shared profiles carrying proposals,
+    excluding private rows, with shared equipment + proposals parsed."""
+
+    def test_lists_and_parses(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{
+            'id': 77, 'display_name': 'Hilton', 'category': 'hotel_gym',
+            'equipment': '["Barbell", "Squat rack"]',
+            'disputed_items': _json.dumps(
+                [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}]),
+        }])
+        out = _list_pending_profile_edits(conn)
+        sql = conn.calls[0][0]
+        assert 'COALESCE(private, FALSE) = FALSE' in sql
+        assert out[0]['shared_tags'] == ['Barbell', 'Squat rack']
+        assert out[0]['proposals'][0]['by'] == 42
+
+    def test_skips_rows_without_parseable_proposals(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'id': 1, 'display_name': 'A', 'category': 'gym',
+             'equipment': '[]', 'disputed_items': '[]'},      # empty list
+            {'id': 2, 'display_name': 'B', 'category': 'gym',
+             'equipment': '[]', 'disputed_items': 'not json'},  # malformed
+        ])
+        assert _list_pending_profile_edits(conn) == []
+
+
+class TestReviewProfileEdit:
+    """`_review_profile_edit` approves (folds into shared equipment) or rejects
+    (leaves it) one peer's proposal and clears it from the queue."""
+
+    def test_approve_folds_into_shared_equipment(self):
+        conn = _FakeConn()
+        conn.queue_response(row={
+            'equipment': '["Barbell", "Squat rack"]',
+            'disputed_items': _json.dumps(
+                [{'by': 42, 'adds': ['Treadmill'], 'removes': ['Squat rack'],
+                  'at': 't'}]),
+        })
+        applied = _review_profile_edit(conn, 77, 42, approve=True)
+        assert applied['by'] == 42
+        update = next(
+            params for sql, params in conn.calls
+            if 'UPDATE gym_profiles' in sql and 'equipment' in sql)
+        # New shared set = (Barbell, Squat rack ∪ Treadmill) − Squat rack.
+        assert _json.loads(update[0]) == ['Barbell', 'Treadmill']
+        assert update[1] is None          # disputed_items cleared (none remain)
+        assert update[2] == 42            # last_confirmed_by = proposer
+
+    def test_reject_leaves_equipment_untouched(self):
+        conn = _FakeConn()
+        conn.queue_response(row={
+            'equipment': '["Barbell"]',
+            'disputed_items': _json.dumps(
+                [{'by': 42, 'adds': ['Treadmill'], 'removes': [], 'at': 't'}]),
+        })
+        applied = _review_profile_edit(conn, 77, 42, approve=False)
+        assert applied['by'] == 42
+        assert not any(
+            'equipment' in sql for sql, _ in conn.calls
+            if 'UPDATE gym_profiles' in sql)  # no equipment write on reject
+
+    def test_unknown_proposal_returns_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row={
+            'equipment': '["Barbell"]',
+            'disputed_items': _json.dumps(
+                [{'by': 99, 'adds': ['X'], 'removes': [], 'at': 't'}]),
+        })
+        assert _review_profile_edit(conn, 77, 42, approve=True) is None
+
+    def test_missing_profile_returns_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        assert _review_profile_edit(conn, 77, 42, approve=True) is None
