@@ -718,10 +718,11 @@ class TestHappyPath:
         for m in mocks:
             assert m.call_count == 1
 
-        # Layer 2E receives `current_phase` from 3B's `start_phase` — verifies
-        # the 2A/2B/2D/2C → 3A → 3B → 2E ordering decision.
+        # Layer 2E receives `current_phase` (inside the §3 PlanManagementState
+        # contract) from 3B's `start_phase` — verifies the 2A/2B/2D/2C → 3A → 3B
+        # → 2E ordering decision.
         l2e_kwargs = m_l2e.call_args.kwargs
-        assert l2e_kwargs["current_phase"] == "Taper"
+        assert l2e_kwargs["plan_management_state"].current_phase == "Taper"
         assert l2e_kwargs["framework_sport"] == "AR"
         # target_events derives from RaceEventPayload (single Layer2ETargetEvent)
         assert len(l2e_kwargs["target_events"]) == 1

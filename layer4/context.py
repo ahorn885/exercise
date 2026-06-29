@@ -805,6 +805,25 @@ class HeatAcclimState(_Base):
     last_assessment: date  # read-time derivation date
 
 
+class PlanManagementState(_Base):
+    # `Plan_Management_Spec_v1.md` §3 — the typed value Layer 2E imports
+    # verbatim (`Layer2E_Spec.md` §3). The three fields are the locked
+    # cross-layer surface: `current_phase` (§5.1) drives 2E phase scaling;
+    # `heat_acclim_state` (§5.2) + `expected_race_temp_c` (§5.3) feed the §5.8
+    # heat-acclim overlay. Extend (2E ignores extras); do not rename/retype.
+    # Assembled at read time by the orchestrator from the `plan_management`
+    # derivations — never stored. The `heat_acclim_data_sparse` advisory rides
+    # alongside as a builder param, not in this locked struct.
+    #
+    # `current_phase` is a plain `str` per the spec §3 dataclass — membership in
+    # {Base, Build, Peak, Taper} is enforced by the 2E builder's `_validate_inputs`
+    # (the established validation gate; keeps a bad phase a `Layer2EInputError`,
+    # not a pydantic error one layer up).
+    current_phase: str
+    heat_acclim_state: HeatAcclimState
+    expected_race_temp_c: dict[str, float | None]
+
+
 class HeatAcclimEventAdjustment(_Base):
     event_id: str
     temp_signal: Literal["unknown", "cool", "temperate", "warm", "hot"]
