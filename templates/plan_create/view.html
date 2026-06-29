@@ -139,7 +139,9 @@
         {% set ns.phase = pm.phase_name %}
         {% set ns.week = pm.week_in_phase %}
       {% endif %}
-      <div class="day-group{{ ' day-rest' if not sessions else '' }}">
+      {# Deep-link target for the Today card's title (#956): home links to
+         `#day-<iso>` for a whole day and `#s-<iso>-<idx>` for one session. #}
+      <div id="day-{{ d.isoformat() }}" class="day-group{{ ' day-rest' if not sessions else '' }}">
         <div class="day-label">
           <strong>{{ d }}</strong><span class="dow">{{ dow }}</span>
         </div>
@@ -196,7 +198,7 @@
         {% else %}
         <div class="stack">
           {% for sess in sessions %}
-          <div class="card card-pad sess-card{% if sess.kind == 'recovery' %} sess-recovery{% endif %}">
+          <div id="s-{{ d.isoformat() }}-{{ sess.session_index_in_day }}" class="card card-pad sess-card{% if sess.kind == 'recovery' %} sess-recovery{% endif %}">
             <div class="sess-head">
               <span class="sess-name">
                 {% if sess.kind == 'rest' %}Rest{% if sess.rest_reason %} — {{ sess.rest_reason|replace('_', ' ')|capitalize }}{% endif %}
