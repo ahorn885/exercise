@@ -779,6 +779,109 @@ def _coerce_event_date(value):
         return None
 
 
+def _race_form_echo(form, *, base=None):
+    """Build a `race`/`target`-shaped dict from a submitted race-details form so
+    a failed-validation save can RE-RENDER the form with the athlete's input
+    intact instead of redirecting to a blank one (#947).
+
+    Before this, every validation gate did `flash(...) + redirect(...)` back to
+    a fresh GET, which discarded all the client-side state the #256/#592
+    auto-fill had just populated — the fetched name/date/format/elevation/notes,
+    the parsed terrain rows, AND the distance the athlete picked from the
+    chooser. The most common trigger is the required-location gate: the auto-fill
+    only pre-searches the Mapbox picker, it never anchors it, so a fetch → pick
+    distance → Save round-trips through this gate and wiped everything.
+
+    The keys mirror the field set the race-event edit / onboarding target-race
+    templates read off the `race`/`target` context object. Scalar text/date/
+    number fields keep the athlete's raw entry; structured repeats (terrain,
+    previous attempts, discipline filter, locale) reuse the same parsers the
+    save path uses. `base`, when given (the loaded DB row on the update path),
+    seeds the id / target / audit fields the details form doesn't carry so the
+    re-render keeps them.
+    """
+    echo = dict(base) if base else {}
+    echo.update({
+        'name': _parse_str(form, 'name'),
+        'event_date': (form.get('event_date') or '').strip() or None,
+        'race_format': (form.get('race_format') or '').strip() or None,
+        'framework_sport': _parse_str(form, 'framework_sport'),
+        'primary_metric': _parse_primary_metric(form),
+        'distance_km': _parse_decimal(form, 'distance_km'),
+        'estimated_duration_hr': _parse_decimal(form, 'estimated_duration_hr'),
+        'total_elevation_gain_m': _parse_decimal(form, 'total_elevation_gain_m'),
+        'goal_outcome': _parse_goal_outcome(form),
+        'first_time_at_distance': _parse_first_time_at_distance(form),
+        'race_pack_weight_kg': _parse_decimal(form, 'race_pack_weight_kg'),
+        'time_goal': _parse_str(form, 'time_goal'),
+        'previous_attempts': _parse_previous_attempts(form),
+        'race_url': _parse_race_url(form),
+        'included_discipline_ids': _parse_discipline_id_filter(form),
+        'race_terrain': _parse_race_terrain(form),
+        'notes': _parse_str(form, 'notes'),
+    })
+    # The Mapbox hidden inputs ride INSIDE the details form only on the create /
+    # onboarding paths (the edit page owns them in a standalone `set_locale`
+    # form), so echo them from the form there; on the update path keep whatever
+    # the loaded `base` row already carries.
+    if base is None:
+        echo.update(_extract_mapbox_locale_from_form(form))
+    return echo
+
+
+def _render_new_race_form(db, uid, race):
+    """Render the create-race form. `race` is None on the initial GET, or a
+    `_race_form_echo` dict when re-rendering after a failed POST so the
+    athlete's auto-filled values + picked distance survive (#947)."""
+    initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
+    return render_template(
+        'profile/race_event_edit.html',
+        race=race,
+        race_locales=[],
+        equipment_by_locale={},
+        terrain_choices=_terrain_choices(db),
+        discipline_choices=_discipline_choices_for_race(
+            db, initial_framework_sport, race
+        ),
+        initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=_framework_sport_choices(db),
+        race_formats=VALID_RACE_FORMATS,
+        route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
+        is_new=True,
+        mapbox_acked=_disclosure_acked(db, uid),
+        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
+    )
+
+
+def _render_edit_race_form(db, uid, race):
+    """Render the per-race edit form. `race` is the loaded DB row on GET, or
+    that row overlaid with `_race_form_echo` values when re-rendering after a
+    failed update POST so the details-form edits survive (#947)."""
+    race_locales = list_route_locales(db, race['id'])
+    equipment_by_locale = {
+        rl['id']: list_route_locale_equipment(db, rl['id'])
+        for rl in race_locales
+    }
+    initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
+    return render_template(
+        'profile/race_event_edit.html',
+        race=race,
+        race_locales=race_locales,
+        equipment_by_locale=equipment_by_locale,
+        terrain_choices=_terrain_choices(db),
+        discipline_choices=_discipline_choices_for_race(
+            db, initial_framework_sport, race
+        ),
+        initial_framework_sport=initial_framework_sport,
+        framework_sport_choices=_framework_sport_choices(db),
+        race_formats=VALID_RACE_FORMATS,
+        route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
+        is_new=False,
+        mapbox_acked=_disclosure_acked(db, uid),
+        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
+    )
+
+
 def _tab_redirect():
     return redirect(url_for('race_events.index'))
 
@@ -843,15 +946,18 @@ def new_race():
         event_date = _parse_date(request.form, 'event_date')
         race_format = (request.form.get('race_format') or '').strip()
 
+        # Validation failures RE-RENDER the form with the submitted values
+        # (#947) rather than redirecting to a blank one — the latter discarded
+        # the auto-filled fetched details + the picked distance.
         if not name:
             flash('Race name is required.', 'danger')
-            return redirect(url_for('race_events.new_race'))
+            return _render_new_race_form(db, uid, _race_form_echo(request.form))
         if not event_date:
             flash('Race date is required (YYYY-MM-DD).', 'danger')
-            return redirect(url_for('race_events.new_race'))
+            return _render_new_race_form(db, uid, _race_form_echo(request.form))
         if race_format not in VALID_RACE_FORMATS:
             flash('Pick a race format.', 'danger')
-            return redirect(url_for('race_events.new_race'))
+            return _render_new_race_form(db, uid, _race_form_echo(request.form))
 
         # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race location
         # fields ride through as hidden inputs (populated by the
@@ -862,7 +968,7 @@ def new_race():
         # the athlete-facing UX.
         if not locale_fields['event_locale_mapbox_id']:
             flash('Pick a race location before saving.', 'danger')
-            return redirect(url_for('race_events.new_race'))
+            return _render_new_race_form(db, uid, _race_form_echo(request.form))
 
         new_race_terrain = _parse_race_terrain(request.form)
         new_discipline_filter = _parse_discipline_id_filter(request.form)
@@ -874,7 +980,7 @@ def new_race():
         )
         if mismatches:
             flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
-            return redirect(url_for('race_events.new_race'))
+            return _render_new_race_form(db, uid, _race_form_echo(request.form))
 
         race_event_id = create_race_event(
             db, uid,
@@ -909,18 +1015,6 @@ def new_race():
             )
         return _tab_redirect()
 
-    terrain_choices = _terrain_choices(db)
-    # D-73 Phase 5.2 Bucket E.(b)-B2 + E.(c)-C1 — discipline grid for the
-    # B2 `<select multiple>` rendered as checkboxes + the per-row terrain
-    # discipline_id `<select>`. Initial render uses the athlete's
-    # primary_sport (no race exists yet for the new-race path); client-
-    # side JS rebinds when athlete edits the framework_sport input via the
-    # `/profile/race-events/disciplines/search` endpoint.
-    initial_framework_sport = _resolve_effective_framework_sport(db, uid, None)
-    # #892 — union the bridge set with the race's saved disciplines (none here
-    # on the new-race path, so a plain bridge set) so the picker never collapses.
-    discipline_choices = _discipline_choices_for_race(db, initial_framework_sport, None)
-    framework_sport_choices = _framework_sport_choices(db)
     # D-73 Phase 5.2 walkthrough #1 — Mapbox-anchored race-location picker.
     # The search box + result list are rendered + driven by the inline
     # `<script nonce="..."` block in `templates/_race_locale_picker.html`
@@ -928,22 +1022,10 @@ def new_race():
     # 5 hidden inputs on result-click. This sidesteps the form-state
     # preservation problem the GET round-trip would have introduced
     # (the merged race notes field can be multi-KB and the URL line
-    # limit is 8KB).
-    return render_template(
-        'profile/race_event_edit.html',
-        race=None,
-        race_locales=[],
-        equipment_by_locale={},
-        terrain_choices=terrain_choices,
-        discipline_choices=discipline_choices,
-        initial_framework_sport=initial_framework_sport,
-        framework_sport_choices=framework_sport_choices,
-        race_formats=VALID_RACE_FORMATS,
-        route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
-        is_new=True,
-        mapbox_acked=_disclosure_acked(db, uid),
-        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
-    )
+    # limit is 8KB). `race=None` → the initial empty form; a failed POST
+    # re-renders via the same helper with a `_race_form_echo` dict so the
+    # athlete's input survives (#947).
+    return _render_new_race_form(db, uid, None)
 
 
 @bp.route('/<int:race_event_id>/edit', methods=['GET'])
@@ -964,33 +1046,7 @@ def edit_race(race_event_id: int):
     if not race:
         abort(404)
 
-    race_locales = list_route_locales(db, race_event_id)
-    equipment_by_locale = {
-        rl['id']: list_route_locale_equipment(db, rl['id'])
-        for rl in race_locales
-    }
-    terrain_choices = _terrain_choices(db)
-    initial_framework_sport = _resolve_effective_framework_sport(db, uid, race)
-    # #892 — union the bridge set with the race's own saved disciplines so the
-    # picker renders them even when the sport is blank / doesn't resolve in the
-    # bridge, instead of collapsing to "Race-wide."
-    discipline_choices = _discipline_choices_for_race(db, initial_framework_sport, race)
-    framework_sport_choices = _framework_sport_choices(db)
-    return render_template(
-        'profile/race_event_edit.html',
-        race=race,
-        race_locales=race_locales,
-        equipment_by_locale=equipment_by_locale,
-        terrain_choices=terrain_choices,
-        discipline_choices=discipline_choices,
-        initial_framework_sport=initial_framework_sport,
-        framework_sport_choices=framework_sport_choices,
-        race_formats=VALID_RACE_FORMATS,
-        route_locale_roles=VALID_ROUTE_LOCALE_ROLES,
-        is_new=False,
-        mapbox_acked=_disclosure_acked(db, uid),
-        mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
-    )
+    return _render_edit_race_form(db, uid, race)
 
 
 @bp.route('/<int:race_event_id>/update', methods=['POST'])
@@ -1006,15 +1062,18 @@ def update_race(race_event_id: int):
     event_date = _parse_date(request.form, 'event_date')
     race_format = (request.form.get('race_format') or '').strip()
 
+    # Validation failures RE-RENDER the edit form with the submitted values
+    # (#947) — a redirect to a fresh GET dropped any auto-filled details +
+    # picked distance the athlete had entered in the details form.
     if not name:
         flash('Race name is required.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _render_edit_race_form(db, uid, _race_form_echo(request.form, base=race))
     if not event_date:
         flash('Race date is required (YYYY-MM-DD).', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _render_edit_race_form(db, uid, _race_form_echo(request.form, base=race))
     if race_format not in VALID_RACE_FORMATS:
         flash('Pick a race format.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _render_edit_race_form(db, uid, _race_form_echo(request.form, base=race))
     # D-73 Phase 5.2 Bucket C (i) — block the update when the row isn't
     # Mapbox-anchored. The race-details form doesn't carry the Mapbox hidden
     # inputs (the standalone `set_locale` POST owns those); check the loaded
@@ -1026,7 +1085,7 @@ def update_race(race_event_id: int):
             'Race location picker above.',
             'danger',
         )
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _render_edit_race_form(db, uid, _race_form_echo(request.form, base=race))
 
     new_distance_km = _parse_decimal(request.form, 'distance_km')
     new_total_elevation_gain_m = _parse_decimal(
@@ -1089,7 +1148,7 @@ def update_race(race_event_id: int):
     )
     if mismatches:
         flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _render_edit_race_form(db, uid, _race_form_echo(request.form, base=race))
 
     # D-73 Phase 5.2 walkthrough #1 — the race-details form no longer carries
     # `event_locale_id` (legacy dropdown removed); the 5 Mapbox columns are
