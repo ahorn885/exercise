@@ -320,41 +320,37 @@
 
 {# ════════════════════ GEAR & SKILLS ════════════════════ #}
 {% elif sub == 'gear' %}
-{# ── Owned crafts (2c.2b, #540) — bike + paddle gear the athlete owns. Feeds
-   the craft-substitution narrowing in plan-gen. Separate form; the checkbox
-   block is the shared _crafts_form partial (also used by onboarding Skills). #}
-<form method="post" action="{{ url_for('profile.save_crafts') }}" class="pf-form">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-  {% include 'onboarding/_crafts_form.html' %}
-  <div class="pf-save">
-    <span></span>
-    <button type="submit" class="btn btn-primary">Save gear</button>
-  </div>
-</form>
-
-{# ── Owned gear toggles (#884 slice 4b) — discipline-unlocking ski/snow/climbing
-   /alpine gear the athlete owns. Writes athlete_gear (un-starves the cascade's
-   gear gate, #298). Separate replace-all form, scoped to those kinds; crafts +
-   swim gear in the shared store are preserved. #}
-<form method="post" action="{{ url_for('profile.save_gear_toggles') }}" class="pf-form">
+{# ── Your gear (#884 slice 6a) — one grouped-by-group_kind surface folding the
+   owned-craft picker + the gear-toggle form. Each row is own / have-access. The
+   consolidated POST (save_gear) splits by kind: crafts → baseline CSVs + the
+   unified store, gear toggles → the unified store. Swim gear isn't in the
+   registry, so the shared store preserves it. #}
+<form method="post" action="{{ url_for('profile.save_gear') }}" class="pf-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card card-pad stack">
     <div>
-      <p class="eyebrow">● Sport-specific gear you own</p>
-      <p class="pf-hint">Check the ski, snow, and climbing gear you have access to. The coach trains
-        each discipline on the closest gear you own — so a ski leg can be trained on rollerskis when
-        there's no snow. Leave blank where it doesn't apply.</p>
+      <p class="eyebrow">● Your gear</p>
+      <p class="pf-hint">For each item, say whether you <strong>own</strong> it or just
+        <strong>have access</strong> (a gym, a rental, a friend's). The coach trains each discipline
+        on the closest gear you can use — so a ski leg can be trained on rollerskis, or a mountain-bike
+        leg on a road bike. Leave anything you can't use unset.</p>
     </div>
-    <fieldset class="field field-wide">
-      {% for g in gear_toggle_catalog %}
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" id="gear_{{ g.slug }}"
-               name="gear__{{ g.slug }}" value="1"
-               {% if g.slug in owned_gear_toggles %}checked{% endif %}>
-        <label class="form-check-label" for="gear_{{ g.slug }}">{{ g.label }}</label>
+    {% for grp in gear_registry %}
+    <fieldset class="field field-wide gear-group">
+      <span class="lbl">{{ grp.label }}</span>
+      {% for item in grp.rows %}
+      <div class="gear-row">
+        <label class="gear-row-label" for="gear__{{ item.gear_id }}">{{ item.label }}</label>
+        <select class="form-select form-select-sm gear-row-access"
+                id="gear__{{ item.gear_id }}" name="gear__{{ item.gear_id }}">
+          <option value="">Don't have</option>
+          <option value="own" {% if gear_access.get(item.gear_id) == 'own' %}selected{% endif %}>Own</option>
+          <option value="access" {% if gear_access.get(item.gear_id) == 'access' %}selected{% endif %}>Have access</option>
+        </select>
       </div>
       {% endfor %}
     </fieldset>
+    {% endfor %}
   </div>
   <div class="pf-save">
     <span></span>

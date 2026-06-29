@@ -190,3 +190,78 @@ class TestSaveGearTogglesRoute:
         assert evictions == [7]
         assert response.status_code == 302
         assert 'tab=gear' in response.location
+
+
+class TestSaveGearRoute:
+    """#884 slice 6a — the consolidated "Your gear" save (crafts + toggles in one
+    POST, each row own/have-access)."""
+
+    def test_post_splits_crafts_and_toggles_writes_both_and_evicts(self, monkeypatch):
+        app = _make_profile_app()
+        conn = _FakeConn()
+        import routes.profile as pf_mod
+        evictions = []
+        monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+        monkeypatch.setattr(
+            pf_mod, 'evict_layer1_on_gear_change',
+            lambda db, uid: evictions.append(uid),
+        )
+
+        with app.test_request_context(
+            '/profile/gear',
+            method='POST',
+            data={
+                'gear__road_bike': 'access',
+                'gear__packraft': 'own',
+                'gear__rollerskis': 'own',
+                'gear__pull_buoy': 'own',  # swim → off-registry, ignored
+            },
+        ):
+            response = pf_mod.save_gear()
+
+        sqls = ' || '.join(c[0] for c in conn.calls)
+        # Craft baselines upserted (both families) + the unified store synced.
+        assert 'discipline_baseline_cycling' in sqls
+        assert 'discipline_baseline_paddling' in sqls
+        # The bike baseline carries the available craft regardless of access.
+        cyc = next(c for c in conn.calls if 'discipline_baseline_cycling' in c[0])
+        assert cyc[1] == (7, 'road_bike')
+        # athlete_gear INSERTs cover crafts (with access) + the toggle; never swim.
+        gear_inserts = {
+            c[1][1]: c[1][3]
+            for c in conn.calls if 'INSERT INTO athlete_gear' in c[0]
+        }
+        assert gear_inserts == {
+            'road_bike': 'access', 'packraft': 'own', 'rollerskis': 'own',
+        }
+        assert conn.commits == 1
+        assert evictions == [7]
+        assert response.status_code == 302
+        assert 'tab=gear' in response.location
+
+    def test_empty_form_clears_all_registry_kinds(self, monkeypatch):
+        app = _make_profile_app()
+        conn = _FakeConn()
+        import routes.profile as pf_mod
+        evictions = []
+        monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+        monkeypatch.setattr(
+            pf_mod, 'evict_layer1_on_gear_change',
+            lambda db, uid: evictions.append(uid),
+        )
+
+        with app.test_request_context('/profile/gear', method='POST', data={}):
+            response = pf_mod.save_gear()
+
+        # Empty baselines + a scoped DELETE on the toggle kinds; no INSERTs.
+        assert not any('INSERT INTO athlete_gear' in c[0] for c in conn.calls)
+        assert any(
+            c[0].startswith('DELETE FROM athlete_gear') and "group_kind IN" in c[0]
+            for c in conn.calls
+        )
+        assert conn.commits == 1
+        assert evictions == [7]
+        assert response.status_code == 302
+        assert 'tab=gear' in response.location

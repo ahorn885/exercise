@@ -23,7 +23,7 @@ is one of the athlete's `locale_profiles.locale` slugs. Both are app-validated
 """
 from __future__ import annotations
 
-from athlete import BIKE_TYPES, PADDLE_CRAFT_TYPES
+from athlete import BIKE_TYPES, CRAFT_LABELS, PADDLE_CRAFT_TYPES
 from layer4.cache import Layer4Cache
 from layer4.cache_invalidation import evict_on_layer_change
 from layer4.cache_postgres import PostgresCacheBackend
@@ -86,6 +86,12 @@ _ACCESS_VALUES: tuple[str, ...] = ("own", "access")
 # (#298). The capture writes `athlete_gear`; nothing READS the toggle kinds until
 # the slice-4b cascade extension lands (staged, like the slice-3 store itself).
 _GEAR_TOGGLE_KINDS: frozenset[str] = frozenset({"ski", "snow", "climb", "alpine"})
+
+# Craft kinds — bike/paddle, the slice the owned-craft picker (and the craft
+# baselines) own. Together with `_GEAR_TOGGLE_KINDS` these are the six kinds the
+# unified "Your gear" registry (slice 6a) covers; swim is excluded (drill-gating,
+# no label/capture surface yet — see `load_gear_registry`).
+_CRAFT_KINDS: frozenset[str] = frozenset({"bike", "paddle"})
 
 # Presentation labels for the gear-toggle picker — the analogue of `athlete.
 # CRAFT_LABELS` for the bike/paddle picker. Slugs are the stored + aliased
@@ -268,6 +274,90 @@ def parse_gear_toggle_form(form) -> dict[str, str]:
         for item in load_gear_toggle_catalog()
         if form.get(f"gear__{item['slug']}")
     }
+
+
+# ─── unified gear registry + "Your gear" surface (slice 6a) ──────────────────
+# One ordered catalog keyed by the §5.5 `gear_id`, folding the owned-craft
+# catalog (bike/paddle, labels from `athlete.CRAFT_LABELS`) and the gear-toggle
+# catalog (ski/snow/climb/alpine, labels from `GEAR_TOGGLE_LABELS`) into a single
+# source the consolidated "Your gear" picker + validator both read (design v3
+# §10). Each row captures `access` ('own' | 'access') — the unified store is the
+# access authority for ALL kinds (crafts are kept in lockstep in `athlete_gear`
+# by `athlete_crafts_repo.replace_athlete_crafts`; their baseline CSVs still carry
+# the full available set, own ∪ access, which feeds Layer 1 substitution — that
+# read doesn't distinguish access). NOT a new Layer-0 surface (D2 — the two
+# catalogs already exist; no digest bump). Swim gear is excluded: it has no
+# presentation label and no capture surface yet (drill-gating, separate from the
+# discipline-unlocking registry).
+
+# group_kind → display heading for the grouped picker. Presentation-only (not
+# gear vocabulary); the ordering here is the render order of the sections.
+_GROUP_KIND_LABELS: dict[str, str] = {
+    "bike": "Bikes",
+    "paddle": "Paddle craft",
+    "ski": "Skis & rollerskis",
+    "snow": "Snow",
+    "climb": "Climbing",
+    "alpine": "Mountaineering / ski-mo",
+}
+
+
+def load_gear_registry() -> list[dict]:
+    """The unified picker/validator catalog — `[{'gear_id', 'group_kind', 'label',
+    'source'}, …]` in `_GEAR_IDS` order, folding the craft + gear-toggle catalogs.
+    `source` is 'craft' (bike/paddle) or 'toggle' (ski/snow/climb/alpine); swim
+    gear is omitted (no label / no capture surface). Static (the closed §5.5
+    keyspace + the two label maps)."""
+    out: list[dict] = []
+    for gid in _GEAR_IDS:
+        kind = GEAR_REGISTRY[gid]
+        if kind in _CRAFT_KINDS:
+            out.append({"gear_id": gid, "group_kind": kind,
+                        "label": CRAFT_LABELS[gid], "source": "craft"})
+        elif kind in _GEAR_TOGGLE_KINDS:
+            out.append({"gear_id": gid, "group_kind": kind,
+                        "label": GEAR_TOGGLE_LABELS[gid], "source": "toggle"})
+    return out
+
+
+def load_gear_registry_grouped() -> list[dict]:
+    """The registry grouped by `group_kind` for the "Your gear" picker —
+    `[{'group_kind', 'label', 'rows': [{'gear_id', 'label'}, …]}, …]` in
+    `_GROUP_KIND_LABELS` (render) order, rows in `_GEAR_IDS` order. Empty groups
+    are omitted. (`rows`, not `items` — Jinja resolves `.items` to the dict
+    method, not the key.)"""
+    by_kind: dict[str, list[dict]] = {}
+    for entry in load_gear_registry():
+        by_kind.setdefault(entry["group_kind"], []).append(
+            {"gear_id": entry["gear_id"], "label": entry["label"]}
+        )
+    return [
+        {"group_kind": kind, "label": _GROUP_KIND_LABELS[kind], "rows": by_kind[kind]}
+        for kind in _GROUP_KIND_LABELS
+        if kind in by_kind
+    ]
+
+
+def get_gear_access_map(db, user_id: int) -> dict[str, str]:
+    """`{gear_id: access}` across all registry kinds — the checked-state source
+    for the "Your gear" picker. Reads `athlete_gear` (crafts are synced there by
+    `replace_athlete_crafts`, so this covers crafts + gear toggles uniformly)."""
+    return {g["gear_id"]: g["access"] for g in get_athlete_gear(db, user_id)}
+
+
+def parse_gear_registry_form(form) -> dict[str, str]:
+    """Coerce a "Your gear" POST into `{gear_id: access}` for the chosen rows.
+
+    Each registry row posts `gear__<gear_id>` ∈ {'', 'own', 'access'}; '' (or an
+    absent field) means "not owned" and is omitted (replace-all). Only registry
+    gear_ids with an in-set access value are kept, so a malformed POST can't inject
+    an unknown gear_id, an off-registry kind (e.g. swim), or a junk access token."""
+    out: dict[str, str] = {}
+    for entry in load_gear_registry():
+        val = (form.get(f"gear__{entry['gear_id']}") or "").strip()
+        if val in _ACCESS_VALUES:
+            out[entry["gear_id"]] = val
+    return out
 
 
 def evict_layer1_on_gear_change(db, user_id: int) -> None:

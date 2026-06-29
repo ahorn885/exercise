@@ -17,10 +17,14 @@ from athlete_gear_repo import (
     _GEAR_TOGGLE_KINDS,
     delete_gear_locale,
     get_athlete_gear,
+    get_gear_access_map,
     get_owned_gear_toggles,
     load_gear_locales,
+    load_gear_registry,
+    load_gear_registry_grouped,
     load_gear_toggle_catalog,
     owned_gear_toggle_states,
+    parse_gear_registry_form,
     parse_gear_toggle_form,
     replace_athlete_gear,
     replace_gear_locale,
@@ -253,6 +257,68 @@ class TestGearToggleCapture:
         conn = _FakeConn()
         conn.queue_response(rows=[])
         assert get_owned_gear_toggles(conn, 1) == []
+
+
+class TestGearRegistry:
+    """#884 slice 6a — the unified gear registry folding the craft + gear-toggle
+    catalogs, and the "Your gear" form parse / access-map reads."""
+
+    def test_registry_folds_crafts_and_toggles_in_keyspace_order(self):
+        from athlete import BIKE_TYPES, CRAFT_LABELS
+        registry = load_gear_registry()
+        gids = [e["gear_id"] for e in registry]
+        # _GEAR_IDS order; swim gear (pull_buoy/kickboard/paddles/fins) excluded.
+        assert "road_bike" in gids and "rollerskis" in gids
+        assert not any(GEAR_REGISTRY[g] == "swim" for g in gids)
+        # Source + label provenance: crafts from CRAFT_LABELS, toggles from
+        # GEAR_TOGGLE_LABELS.
+        by_id = {e["gear_id"]: e for e in registry}
+        a_bike = next(s for s in BIKE_TYPES)
+        assert by_id[a_bike]["source"] == "craft"
+        assert by_id[a_bike]["label"] == CRAFT_LABELS[a_bike]
+        assert by_id[a_bike]["group_kind"] == "bike"
+        assert by_id["rollerskis"]["source"] == "toggle"
+        assert by_id["rollerskis"]["label"] == GEAR_TOGGLE_LABELS["rollerskis"]
+        # Every craft + toggle gear_id is present, nothing else.
+        expected = {g for g, k in GEAR_REGISTRY.items()
+                    if k in (set(_GEAR_TOGGLE_KINDS) | {"bike", "paddle"})}
+        assert set(gids) == expected
+
+    def test_grouped_orders_sections_and_uses_rows_key(self):
+        grouped = load_gear_registry_grouped()
+        kinds = [g["group_kind"] for g in grouped]
+        # Render order from _GROUP_KIND_LABELS.
+        assert kinds == ["bike", "paddle", "ski", "snow", "climb", "alpine"]
+        # `rows` (not `items` — Jinja dict-method collision) carries the entries.
+        assert all("rows" in g and "items" not in g for g in grouped)
+        ski = next(g for g in grouped if g["group_kind"] == "ski")
+        assert [r["gear_id"] for r in ski["rows"]] == [
+            "classic_xc_ski", "skate_xc_ski", "rollerskis",
+        ]
+
+    def test_parse_keeps_own_and_access_drops_blank_and_off_registry(self):
+        form = {
+            "gear__road_bike": "own",
+            "gear__rollerskis": "access",
+            "gear__skate_xc_ski": "",        # blank → not owned
+            "gear__pull_buoy": "own",        # swim → off-registry, dropped
+            "gear__jetski": "own",           # unknown → dropped
+            "gear__climbing_gear": "bogus",  # junk access → dropped
+        }
+        assert parse_gear_registry_form(form) == {
+            "road_bike": "own",
+            "rollerskis": "access",
+        }
+
+    def test_access_map_reads_all_kinds_from_athlete_gear(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {"gear_id": "road_bike", "group_kind": "bike", "access": "access"},
+            {"gear_id": "rollerskis", "group_kind": "ski", "access": "own"},
+        ])
+        assert get_gear_access_map(conn, 1) == {
+            "road_bike": "access", "rollerskis": "own",
+        }
 
 
 class TestGearToggleNameBridge:
