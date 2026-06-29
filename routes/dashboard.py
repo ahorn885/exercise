@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_active_window_with_rest
 from plan_naming import target_race_name, generated_plan_name
-from athlete_event_windows_repo import resolve_weather_city
+from athlete_event_windows_repo import resolve_weather_location
 
 bp = Blueprint('dashboard', __name__)
 
@@ -77,6 +77,9 @@ def _v2_session_card(session, plan_name=None) -> dict:
         'plan_name': plan_name or 'Training plan',
         'item_date': item_date.isoformat() if hasattr(item_date, 'isoformat')
         else item_date,
+        # Deep-link key into the plan's daily view (#956): the session's slot
+        # within its day. Pairs with `item_date` to target `#s-<iso>-<idx>`.
+        'session_index': getattr(session, 'session_index_in_day', 0),
     }
 
 
@@ -102,6 +105,9 @@ def _rest_day_card(plan_version_id: int, plan_name: str | None, d: date) -> dict
         'locale_name': None,
         'plan_name': plan_name or 'Training plan',
         'item_date': d.isoformat(),
+        # Synthesized rest day (no session row) — deep-link to the day group
+        # (`#day-<iso>`) rather than a session slot (#956).
+        'session_index': None,
     }
 
 
@@ -204,7 +210,7 @@ def _get_weather(db):
     ts_now = time.time()
     uid = current_user_id()
 
-    loc = resolve_weather_city(db, uid, date.today())
+    loc = resolve_weather_location(db, uid, date.today())
     if not loc:
         loc = os.environ.get('WEATHER_LOCATION', '')
 
@@ -372,8 +378,8 @@ def index():
             (uid,)
         ).fetchone()
         if active_plan:
-            city = resolve_weather_city(db, uid, date.today())
-            clothing_recs = get_clothing_context(db, active_plan['id'], city)
+            location = resolve_weather_location(db, uid, date.today())
+            clothing_recs = get_clothing_context(db, active_plan['id'], location)
     except Exception:
         pass
 

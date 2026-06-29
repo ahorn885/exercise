@@ -133,45 +133,61 @@ def load_event_window(db, user_id: int, window_id: int) -> EventWindow | None:
     return _row_to_window(row) if row is not None else None
 
 
-def resolve_weather_city(db, user_id: int, on_date: date) -> str:
-    """City to drive weather / clothing lookups for ``on_date``.
+def resolve_weather_location(db, user_id: int, on_date: date) -> str:
+    """Location token to drive weather / clothing lookups for ``on_date``.
 
-    An ``away`` event window covering the date wins — its destination
-    (``away_locale``) resolves to that ``locale_profiles`` row's ``city``;
-    otherwise the athlete's preferred-home city; otherwise ``''`` (the caller
-    supplies its own fallback, e.g. the ``WEATHER_LOCATION`` env default).
+    Returns a ``"lat,lng"`` coordinate string read off the **Mapbox-anchored**
+    ``locale_profiles`` row — wttr.in and Open-Meteo both accept bare
+    coordinates. An ``away`` event window covering the date wins (its
+    destination ``away_locale`` resolves to that row's ``lat``/``lng``);
+    otherwise the athlete's preferred-home coordinates; otherwise ``''`` (the
+    caller supplies its own fallback, e.g. the ``WEATHER_LOCATION`` env
+    default).
 
-    Replaces the retired ``plan_travel`` city read. Event windows are
-    athlete-scoped, so the answer no longer varies by plan. Mirrors the old
-    empty-city fall-through: an ``away`` window whose destination has no
-    recorded city defers to the home city rather than blanking the lookup.
+    #941: weather/clothing previously resolved off the free-text
+    ``locale_profiles.city`` field, which travel locales routinely left blank —
+    so an ``away`` window's empty-city fall-through silently showed *home*
+    weather. Mapbox coordinates are captured on every geocoded locale, so an
+    away destination now resolves to its own conditions. The fall-through to
+    home survives only for the now-rare case where the destination carries no
+    coordinates at all (e.g. a manual-entry locale).
+
+    Event windows are athlete-scoped, so the answer never varies by plan.
     """
     away = db.execute(
-        "SELECT lp.city AS city FROM athlete_event_windows w "
+        "SELECT lp.lat AS lat, lp.lng AS lng FROM athlete_event_windows w "
         "JOIN locale_profiles lp "
         "  ON lp.user_id = w.user_id AND lp.locale = w.away_locale "
         "WHERE w.user_id = ? AND w.override_type = 'away' "
-        "  AND w.start_date <= ? AND w.end_date >= ? AND lp.city != '' "
+        "  AND w.start_date <= ? AND w.end_date >= ? "
+        "  AND lp.lat IS NOT NULL AND lp.lng IS NOT NULL "
         "ORDER BY w.start_date, w.id LIMIT 1",
         (user_id, on_date, on_date),
     ).fetchone()
     if away:
-        city, source = away["city"], "away"
+        location, source = _latlng_token(away["lat"], away["lng"]), "away"
     else:
         home = db.execute(
-            "SELECT city FROM locale_profiles "
-            "WHERE preferred AND user_id = ? LIMIT 1",
+            "SELECT lat, lng FROM locale_profiles "
+            "WHERE preferred AND user_id = ? "
+            "  AND lat IS NOT NULL AND lng IS NOT NULL LIMIT 1",
             (user_id,),
         ).fetchone()
-        if home and home["city"]:
-            city, source = home["city"], "home"
+        if home:
+            location, source = _latlng_token(home["lat"], home["lng"]), "home"
         else:
-            city, source = "", "none"
-    print(  # Rule #15 — which surface decided the weather/clothing city.
-        f"[trip-city] user={user_id} date={on_date.isoformat()} "
-        f"source={source} city={city!r}"
+            location, source = "", "none"
+    print(  # Rule #15 — which surface decided the weather/clothing location.
+        f"[trip-weather] user={user_id} date={on_date.isoformat()} "
+        f"source={source} location={location!r}"
     )
-    return city
+    return location
+
+
+def _latlng_token(lat, lng) -> str:
+    """Format stored coordinates as the bare ``"lat,lng"`` token wttr.in /
+    Open-Meteo accept, trimmed to ~11 m precision for a stable cache key."""
+    return f"{float(lat):.4f},{float(lng):.4f}"
 
 
 def add_event_window(
