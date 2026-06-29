@@ -160,7 +160,7 @@ Confirmed 2026-05-13. Heat acclimation state (referenced in Control_Spec_v5 §3 
 - Future: integration-sourced ambient temperature, sleep environment temp, etc. (when those data shapes are pinned down)
 - §J Locale Profile climate context (locale climate seasonality)
 
-The derivation logic is owned by Layer 2E (or its consumer in plan-gen) and is not in scope here. Backlog row D-53 captures the derivation spec.
+The derivation logic is owned by the Plan Management subsystem (the 2E consumer in plan-gen) and is not in scope here. Now specified in `specs/Plan_Management_Spec_v1.md` §5.2 (derives `HeatAcclimState` from `conditions_log.temp_f` at read time); backlog row D-53 ✅ Resolved.
 
 **Implication for this spec:** No new column or table for heat acclim state. Field mapping in §7 omits it.
 
