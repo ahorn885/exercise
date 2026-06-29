@@ -215,41 +215,89 @@ KNOWN_MOVEMENT_CONSTRAINTS = (
 # D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.1) — injury_log.side.
 # Layer 2D v1 doesn't filter on side (Layer2D_Spec.md §10 edge case;
 # contraindicated_parts has no side dimension — tracked as 2D-7 future).
-# Side is no longer captured by a dedicated form field; it's derived from
-# the body_part prefix ('Left Wrist' → 'Left') at save time. Layer 2D still
-# reads InjuryRecord.side for downstream Layer 4 / UI rendering.
+# Side is captured by a dedicated form field on the injury form (the body_part
+# picker is side-less canonical, #255). Layer 2D reads InjuryRecord.side for
+# downstream Layer 4 / UI rendering; 'Both'/'N/A' cover bilateral/non-sided.
 KNOWN_INJURY_SIDES = ('Left', 'Right', 'Both', 'N/A')
 
 # Which movement constraints plausibly apply to each body part. Keyed on the
-# side-less canonical body part (the injury form's body_part values double
-# Left/Right — strip the prefix before lookup). Drives the injury form's
-# swap-on-change filtering so only relevant constraints render. Values MUST
-# be a subset of KNOWN_MOVEMENT_CONSTRAINTS.
+# side-less canonical body part (`layer0.body_parts.canonical_name`, #255).
+# Drives the injury form's swap-on-change filtering so only relevant constraints
+# render. Values MUST be a subset of KNOWN_MOVEMENT_CONSTRAINTS. Single-letter
+# aliases keep the table legible; the new (#255) entries' constraint sets are
+# assigned by anatomical analogy to the established regional patterns.
 _MC = {c: c for c in KNOWN_MOVEMENT_CONSTRAINTS}
+_L, _I, _A, _E, _R, _G, _O, _N, _M, _V = (
+    _MC['Pain with loading'], _MC['Pain with impact'],
+    _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'],
+    _MC['Pain on rotation'], _MC['Pain with grip / sustained hold'],
+    _MC['Pain with overhead movement'], _MC['Instability'],
+    _MC['Reduced ROM'], _MC['Pain at high volume only'],
+)
 BODY_PART_CONSTRAINTS = {
-    'Hand':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Wrist':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Elbow':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain with grip / sustained hold'], _MC['Pain with overhead movement'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Shoulder':   [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Knee':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Ankle':      [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Foot':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Hip':        [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Instability'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
-    'Hamstring':  [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
-    'Quad':       [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
-    'Glute':      [_MC['Pain with loading'], _MC['Pain on descent / eccentric'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
-    'Calf':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
-    'Shin':       [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain at high volume only']],
-    'Achilles':   [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain on descent / eccentric'], _MC['Pain at high volume only']],
-    'Groin':      [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
-    'Abdomen':    [_MC['Pain with loading'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
-    'Chest':      [_MC['Pain with loading'], _MC['Pain with overhead movement'], _MC['Pain at high volume only']],
-    'Rib':        [_MC['Pain with loading'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
-    'Lower Back': [_MC['Pain with loading'], _MC['Pain with impact'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain at high volume only']],
-    'Upper Back': [_MC['Pain with loading'], _MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Pain at high volume only']],
-    'Neck':       [_MC['Pain above specific joint angle'], _MC['Pain on rotation'], _MC['Pain with overhead movement'], _MC['Reduced ROM'], _MC['Pain at high volume only']],
+    # Head / Neck
+    'Neck':                     [_A, _R, _O, _M, _V],
+    'Jaw':                      [_L, _A, _M, _V],
+    'Trapezius':                [_L, _R, _O, _M, _V],
+    # Shoulder
+    'Shoulder':                 [_L, _A, _R, _O, _N, _M, _V],
+    'Rotator cuff':             [_L, _A, _R, _O, _N, _M, _V],
+    'AC joint':                 [_L, _A, _O, _N, _M, _V],
+    'Shoulder blade':           [_L, _R, _O, _M, _V],
+    'Collarbone':               [_L, _O, _V],
+    # Arm
+    'Elbow':                    [_L, _A, _G, _O, _N, _M, _V],
+    'Forearm':                  [_L, _G, _M, _V],
+    'Wrist':                    [_L, _A, _G, _N, _M, _V],
+    'Hand':                     [_L, _A, _G, _N, _M, _V],
+    'Biceps':                   [_L, _A, _G, _V],
+    'Triceps':                  [_L, _A, _O, _V],
+    'Fingers':                  [_L, _G, _M, _V],
+    'Thumb':                    [_L, _G, _M, _V],
+    'Finger pulley':            [_L, _G, _V],
+    'DIP joint':                [_L, _G, _M, _V],
+    'CMC joint':                [_L, _G, _M, _V],
+    # Back
+    'Upper back':               [_L, _A, _R, _O, _V],
+    'Lower back':               [_L, _I, _A, _R, _V],
+    'Spine (general)':          [_L, _I, _A, _R, _V],
+    'SI joint':                 [_L, _I, _R, _N, _V],
+    'Sciatica':                 [_L, _A, _V],
+    # Hip
+    'Hip':                      [_L, _I, _A, _E, _R, _N, _M, _V],
+    'Groin':                    [_L, _A, _R, _V],
+    'Hip flexor':               [_L, _A, _E, _V],
+    'Glute':                    [_L, _E, _R, _V],
+    'Hip crest (iliac crest)':  [_L, _R, _V],
+    'TFL':                      [_L, _E, _R, _V],
+    # Upper leg
+    'Quad':                     [_L, _A, _E, _V],
+    'Hamstring':                [_L, _A, _E, _V],
+    'IT band':                  [_L, _I, _E, _V],
+    # Knee
+    'Knee':                     [_L, _I, _A, _E, _N, _M, _V],
+    'Kneecap':                  [_L, _I, _A, _E, _M, _V],
+    'Meniscus':                 [_L, _I, _A, _R, _N, _M, _V],
+    'ACL':                      [_L, _I, _R, _N, _M, _V],
+    'PCL':                      [_L, _I, _E, _N, _M, _V],
+    'MCL':                      [_L, _I, _R, _N, _M, _V],
+    'LCL':                      [_L, _I, _R, _N, _M, _V],
+    # Lower leg
+    'Calf':                     [_L, _I, _E, _V],
+    'Soleus':                   [_L, _I, _E, _V],
+    'Shin':                     [_L, _I, _V],
+    'Achilles':                 [_L, _I, _E, _V],
+    'Peroneal':                 [_L, _I, _R, _V],
+    # Foot / Ankle
+    'Ankle':                    [_L, _I, _A, _E, _R, _N, _M, _V],
+    'Plantar fascia':           [_L, _I, _M, _V],
+    'Foot':                     [_L, _I, _A, _M, _V],
+    'Toes':                     [_L, _I, _A, _M, _V],
+    # Trunk
+    'Rib':                      [_L, _R, _V],
+    'Chest':                    [_L, _O, _V],
 }
-del _MC
+del _MC, _L, _I, _A, _E, _R, _G, _O, _N, _M, _V
 
 # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
 # enum. Aligned to the canonical 11-category set (#255) per

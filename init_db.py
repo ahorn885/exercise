@@ -3194,6 +3194,15 @@ _PG_MIGRATIONS = [
               WHEN 'gi_immune'  THEN 'gi'
               ELSE system_category END
         WHERE system_category IN ('metabolic', 'endocrine', 'gi_immune')""",
+    # #255 — body-part half. The injury picker is now side-less canonical with a
+    # dedicated `side` field; existing rows encoded the side in the body_part
+    # string ('Left Wrist'). Strip the leading Left/Right (the side already lives
+    # in injury_log.side, derived at the old save path) and align the back labels
+    # to canonical casing. Idempotent: the predicates exclude already-migrated
+    # rows.
+    "UPDATE injury_log SET body_part = regexp_replace(body_part, '^(Left|Right) ', '') WHERE body_part ~ '^(Left|Right) '",
+    "UPDATE injury_log SET body_part = 'Lower back' WHERE body_part = 'Lower Back'",
+    "UPDATE injury_log SET body_part = 'Upper back' WHERE body_part = 'Upper Back'",
 ]
 
 _CLOTHING_SEEDS = [

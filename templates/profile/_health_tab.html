@@ -26,7 +26,7 @@
     <li class="supp-row">
       <div class="supp-main">
         <span class="chip {% if e.status == 'Active' %}bad{% elif e.status == 'Managing' %}warn{% else %}good{% endif %}">{{ e.status }}</span>
-        <span class="supp-name">{{ e.body_part or 'Injury' }}</span>
+        <span class="supp-name">{{ e.body_part or 'Injury' }}{% if e.side and e.side != 'N/A' %} ({{ e.side }}){% endif %}</span>
         {% if e.severity %}<span class="chip">{{ e.severity }}</span>{% endif %}
         <span class="rail-note">{{ e.start_date }}{% if e.resolved_date %} → {{ e.resolved_date }}{% endif %}</span>
         {% if e.description %}<span class="rail-note">· {{ e.description }}</span>{% endif %}
