@@ -18,7 +18,7 @@ from datetime import datetime
 import bcrypt
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, session
 
-from datetime import date
+from datetime import date, timedelta
 
 import mfa
 from database import get_db
@@ -72,7 +72,9 @@ from athlete_event_windows_repo import (
     add_event_window,
     delete_event_window,
     evict_plan_caches_on_event_windows_change,
+    load_event_window,
     load_event_windows,
+    update_event_window_volume_by_date,
 )
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
@@ -931,9 +933,15 @@ def add_event_window_route():
     db = get_db()
     uid = current_user_id()
     return_to = request.form.get('return_to')
+    # End date is optional (#889) — a blank end means a single-day window
+    # (end == start). One reduced/travel day is the common case, and a volume %
+    # blankets every covered day, so the per-day fix is to make the one-day
+    # window ergonomic rather than force re-typing the same date.
+    start_raw = (request.form.get('start_date') or '').strip()
+    end_raw = (request.form.get('end_date') or '').strip()
     try:
-        start = date.fromisoformat((request.form.get('start_date') or '').strip())
-        end = date.fromisoformat((request.form.get('end_date') or '').strip())
+        start = date.fromisoformat(start_raw)
+        end = date.fromisoformat(end_raw) if end_raw else start
     except ValueError:
         flash('Enter valid start and end dates.', 'error')
         return _event_windows_redirect(return_to)
@@ -980,6 +988,95 @@ def delete_event_window_route(window_id):
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window removed.', 'success')
     return _event_windows_redirect(request.form.get('return_to'))
+
+
+# Per-day volume levels (#889) — a reduced_volume window applies its % to EVERY
+# covered day, which over-reduces a longer trip where only one day is light. This
+# editor lets the athlete dial each covered DATE independently (100% = a normal,
+# unreduced day). Strict CSP forbids a JS-generated in-form grid, so it's a
+# server-rendered page reached from the windows list after the window exists.
+_VOLUME_DAY_CHOICES = (25, 50, 75, 100)
+
+
+def _window_dates(win):
+    """The inclusive list of dates a window covers (for the per-day editor)."""
+    out, d = [], win.start_date
+    while d <= win.end_date:
+        out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+@bp.route('/event-windows/<int:window_id>/volume-days')
+def event_window_volume_days(window_id):
+    """Render the per-day volume editor (#889) for one reduced_volume window: a
+    percent select per covered date, pre-filled from the saved schedule or the
+    window-wide default."""
+    db = get_db()
+    uid = current_user_id()
+    win = load_event_window(db, uid, window_id)
+    if win is None or win.override_type != 'reduced_volume':
+        flash('Per-day levels apply only to a reduced-volume window.', 'error')
+        return _event_windows_redirect(request.args.get('return_to'))
+    default_pct = int(round((win.volume_pct or 0.5) * 100))
+    days = [
+        {
+            'iso': d.isoformat(),
+            'pct': int(round(win.volume_by_date.get(d, win.volume_pct or 0.5) * 100)),
+        }
+        for d in _window_dates(win)
+    ]
+    return render_template(
+        'profile/event_window_volume_days.html',
+        window=win,
+        days=days,
+        default_pct=default_pct,
+        choices=_VOLUME_DAY_CHOICES,
+        return_to=_safe_local_path(request.args.get('return_to')),
+    )
+
+
+@bp.route('/event-windows/<int:window_id>/volume-days', methods=['POST'])
+def save_event_window_volume_days(window_id):
+    """Persist the per-day volume schedule (#889): one `vol_<iso>` percent per
+    covered date → a {date: fraction} map. The repo validates dates/range; saving
+    evicts the overlapping plan-gen synthesis."""
+    db = get_db()
+    uid = current_user_id()
+    return_to = request.form.get('return_to')
+    win = load_event_window(db, uid, window_id)
+    if win is None or win.override_type != 'reduced_volume':
+        flash('Per-day levels apply only to a reduced-volume window.', 'error')
+        return _event_windows_redirect(return_to)
+    by_date: dict[date, float] = {}
+    for d in _window_dates(win):
+        raw = (request.form.get(f'vol_{d.isoformat()}') or '').strip()
+        if not raw:
+            continue
+        try:
+            by_date[d] = float(raw) / 100.0
+        except ValueError:
+            flash('Enter a valid per-day percentage.', 'error')
+            return redirect(
+                url_for('profile.event_window_volume_days',
+                        window_id=window_id, return_to=return_to)
+            )
+    try:
+        update_event_window_volume_by_date(db, uid, window_id, by_date)
+    except EventWindowError as exc:
+        flash(str(exc), 'error')
+        return redirect(
+            url_for('profile.event_window_volume_days',
+                    window_id=window_id, return_to=return_to)
+        )
+    db.commit()
+    evict_plan_caches_on_event_windows_change(db, uid)
+    print(  # Rule #15 — which days the athlete dialed + the resulting schedule.
+        f"event_window_volume_days: user={uid} window={window_id} "
+        f"schedule={ {k.isoformat(): v for k, v in sorted(by_date.items())} }"
+    )
+    flash('Per-day volume levels saved.', 'success')
+    return _event_windows_redirect(return_to)
 
 
 @bp.route('/event-windows/new-locale', methods=['POST'])
