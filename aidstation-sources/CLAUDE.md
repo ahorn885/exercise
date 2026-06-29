@@ -16,6 +16,16 @@ AIDSTATION is a commercial direct-to-athlete SaaS application providing AI-drive
 
 Direct, focused, evidence-grounded. No platitudes. No cheerleading. No hype. Tone matches a real endurance coach talking to a serious athlete. This applies to all user-facing copy you draft (prompt templates, UI text, error messages, marketing copy).
 
+## How to talk to Andy (top-level rule)
+
+This governs every interaction, above the detailed rules below.
+
+1. **Plain language, always.** Explain in plain language — no unexplained jargon or acronym walls. When a technical term is load-bearing, define it in passing.
+2. **When you ask Andy to choose between options, spell out the impact of each — in this order: (1) user impact, then (2) infrastructure / clean-code impact.** State an impact only when it actually applies; don't manufacture one or write "doesn't apply" to fill the slot. Just remember to cover it whenever it's real.
+3. **Default decision priority when options trade off:** lead with what produces (1) the best *plan* for the user, then (2) the best *experience* for the user, then (3) the cleanest, most efficient code. Recommend the option that ranks highest on this order, and call out explicitly when an option wins on one axis but loses on another.
+
+(This is the lens for the "options / tradeoffs / recommendation / gut check" output the Stop-and-ask triggers and Chat-tone section already require — it says *which* impacts to lead with and *how* to rank them.)
+
 ## Core differentiators (treat as launch commitments)
 
 1. Plan iteration as situations change — only invalidated layers re-run (partial-update model)
@@ -151,6 +161,8 @@ The first four are foundational (adapted from Karpathy's CLAUDE.md, github.com/m
   - **Reconciling GitHub issues is a STANDARD session-end bookkeeping step** — do it every shipped session, alongside the `CURRENT_STATE.md` / `CARRY_FORWARD.md` / closing-handoff updates and before you write the handoff. For every issue the session touched: comment what shipped with the PR/commit ref, **close** the fully-done ones with a `completed` / `not_planned` reason, tick off (or comment) the checklist items that landed on a partially-done issue, and **file new issues for anything discovered** mid-session. The tracker must match on-disk reality at session close, the same way the docs must (Rule #10). Issues are bookkeeping, so this is exempt from the 5-file ceiling.
 - **Next-step prioritization (the 4-tier order).** When choosing what to work on next, go in this order: (1) **finish the in-flight task** — if the previous handoff left work unresolved, close it before starting anything new; (2) **resolve go-live / live-functionality blockers** — anything that prevents launch or degrades already-shipped behavior, including safety gaps; (3) **finish open-but-not-fully-live functions** — wire up built-but-unshipped code, de-stub, complete partially-shipped features; (4) **pursue new functionality.** The latest handoff §6 and `CURRENT_STATE.md` "Next moves" map the live issues onto these tiers.
 - **Branch naming.** If the harness pins a branch name that mismatches this session's scope, rename it at session start (`git branch -m <new-name>`). Don't accumulate "harness-pinned; name mismatches scope" footnotes in handoffs — they're lossy bookkeeping and shrug at a fixable problem.
+- **Use subagents to protect the main context.** Offload research, codebase exploration, and parallel analysis to subagents — one focused task each — so the main session's context stays clean for the work that needs it. A focused context verifies better than a cluttered one; this is the operational complement to the goal-driven-execution loop.
+- **Turn repeated corrections into durable rules.** When Andy corrects the same class of mistake more than once, don't just fix the instance — promote the lesson into this file as a dated rule (or into `CARRY_FORWARD.md` if it's rolling), the way the existing Andy-dated rules were written. Capture it where the next session already reads, not in a separate scratch file.
 - **Never invent file contents.** If a file is referenced and not yet viewed, view it first. If a function or table is referenced and not visible, search for it before assuming.
 - **Andy makes all final architectural decisions.** You are a technical thought partner.
 
