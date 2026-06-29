@@ -3180,6 +3180,20 @@ _PG_MIGRATIONS = [
         END IF;
     END $$;""",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coach_notes",
+    # #255 — system_category canonical retag (8 → 11). Remap existing
+    # health_conditions_log rows off the retired slugs so they keep matching the
+    # canonical enum + the Layer 2E supplement screen. endocrine/metabolic fold
+    # into endocrine_metabolic; gi_immune maps to gi (the GI-distress reading the
+    # curated v3 list led with — an athlete whose condition was actually an
+    # autoimmune one can re-pick immune_autoimmune in the editor). Idempotent: a
+    # no-op once no legacy slugs remain.
+    """UPDATE health_conditions_log
+          SET system_category = CASE system_category
+              WHEN 'metabolic'  THEN 'endocrine_metabolic'
+              WHEN 'endocrine'  THEN 'endocrine_metabolic'
+              WHEN 'gi_immune'  THEN 'gi'
+              ELSE system_category END
+        WHERE system_category IN ('metabolic', 'endocrine', 'gi_immune')""",
 ]
 
 _CLOTHING_SEEDS = [

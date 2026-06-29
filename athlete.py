@@ -252,15 +252,25 @@ BODY_PART_CONSTRAINTS = {
 del _MC
 
 # D-73 Phase 1.2B (D-51 §3.2a) — health_conditions_log.system_category closed
-# enum per v5 §B.4.1.
+# enum. Aligned to the canonical 11-category set (#255) per
+# `research/Vocabulary_Audit_v3.md` §2.2 — the same vocab Layer 2E matches a
+# supplement's `contraindications` tokens against. The prior 8-value enum kept
+# endocrine/metabolic apart and lumped GI with immune; canonical merges the
+# former, splits the latter, and adds cognitive/skin/thermoregulation:
+#   metabolic + endocrine → endocrine_metabolic
+#   gi_immune             → gi + immune_autoimmune
+#   + cognitive_mental_health, skin, thermoregulation
 KNOWN_SYSTEM_CATEGORIES = (
     'cardiac',
     'respiratory',
-    'metabolic',
+    'endocrine_metabolic',
+    'gi',
     'neurological',
-    'gi_immune',
+    'cognitive_mental_health',
     'musculoskeletal',
-    'endocrine',
+    'skin',
+    'thermoregulation',
+    'immune_autoimmune',
     'other',
 )
 

@@ -631,6 +631,21 @@ def test_conditions_vocab_keys_are_valid_categories():
     assert all(_hi_repo.CONDITIONS_BY_CATEGORY.values())  # no empty lists
 
 
+def test_system_category_canonical_set():
+    # #255 — the enum is the canonical 11-category set; the retired 8-enum slugs
+    # (metabolic / endocrine / gi_immune) must be gone so capture + the Layer 2E
+    # supplement screen key on one vocab.
+    from athlete import KNOWN_SYSTEM_CATEGORIES
+    assert set(KNOWN_SYSTEM_CATEGORIES) == {
+        'cardiac', 'respiratory', 'endocrine_metabolic', 'gi', 'neurological',
+        'cognitive_mental_health', 'musculoskeletal', 'skin',
+        'thermoregulation', 'immune_autoimmune', 'other',
+    }
+    assert not ({'metabolic', 'endocrine', 'gi_immune'} & set(KNOWN_SYSTEM_CATEGORIES))
+    # every category has a display label
+    assert set(_hi_repo.SYSTEM_CATEGORY_LABELS) == set(KNOWN_SYSTEM_CATEGORIES)
+
+
 def test_condition_add_rejects_unknown_category(monkeypatch):
     # The repo guard rejects out-of-vocab categories — no row stored.
     class _Rec:
