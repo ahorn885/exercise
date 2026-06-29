@@ -142,6 +142,19 @@ NUDGE_REGISTRY = {
         'category': 'info',
         'notification_type': 'injury_review',
     },
+    # A plan parked at the Layer 3D HITL review gate (#213) never finishes until
+    # the athlete resolves it. `warning` styling — this blocks a plan, unlike the
+    # passive `info` staleness nudges above.
+    'plan_needs_review': {
+        'message': (
+            'A plan you started is waiting on your review before it can '
+            'finish. Resolve its open items to complete it.'
+        ),
+        'cta_label': 'Review your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'warning',
+        'notification_type': 'plan_needs_review',
+    },
 }
 
 # Registry knobs that are internal plumbing, stripped from the per-row overlay
@@ -444,6 +457,7 @@ LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
 BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
 BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
+PLAN_REVIEW_STALE_DAYS = 3    # plan parked at the review gate this long ⇒ nudge
 
 # Per-type reconcile spec. Each entry pairs the INSERT that ARMS the nudge while
 # its condition holds with the DELETE that CLEARS it once the condition lifts —
@@ -556,6 +570,45 @@ _STALENESS_RECONCILE = [
                   SELECT 1 FROM injury_log il WHERE il.user_id = an.user_id
                     AND il.status = 'Active'
                     AND il.start_date <= TO_CHAR(NOW() - INTERVAL '{INJURY_REVIEW_DAYS} days', 'YYYY-MM-DD')
+              )
+            RETURNING id
+        ''',
+    },
+    {
+        'nudge_type': 'plan_needs_review',
+        # A live (non-superseded, non-archived) plan version parked at the Layer
+        # 3D review gate for at least the grace window. Archived plans are
+        # excluded — the athlete deliberately shelved those. The grace window
+        # keys off `created_at` (generation parks at the gate shortly after
+        # start, so it's a close proxy for "parked at"); it gives the athlete a
+        # few days to resolve the gate before being reminded.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT DISTINCT pv.user_id, 'plan_needs_review'
+            FROM plan_versions pv
+            WHERE pv.generation_status = 'needs_review'
+              AND pv.superseded_at IS NULL
+              AND pv.archived_at IS NULL
+              AND pv.created_at <= NOW() - INTERVAL '{PLAN_REVIEW_STALE_DAYS} days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = pv.user_id AND an.nudge_type = 'plan_needs_review'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        # Clears once no live plan remains at the gate — the athlete resolved it
+        # (status flips off 'needs_review'), superseded it, archived it, or
+        # deleted it. The grace-window clause is intentionally omitted: it only
+        # ever becomes *more* true with age, so it plays no part in clearing.
+        'delete': '''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'plan_needs_review'
+              AND NOT EXISTS (
+                  SELECT 1 FROM plan_versions pv WHERE pv.user_id = an.user_id
+                    AND pv.generation_status = 'needs_review'
+                    AND pv.superseded_at IS NULL
+                    AND pv.archived_at IS NULL
               )
             RETURNING id
         ''',

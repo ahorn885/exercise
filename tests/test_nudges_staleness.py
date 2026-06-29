@@ -2,12 +2,13 @@
 
 Three concerns, all exercised without a real DB:
 
-1. **Registry wiring** — the three new `NUDGE_REGISTRY` entries
-   (`log_reminder`, `body_metric_stale`, `injury_review`) each carry a CTA +
-   their own `notification_type`, and the matching `notification_prefs`
-   types are registered in-app + push (email deliberately non-applicable —
-   there's no nudge→email path and `email` is `available`, so a toggle would
-   imply a delivery that never happens).
+1. **Registry wiring** — the staleness `NUDGE_REGISTRY` entries
+   (`log_reminder`, `body_metric_stale`, `injury_review`) plus the
+   plan-attention `plan_needs_review` entry each carry a CTA + their own
+   `notification_type`, and the matching `notification_prefs` types are
+   registered in-app + push (email deliberately non-applicable — there's no
+   nudge→email path and `email` is `available`, so a toggle would imply a
+   delivery that never happens).
 
 2. **Preference gating** — `get_active_nudges` suppresses a nudge whose mapped
    in-app notification type is muted, and fails **open** (shows it) if the
@@ -40,6 +41,10 @@ from routes.nudges import (  # noqa: E402
 )
 
 STALENESS_TYPES = ['log_reminder', 'body_metric_stale', 'injury_review']
+# All types the reconcile cron arms/clears — the staleness three plus the
+# plan-attention nudge (`warning` category, so it's excluded from the
+# `info`-asserting parametrized tests above and covered on its own below).
+RECONCILE_TYPES = STALENESS_TYPES + ['plan_needs_review']
 
 
 # ─── Shared fake conn (mirrors tests/test_nudges.py) ────────────────────────
@@ -118,6 +123,30 @@ class TestRegistryWiring:
             assert NUDGE_REGISTRY[nt]['notification_type'] == 'account_reminders'
 
 
+class TestPlanNeedsReviewWiring:
+    """The plan-attention nudge mirrors the staleness wiring but carries a
+    `warning` category (it blocks a plan from finishing) and its own mutable
+    notification type."""
+
+    def test_registry_entry(self):
+        entry = NUDGE_REGISTRY['plan_needs_review']
+        assert entry['message']
+        assert entry['cta_label']
+        assert entry['cta_endpoint'] == 'plans.list_plans'
+        assert entry['category'] == 'warning'
+        assert entry['notification_type'] == 'plan_needs_review'
+        assert entry.get('display_delay_days', 0) == 0
+
+    def test_notification_type_registered_in_app_and_push(self):
+        t = np.TYPES_BY_KEY['plan_needs_review']
+        assert t['channels'] == ['in_app', 'push']
+        assert t['category'] == 'warning'
+        assert np.default_enabled('plan_needs_review', 'in_app') is True
+        assert np.default_enabled('plan_needs_review', 'push') is True
+        # Email non-applicable — no nudge→email path (same posture as staleness).
+        assert np.is_applicable('plan_needs_review', 'email') is False
+
+
 # ─── 2. Preference gating in get_active_nudges ──────────────────────────────
 
 
@@ -182,7 +211,22 @@ class TestPreferenceGating:
 
 class TestReconcileSpec:
     def test_spec_covers_all_staleness_types(self):
-        assert {s['nudge_type'] for s in _STALENESS_RECONCILE} == set(STALENESS_TYPES)
+        assert {s['nudge_type'] for s in _STALENESS_RECONCILE} == set(RECONCILE_TYPES)
+
+    def test_plan_needs_review_spec_targets_live_parked_plans(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'plan_needs_review')
+        ins = ' '.join(spec['insert'].split())
+        dele = ' '.join(spec['delete'].split())
+        # Fires only on a live (non-superseded, non-archived) plan parked at the
+        # review gate; both statements share that exact predicate.
+        for clause in ("generation_status = 'needs_review'",
+                       'superseded_at IS NULL', 'archived_at IS NULL'):
+            assert clause in ins
+            assert clause in dele
+        # Grace window arms the insert but never clears the delete.
+        assert "INTERVAL '3 days'" in ins
+        assert 'INTERVAL' not in dele
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):
