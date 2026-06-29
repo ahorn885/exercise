@@ -727,7 +727,6 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # guards below.
         prior_crafts = load_craft_locales(db, uid).get(locale, [])
         notes = request.form.get('notes', '').strip()
-        city = request.form.get('city', '').strip()
         new_terrain_ids = _parse_locale_terrain(request.form)
         # #446 — explicit privacy override. The form posts `private=1` when the
         # athlete opts a shareable-category locale out of crowd-source sharing.
@@ -741,15 +740,14 @@ def _edit_locale(db, uid: int, locale: str, profile):
         # cast: see the Bucket B #3 fix (psycopg2 list adapter landed empty
         # arrays in prod without it).
         db.execute(
-            '''INSERT INTO locale_profiles (user_id, locale, notes, city, sharing_opt_out, locale_terrain_ids, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
+            '''INSERT INTO locale_profiles (user_id, locale, notes, sharing_opt_out, locale_terrain_ids, updated_at)
+               VALUES (?, ?, ?, ?, ?::text[], CURRENT_TIMESTAMP)
                ON CONFLICT(user_id, locale) DO UPDATE SET
                  notes=excluded.notes,
-                 city=excluded.city,
                  sharing_opt_out=excluded.sharing_opt_out,
                  locale_terrain_ids=excluded.locale_terrain_ids,
                  updated_at=excluded.updated_at''',
-            (uid, locale, notes, city, opt_out, new_terrain_ids)
+            (uid, locale, notes, opt_out, new_terrain_ids)
         )
         # First-locale-auto-home (Track 1 §10) — the first locale saved
         # before any home exists becomes home.
@@ -808,8 +806,8 @@ def _edit_locale(db, uid: int, locale: str, profile):
 
     # GET — effective set drives the checked state; inherit mode adds override
     # chips. `mode` keeps the template's existing branches working: 'legacy'
-    # for own/build (city field, plain save), 'shared_inherit' for peer inherit
-    # (override chips, no city).
+    # for own/build (plain save), 'shared_inherit' for peer inherit (override
+    # chips).
     adds, removes = _load_overrides(db, uid, locale)
     mode = 'shared_inherit' if inherit else 'legacy'
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
@@ -837,7 +835,6 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            adds=adds, removes=removes,
                            shared=shared,
                            notes=(profile['notes'] if profile and profile['notes'] else ''),
-                           city=(profile['city'] if profile and _row_has(profile, 'city') and profile['city'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
                            is_deletable=True,
@@ -860,18 +857,22 @@ def _edit_locale(db, uid: int, locale: str, profile):
 def new_locale():
     """Athlete-typed Mapbox-anchored locale creation (D-59 §3 + §4).
 
-    GET renders the search form (or the manual fallback when ?manual=1).
-    Search results render in-template when ?q= is set and disclosure is
-    acked. POST writes the selected Mapbox feature as a locale_profiles
-    row, runs chain detection, and redirects to /locales/<slug>/nearby on
-    a chain hit (D-59 §5) or back to /locales otherwise.
+    GET renders the Mapbox place-search form. Search results render
+    in-template when ?q= is set and disclosure is acked. POST writes the
+    selected Mapbox feature as a locale_profiles row, runs chain detection,
+    and redirects to /locales/<slug>/nearby on a chain hit (D-59 §5) or back
+    to /locales otherwise.
+
+    #941 — every location is Mapbox-anchored (lat/lng), so weather/clothing
+    can resolve. The coordinate-less manual-entry fallback was retired; the
+    `?upgrade=<slug>` flow below stays so any legacy manual rows can be
+    re-anchored.
     """
     db = get_db()
     uid = current_user_id()
     if request.method == 'POST':
         return _save_mapbox_anchored(db, uid)
     _stash_return_to()
-    manual = request.args.get('manual') == '1'
     query = (request.args.get('q') or '').strip()
     # D-59 §6 step 3 — `?upgrade=<slug>` lets athletes flip an existing
     # manual_entry=TRUE row to Mapbox-anchored. The upgrade row is shown
@@ -890,20 +891,18 @@ def new_locale():
     acked = _disclosure_acked(db, uid)
     results: list[dict] = []
     error: str | None = None
-    if query and acked and not manual:
+    if query and acked:
         try:
             results = mapbox_client.search_places(query, limit=5)
         except mapbox_client.MapboxTokenMissing:
-            error = 'Place lookup is not configured on the server. Use the manual entry option below.'
+            error = 'Place lookup is not configured on the server. Please try again later.'
         except mapbox_client.MapboxNoResults:
-            error = f'No matches for {query!r}. Try a broader search or use manual entry.'
+            error = f'No matches for {query!r}. Try a broader search (address or business name).'
         except mapbox_client.MapboxError as e:
-            error = f'Place lookup unavailable ({e}). Try again or use manual entry.'
+            error = f'Place lookup unavailable ({e}). Try again.'
     return render_template('locales/new.html',
-                           manual=manual, query=query,
+                           query=query,
                            acked=acked, results=results, error=error,
-                           manual_categories=MANUAL_CATEGORIES,
-                           residential_categories=sorted(RESIDENTIAL_CATEGORIES),
                            disclosure_version=MAPBOX_DISCLOSURE_VERSION,
                            upgrade_slug=upgrade_slug,
                            upgrade_locale=upgrade_locale)
@@ -1029,42 +1028,10 @@ def _save_mapbox_anchored(db, uid: int):
     return _locale_flow_redirect()
 
 
-@bp.route('/locales/new/manual', methods=['POST'])
-def save_manual_locale():
-    """Manual-entry path (D-59 §6). No Mapbox round-trip; coords +
-    chain stay NULL; manual_entry=TRUE so plan-gen knows the row lacks
-    proximity-cluster membership."""
-    db = get_db()
-    uid = current_user_id()
-    locale_name = (request.form.get('locale_name') or '').strip()
-    address = (request.form.get('address') or '').strip()
-    category = (request.form.get('category') or '').strip()
-    valid_categories = {c[0] for c in MANUAL_CATEGORIES}
-    if category and category not in valid_categories:
-        category = None
-    # #446 — explicit opt-out for shareable categories. Residential categories
-    # are private regardless; `_resolve_private` ORs the category default in
-    # when the gym_profile is later built.
-    opt_out = request.form.get('private') == '1'
-    if not locale_name:
-        flash('Locale name is required.', 'danger')
-        return redirect(url_for('locales.new_locale', manual=1))
-    base_slug = _slugify(locale_name)
-    if not base_slug:
-        flash('Locale name needs at least one letter or number.', 'danger')
-        return redirect(url_for('locales.new_locale', manual=1))
-    slug = _unique_slug(db, uid, base_slug)
-    db.execute(
-        '''INSERT INTO locale_profiles
-           (user_id, locale, locale_name, city, notes,
-            category, manual_entry, sharing_opt_out, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP)''',
-        (uid, slug, locale_name, address, '', category or None, opt_out),
-    )
-    _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
-    db.commit()
-    flash(f'Saved {locale_name} (manual entry).', 'success')
-    return _locale_flow_redirect()
+# #941 — the coordinate-less manual-entry create path (`/locales/new/manual`,
+# D-59 §6) was retired. Every location is now Mapbox-anchored via the
+# search→pick flow so it carries lat/lng for weather/clothing resolution.
+# Legacy manual rows are migrated through `new_locale`'s `?upgrade=<slug>` flow.
 
 
 @bp.route('/locales/<locale>/nearby', methods=['GET', 'POST'])

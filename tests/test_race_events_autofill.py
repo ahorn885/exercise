@@ -149,8 +149,13 @@ def test_run_url_parse_terrain_none_serializes_null():
 
 
 class _FakeConditions:
-    def summary_line(self):
-        return "Climate normals near the race date: typical high ~22C."
+    def __init__(self):
+        self.unit_pref_seen = None
+
+    def summary_line(self, unit_pref=None):
+        self.unit_pref_seen = unit_pref
+        unit = '°F' if unit_pref == 'imperial' else '°C'
+        return f"Climate normals near the race date: typical high ~22{unit}."
 
 
 def _ok_infer(inp):
@@ -170,6 +175,19 @@ def test_run_terrain_inference_with_coords_returns_terrain_and_conditions():
     assert out['terrain']['entries'][0] == {'terrain_id': 'TRN-020', 'pct_of_race': 100.0, 'discipline_id': 'D-001'}
     assert out['terrain']['confidence'] == 'medium'
     assert 'Climate normals' in out['conditions']
+
+
+def test_run_terrain_inference_renders_conditions_in_athlete_unit():
+    # Imperial athlete → the climate-normals nudge follows the unit toggle (#946).
+    ec = _FakeConditions()
+    out = run_terrain_inference(
+        _FakeDB(), lat=47.6, lng=-90.7, event_date=date(2026, 9, 5),
+        framework_sport='Trail Running', today=_TODAY,
+        infer=_ok_infer, weather=lambda lat, lng, d: ec,
+        unit_pref='imperial',
+    )
+    assert ec.unit_pref_seen == 'imperial'
+    assert '°F' in out['conditions']
 
 
 def test_run_terrain_inference_failure_returns_terrain_none_but_conditions():

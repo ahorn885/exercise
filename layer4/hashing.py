@@ -226,6 +226,17 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                 # invalidate the overlapping synthesis. None on non-volume types
                 # → no effect on the existing no-windows / feasibility-only keys.
                 "volume_pct": getattr(w, "volume_pct", None),
+                # #889 — the per-DATE volume schedule. Flattened to a sorted
+                # [iso_date, pct] list so editing one day's level invalidates the
+                # overlapping synthesis. Empty/absent → []; a window with no
+                # schedule stays byte-identical to the pre-#889 key.
+                "volume_by_date": sorted(
+                    (
+                        d_.isoformat() if hasattr(d_, "isoformat") else str(d_),
+                        p_,
+                    )
+                    for d_, p_ in (getattr(w, "volume_by_date", None) or {}).items()
+                ),
             }
             for w in windows
         ),
@@ -237,6 +248,7 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
             d["away_locale"] or "",
             tuple(d["brought_craft"]),
             d["volume_pct"] if d["volume_pct"] is not None else -1.0,
+            tuple(tuple(pair) for pair in d["volume_by_date"]),
         ),
     )
     return _sha256_hex(canonical_json(flat))

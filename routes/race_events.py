@@ -72,6 +72,7 @@ from race_terrain_inference import (
     TerrainInferenceInput,
     infer_terrain,
 )
+from units import normalize_unit_preference
 from weather_client import get_expected_conditions
 
 
@@ -521,18 +522,22 @@ def run_terrain_inference(
     db, *, lat, lng, place_name=None, event_date=None, race_name=None,
     distance_km=None, elevation_gain_m=None, race_format=None,
     framework_sport=None, notes=None, race_url=None, today=None,
-    infer=None, weather=None,
+    infer=None, weather=None, unit_pref=None,
 ) -> dict:
     """Testable core of the infer-terrain endpoint (the #592 subordinate
     fallback). Runs the terrain inference (only with coords) + the deterministic
     climate-normals nudge. Best-effort: an inference failure returns terrain
     None (the athlete sees the empty editor); the conditions half is
-    independent (a page never carries climate normals)."""
+    independent (a page never carries climate normals).
+
+    `unit_pref` renders the climate-normals nudge in the athlete's temperature
+    unit (°F for imperial, °C for metric) so the weather display honors the
+    same unit toggle as the rest of the app (issue #946)."""
     weather_fn = weather or get_expected_conditions
     conditions = None
     if lat is not None and lng is not None and event_date is not None:
         ec = weather_fn(lat, lng, event_date)
-        conditions = ec.summary_line() if ec else None
+        conditions = ec.summary_line(unit_pref) if ec else None
 
     terrain = None
     if lat is not None and lng is not None:
@@ -1398,7 +1403,9 @@ def infer_terrain_suggestion():
          "summary":"..."}|null, "conditions": "..."|null}
     """
     db = get_db()
-    _ = current_user_id()
+    uid = current_user_id()
+    profile = get_athlete_profile(db, uid) or {}
+    unit_pref = normalize_unit_preference(profile.get('unit_preference'))
 
     def _s(name):
         return (request.args.get(name) or '').strip() or None
@@ -1419,6 +1426,7 @@ def infer_terrain_suggestion():
         race_name=_s('name'), distance_km=_num('distance_km'),
         elevation_gain_m=_num('elevation_gain_m'), race_format=_s('race_format'),
         framework_sport=_s('framework_sport'), notes=_s('notes'), race_url=_s('race_url'),
+        unit_pref=unit_pref,
     ))
 
 

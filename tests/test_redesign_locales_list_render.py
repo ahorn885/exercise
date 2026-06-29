@@ -78,7 +78,7 @@ def _profile(**kw):
         'locale': 'home', 'locale_name': None, 'chain_name': None,
         'category': None, 'manual_entry': 0, 'mapbox_id': None,
         'gym_profile_id': None, 'preferred': False,
-        'city': 'Washington', 'notes': None, 'updated_at': '2026-05-14',
+        'notes': None, 'updated_at': '2026-05-14',
         'address': None, 'street': None, 'state': None, 'postal_code': None,
     }
     base.update(kw)
@@ -99,11 +99,11 @@ def _client(monkeypatch, conn):
 
 def test_locations_grid_with_profiles(monkeypatch):
     profiles = [
-        _profile(locale='home', city='Washington', notes='Garage at 65°F.',
+        _profile(locale='home', notes='Garage at 65°F.',
                  gym_profile_id=1, preferred=True),
         _profile(locale='Equinox Cap Hill', locale_name='Equinox Capitol Hill',
                  chain_name='Equinox', category='gym', manual_entry=0,
-                 mapbox_id='mb-123', city='Washington', gym_profile_id=2),
+                 mapbox_id='mb-123', gym_profile_id=2),
     ]
     gym = {
         1: json.dumps(['Barbell', 'Squat rack']),

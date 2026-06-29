@@ -1,10 +1,11 @@
-{# Redesign §22 — Notification settings (read-only by design).
-   There is no per-channel/per-category preference backend (see the handoff's
-   §22 backend-gap note); the only real control is dismissing an individual
-   nudge, which the §21 feed provides. Rather than fabricate toggles with
-   nowhere to write, this honestly documents the delivery model — the same
-   posture as §17 Connections › Preferences. `channels` + `reminders` come
-   from routes.nudges (NUDGE_REGISTRY-derived, so they can't drift). #}
+{# Redesign §22 — Notification settings (#963).
+   The per-type × per-channel delivery-preference matrix. Each applicable cell
+   is a real checkbox (name `pref:<type>:<channel>`) resolved from
+   notification_preferences over the registry defaults; the whole grid posts to
+   nudges.settings. `push` toggles are editable but flagged "arrives with the
+   app" — the preference is stored now, delivery lands later. No JS — one Save
+   button submits the form; CSP-clean (no inline styles/handlers). `channels` +
+   `matrix` come from routes.nudges (registry-derived, so they can't drift). #}
 {% extends 'base.html' %}
 {% set nav_active = '' %}
 {% block title %}Notification settings — AIDSTATION{% endblock %}
@@ -15,47 +16,78 @@
   <div class="races-intro">
     <p class="eyebrow accent">● Notifications · settings</p>
     <h1 class="page-title">How AIDSTATION reaches you.</h1>
-    <p class="page-sub">A deliberately small surface. Notifications are managed automatically — the
-      one control you have is dismissing items in your <a href="{{ url_for('nudges.feed') }}">feed</a>.
-      Per-channel and per-category preferences aren't available yet.</p>
+    <p class="page-sub">Choose how each kind of notification is delivered. Changes apply to future
+      notifications; dismiss individual items from your
+      <a href="{{ url_for('nudges.feed') }}">feed</a>.</p>
   </div>
 </div>
 
-<div class="stack ns-wrap">
+<form method="post" action="{{ url_for('nudges.settings') }}" class="stack ns-wrap">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-  {# Channels — read-only description of how messages actually ship. #}
+  {# Delivery matrix — rows = notification types, columns = channels. #}
   <div class="card card-pad">
-    <p class="eyebrow">● Channels</p>
+    <p class="eyebrow">● Delivery preferences</p>
+    <div class="ns-matrix-scroll">
+      <table class="ns-matrix">
+        <thead>
+          <tr>
+            <th scope="col" class="ns-matrix-type">Notification</th>
+            {% for c in channels %}
+            <th scope="col" class="ns-matrix-ch">
+              {{ c.label }}{% if not c.available %} <span class="chip">soon</span>{% endif %}
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in matrix %}
+          <tr class="ns-matrix-row">
+            <th scope="row" class="ns-matrix-type">
+              <span class="ns-row-label">{{ row.label }}</span>
+              <span class="ns-row-desc">{{ row.description }}</span>
+            </th>
+            {% for cell in row.cells %}
+            <td class="ns-matrix-cell">
+              {% if cell.applicable %}
+              <label class="ns-toggle{% if not cell.available %} ns-toggle-pending{% endif %}">
+                <input type="checkbox" name="{{ cell.field }}"{% if cell.enabled %} checked{% endif %}>
+                <span class="ns-toggle-text">{{ cell.label }}</span>
+              </label>
+              {% else %}
+              <span class="ns-na" aria-label="Not available for {{ cell.label }}">—</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="ns-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Save preferences</button>
+    </div>
+  </div>
+
+  {# Channel notes — what each column actually does today. #}
+  <div class="card card-pad">
+    <p class="eyebrow">● About the channels</p>
     <div class="ns-channels">
       {% for c in channels %}
       <div class="ns-channel">
         <div class="ns-channel-head">
           <span class="ns-channel-label">{{ c.label }}</span>
-          <span class="chip solid">{{ c.status }}</span>
+          <span class="chip {{ 'solid' if c.available else 'warn' }}">
+            {{ 'Available' if c.available else 'Coming with the app' }}</span>
         </div>
-        <p class="ns-channel-detail">{{ c.detail }}</p>
+        <p class="ns-channel-detail">{{ c.note }}</p>
       </div>
       {% endfor %}
     </div>
   </div>
 
-  {# Reminders — the live registry of what the system may nudge about. #}
-  <div class="card card-pad">
-    <p class="eyebrow">● What you may be reminded about</p>
-    <p class="ns-note">These in-app reminders fire only when they're relevant to your account (e.g.
-      no provider connected, a skipped onboarding step). Each can be dismissed from the feed.</p>
-    <ul class="ns-reminders">
-      {% for r in reminders %}
-      <li class="ns-reminder">
-        <span class="chip {{ 'warn' if r.category == 'warning' else 'solid' }}">{{ r.category }}</span>
-        <span class="ns-reminder-msg">{{ r.message }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
+  <p class="ns-foot mono">Push notifications need the native app, which isn't out yet — you can set your
+    preference now and it'll take effect once the app ships.</p>
 
-  <p class="ns-foot mono">Granular notification preferences are planned but not wired yet — there's no
-    setting here that wouldn't be a no-op, so there isn't one.</p>
-
-</div>
+</form>
 {% endblock %}

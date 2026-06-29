@@ -567,7 +567,6 @@ class TestEditLocaleTerrainPersists:
             data={
                 'equipment': [],
                 'notes': '',
-                'city': '',
                 'locale_terrain_ids': ['TRN-002', 'TRN-003', 'TRN-016'],
             },
         ):
@@ -580,10 +579,12 @@ class TestEditLocaleTerrainPersists:
         ]
         assert upsert, 'expected an INSERT ... ON CONFLICT for locale_profiles'
         sql, params = upsert[0]
-        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
+        # Params: (uid, locale, notes, sharing_opt_out, new_terrain_ids).
+        # #941 dropped the free-text `city` column from the upsert.
         assert params[0] == 1
         assert params[1] == 'horn_s_house'
-        assert params[5] == ['TRN-002', 'TRN-003', 'TRN-016']
+        assert params[4] == ['TRN-002', 'TRN-003', 'TRN-016']
+        assert 'city' not in sql
         # Defensive `::text[]` cast on the array placeholder forces explicit
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
@@ -613,7 +614,7 @@ class TestEditLocaleTerrainPersists:
         profile = _FakeRow({'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/home/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'home', profile)
@@ -679,8 +680,9 @@ class TestEditLocaleTerrainPersists:
             and 'locale_terrain_ids' in sql
         ]
         assert upsert, 'expected INSERT ... ON CONFLICT for locale_profiles'
-        # Params: (uid, locale, notes, city, sharing_opt_out, new_terrain_ids).
-        assert upsert[0][1][5] == ['TRN-002', 'TRN-003']
+        # Params: (uid, locale, notes, sharing_opt_out, new_terrain_ids).
+        # #941 dropped the free-text `city` column from the upsert.
+        assert upsert[0][1][4] == ['TRN-002', 'TRN-003']
         # Inherit path writes per-athlete override deltas (canonical names),
         # not a direct gym_profiles equipment edit.
         assert _sql_indices(conn.calls, 'DELETE FROM locale_equipment_overrides')
@@ -831,18 +833,19 @@ class TestEditPrivacyOverride:
         profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/joe_s_garage/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'private': '1', 'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'joe_s_garage', profile)
 
-        # sharing_opt_out lands TRUE in the locale_profiles upsert (index 4).
+        # sharing_opt_out lands TRUE in the locale_profiles upsert (index 3 after
+        # #941 dropped the free-text `city` column).
         upsert = [
             params for sql, params in conn.calls
             if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
         ]
         assert upsert, 'expected locale_profiles upsert with sharing_opt_out'
-        assert upsert[0][4] is True
+        assert upsert[0][3] is True
 
         # The built gym_profiles row is private despite the shareable category.
         gym_insert = [
@@ -867,7 +870,7 @@ class TestEditPrivacyOverride:
         profile = _FakeRow({'category': 'independent_gym', 'locale_terrain_ids': []})
         with app.test_request_context(
             '/locales/joe_s_gym/edit', method='POST',
-            data={'equipment': ['Barbell'], 'notes': '', 'city': '',
+            data={'equipment': ['Barbell'], 'notes': '',
                   'locale_terrain_ids': []},
         ):
             _edit_locale(conn, 1, 'joe_s_gym', profile)
@@ -876,7 +879,7 @@ class TestEditPrivacyOverride:
             params for sql, params in conn.calls
             if 'INSERT INTO locale_profiles' in sql and 'sharing_opt_out' in sql
         ]
-        assert upsert[0][4] is False
+        assert upsert[0][3] is False
         gym_insert = [
             params for sql, params in conn.calls
             if 'INSERT INTO gym_profiles' in sql

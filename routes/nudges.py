@@ -41,9 +41,12 @@ from datetime import datetime, timezone
 
 from flask import (
     Blueprint, request, redirect, url_for, abort, jsonify, render_template,
+    flash,
 )
 
+import notification_prefs
 from database import get_db
+from notification_preferences_repo import build_matrix, save_from_form
 from routes.auth import cron_authorized, current_user_id
 
 
@@ -191,6 +194,11 @@ def get_feed_nudges(db, uid):
     still inside their grace window) are in neither list — they aren't
     surfaced anywhere until the delay elapses.
 
+    Each `new` item also carries `read_at` (#963): read/unread is orthogonal
+    to dismiss — an undismissed nudge can be unread (read_at NULL) or read. The
+    read state is hydrated with one small extra read over the same undismissed
+    set; a fault there degrades to "all unread" rather than dropping the item.
+
     Empty lists when `uid` is falsy so callers needn't special-case the
     logged-out path. PG-only table — SQLite dev raises on the SELECT;
     the route wraps this call and degrades to an empty feed.
@@ -198,6 +206,20 @@ def get_feed_nudges(db, uid):
     if not uid:
         return [], []
     new = get_active_nudges(db, uid)
+    # Hydrate read_at for the undismissed set (read/unread). Kept off
+    # get_active_nudges so the banner/context-processor read stays untouched.
+    read_map: dict = {}
+    try:
+        for r in db.execute(
+            'SELECT id, read_at FROM account_nudges '
+            'WHERE user_id = ? AND dismissed_at IS NULL',
+            (uid,),
+        ).fetchall():
+            read_map[r['id']] = r['read_at']
+    except Exception as e:  # noqa: BLE001 — fall back to all-unread
+        print(f'nudges: read_at hydrate failed: {e}')
+    for item in new:
+        item['read_at'] = read_map.get(item['id'])
     rows = db.execute(
         'SELECT id, nudge_type, created_at, dismissed_at FROM account_nudges '
         'WHERE user_id = ? AND dismissed_at IS NOT NULL '
@@ -233,49 +255,73 @@ def feed():
     except Exception as e:  # noqa: BLE001 — degrade to empty, never 500
         print(f'nudges: get_feed_nudges failed: {e}')
         new, earlier = [], []
-    return render_template('nudges/feed.html', new=new, earlier=earlier)
+    unread_count = sum(1 for n in new if not n.get('read_at'))
+    return render_template('nudges/feed.html', new=new, earlier=earlier,
+                           unread_count=unread_count)
 
 
-# Delivery channels surfaced on the §22 settings page. Read-only — these
-# describe how notifications actually ship today, not configurable prefs.
-NOTIFICATION_CHANNELS = [
-    {
-        'label': 'In-app',
-        'status': 'On',
-        'detail': 'Passive banner + the notifications feed. Dismiss any '
-                  'item individually — that is the only per-notification '
-                  'control today.',
-    },
-    {
-        'label': 'Email',
-        'status': 'Account-critical only',
-        'detail': 'Transactional messages such as password resets. No '
-                  'digests or marketing — nothing to opt out of.',
-    },
-]
-
-
-@bp.route('/notifications/settings', methods=['GET'])
+@bp.route('/notifications/settings', methods=['GET', 'POST'])
 def settings():
-    """Notification settings (v5 §22) — read-only by design.
+    """Notification settings (v5 §22 / #963) — the per-type × per-channel
+    delivery-preference matrix.
 
-    There is no per-channel / per-category preference store today: the
-    only athlete-facing control is dismissing an individual in-app
-    nudge, which §21's feed already provides. Rather than fabricate
-    toggles with nowhere to write, this page honestly documents the
-    delivery model — the same posture as §17 Connections › Preferences.
+    GET renders a toggle for every applicable `(notification_type, channel)`
+    cell, resolved from `notification_preferences` over the registry defaults
+    (`notification_prefs`). POST persists the whole submit
+    (`save_from_form`) — unchecked boxes don't post, so the off state is
+    captured by iterating the registry, not the form.
 
-    The reminder list is derived live from `NUDGE_REGISTRY` so it can
-    never drift from what actually ships. Each entry carries the same
-    registry overlay the banner/feed use (message + category).
+    `push` toggles render but carry an "arrives with the app" note: the
+    preference is stored now, delivery lands later (#963). The page degrades to
+    the shipped defaults if the override read faults (e.g. SQLite dev), so it
+    always renders rather than 500ing — mirroring the feed's posture.
     """
-    reminders = [
-        {'nudge_type': k, 'message': v['message'], 'category': v['category']}
-        for k, v in NUDGE_REGISTRY.items()
-    ]
+    db = get_db()
+    uid = current_user_id()
+    if request.method == 'POST':
+        try:
+            n = save_from_form(db, uid, request.form)
+            flash(f'Notification preferences saved ({n} updated).', 'success')
+        except Exception as e:  # noqa: BLE001 — surface, don't 500
+            print(f'nudges: save_from_form failed: {e}')
+            flash('Could not save notification preferences. Please try again.',
+                  'error')
+        return redirect(url_for('nudges.settings'))
+    matrix = build_matrix(db, uid)
     return render_template('nudges/settings.html',
-                           channels=NOTIFICATION_CHANNELS,
-                           reminders=reminders)
+                           channels=notification_prefs.CHANNELS,
+                           matrix=matrix)
+
+
+@bp.route('/nudges/<int:nudge_id>/read', methods=['POST'])
+def mark_read(nudge_id):
+    """Mark one notification read (#963). Scoped to the logged-in user and
+    idempotent (only stamps an unread, undismissed row). Redirects back to the
+    feed."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        'UPDATE account_nudges SET read_at = NOW() '
+        'WHERE id = ? AND user_id = ? AND read_at IS NULL',
+        (nudge_id, uid),
+    )
+    db.commit()
+    return redirect(request.referrer or url_for('nudges.feed'))
+
+
+@bp.route('/nudges/read-all', methods=['POST'])
+def mark_all_read():
+    """Mark every undismissed, unread notification read in one click (#963).
+    User-scoped; a no-op when nothing is unread. Redirects back to the feed."""
+    db = get_db()
+    uid = current_user_id()
+    db.execute(
+        'UPDATE account_nudges SET read_at = NOW() '
+        'WHERE user_id = ? AND dismissed_at IS NULL AND read_at IS NULL',
+        (uid,),
+    )
+    db.commit()
+    return redirect(request.referrer or url_for('nudges.feed'))
 
 
 @bp.route('/cron/nudges/connect_provider_14d', methods=['GET'])
