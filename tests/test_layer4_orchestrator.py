@@ -723,10 +723,11 @@ class TestHappyPath:
         for m in mocks:
             assert m.call_count == 1
 
-        # Layer 2E receives `current_phase` from 3B's `start_phase` — verifies
-        # the 2A/2B/2D/2C → 3A → 3B → 2E ordering decision.
+        # Layer 2E receives `current_phase` (inside the §3 PlanManagementState
+        # contract) from 3B's `start_phase` — verifies the 2A/2B/2D/2C → 3A → 3B
+        # → 2E ordering decision.
         l2e_kwargs = m_l2e.call_args.kwargs
-        assert l2e_kwargs["current_phase"] == "Taper"
+        assert l2e_kwargs["plan_management_state"].current_phase == "Taper"
         assert l2e_kwargs["framework_sport"] == "AR"
         # target_events derives from RaceEventPayload (single Layer2ETargetEvent)
         assert len(l2e_kwargs["target_events"]) == 1
@@ -2328,6 +2329,12 @@ class TestLayer0TableFamilyMap:
         # discipline_technique_foci is 0B-versioned but has no reader anywhere in
         # app code (dead serving data) — no cache for its edits to invalidate.
         "discipline_technique_foci",
+        # sport_sub_format_map (#254 / D-17) supplies the race-event form's
+        # sub-format options + the default applied at capture/compose time. The
+        # athlete's chosen sport_sub_format (on race_events) is the cached plan
+        # input; this table is a lookup, not a versioned serving axis — see the
+        # note on _LAYER0_TABLE_FAMILY. Folded into the v1.10.1 baseline.
+        "sport_sub_format_map",
     })
 
     def _baseline_versioned_tables(self) -> set[str]:

@@ -113,6 +113,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    PlanManagementState,
     RaceEventPayload,
     TrainingSubstitutionPayload,
 )
@@ -124,6 +125,7 @@ from layer4.hashing import (
 )
 from layer4.phase_structure import phase_structure_from_3b
 from layer4.plan_create import _compute_total_weeks
+from plan_management import derive_expected_race_temp_c, derive_heat_acclim_state
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -1324,6 +1326,30 @@ def _upstream_full_cone(
     included_disciplines = [
         d for d in layer2a_payload.disciplines if d.inclusion == "included"
     ]
+
+    # Plan Management contract (`Plan_Management_Spec_v1.md` §3) — assembled at
+    # read time for the 2E §5.8 heat overlay (#220). `current_phase` keeps the
+    # 3B start-phase derivation; the week-indexed §5.1 `derive_current_phase`
+    # stays unwired (a #221 gap, tracked) and is out of scope here. Coordinates
+    # for `expected_race_temp_c` come from the race-event payload (the 2E
+    # target-event shape doesn't carry them), keyed by the same str event_id.
+    heat_acclim_state, heat_acclim_data_sparse = derive_heat_acclim_state(
+        db, user_id, today
+    )
+    coords_by_event_id: dict[str, tuple[float | None, float | None]] = {}
+    if target_race_event is not None:
+        coords_by_event_id[str(target_race_event.race_event_id)] = (
+            target_race_event.event_locale_lat,
+            target_race_event.event_locale_lng,
+        )
+    plan_management_state = PlanManagementState(
+        current_phase=layer3b_payload.periodization_shape.start_phase,
+        heat_acclim_state=heat_acclim_state,
+        expected_race_temp_c=derive_expected_race_temp_c(
+            target_events, coords_by_event_id, today
+        ),
+    )
+
     layer2e_payload = q_layer2e_nutrition_baseline_payload(
         db,
         identity=layer1_payload.identity,
@@ -1333,8 +1359,9 @@ def _upstream_full_cone(
         lifestyle=layer1_payload.lifestyle,
         included_disciplines=included_disciplines,
         framework_sport=framework_sport,
-        current_phase=layer3b_payload.periodization_shape.start_phase,
+        plan_management_state=plan_management_state,
         etl_version_set=etl_version_set,
+        heat_acclim_data_sparse=heat_acclim_data_sparse,
         athlete_id=str(user_id),
         today=today,
     )
@@ -2134,6 +2161,15 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
 # family prefix, and was never part of `etl_version_set`. It reads
 # `WHERE superseded_at IS NULL` directly, so its edits serve live without a
 # cache-key dependency (unchanged by slice 3b).
+# Note: `layer0.sport_sub_format_map` (#254 / D-17, read by `default_sub_format`
+# to compose the Layer 2A sport) is also intentionally absent. The athlete's
+# *chosen* `sport_sub_format` is stored on `race_events` and is the cached plan
+# input; this table only supplies the form's option list + the default applied
+# at capture/compose time — a lookup, not a versioned serving axis. Re-curating
+# a default is a deliberate Layer-0 act that, if it ever needed to re-flow to
+# default-relying athletes, would pair with an explicit cache bump rather than
+# this digest. (Folded into the v1.10.1 baseline; mirrored in the
+# `_FAMILY_MAP_EXCEPTIONS` drift-guard list.)
 
 
 def _q_current_etl_version_set(db: Any) -> dict[str, str]:

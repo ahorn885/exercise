@@ -14,7 +14,8 @@ scope picked 2026-05-19 (Phase 2.5):
 - §5.6 dietary pattern flags (§13.3 vegan triggers 3; low-FODMAP)
 - §5.7 sleep-dep overlay (§13.1 PGE 56hr; sleep_dep_data_missing flag)
 - §5.5 supplement integration stub (always empty integrated + flag)
-- §5.8 heat acclim stub (always temp_signal='unknown' + flag per event)
+- §5.8 heat acclim overlay (#220 — per-event temp bands from the Plan
+  Management contract; unresolved temp → temp_signal='unknown')
 - §5.9 HITL gates (none active; gate 5 removed FormRefresh A2)
 - §8 coaching flags (pla_missing, hrt_bmr_limitation,
   low_calorie_target_relative_to_rmr)
@@ -35,6 +36,7 @@ from layer2e import Layer2EInputError, q_layer2e_nutrition_baseline_payload
 from layer4.context import (
     AthleteSupplementRecord,
     HealthConditionRecord,
+    HeatAcclimState,
     Layer1HealthStatus,
     Layer1Identity,
     Layer1Lifestyle,
@@ -44,8 +46,28 @@ from layer4.context import (
     Layer2ETargetEvent,
     MedicationRecord,
     PhaseLoadBands,
+    PlanManagementState,
     WeightResult,
 )
+
+
+def _pms(
+    current_phase: str = "Build",
+    *,
+    heat_acclim_state: HeatAcclimState | None = None,
+    expected_race_temp_c: dict[str, float | None] | None = None,
+) -> PlanManagementState:
+    """Build a `PlanManagementState` for the 2E builder. Defaults: low/empty
+    heat acclim + no resolved race temps (every event → `temp_signal='unknown'`,
+    matching the pre-#220 behavior for tests that don't exercise the overlay)."""
+    return PlanManagementState(
+        current_phase=current_phase,
+        heat_acclim_state=heat_acclim_state
+        or HeatAcclimState(
+            level="low", days_at_temp_last_30=0, last_assessment=date(2026, 5, 19)
+        ),
+        expected_race_temp_c=expected_race_temp_c if expected_race_temp_c is not None else {},
+    )
 
 # §5.5 vocab fixture — (supplement_id, canonical_name, contraindications) rows
 # the engine reads from layer0.supplement_vocabulary. Tokens are the canonical
@@ -252,6 +274,9 @@ def _andy_baseline_call(
     disciplines: list[Layer2ADiscipline] | None = None,
     framework_sport: str = "Adventure Racing",
     current_phase: str = "Build",
+    heat_acclim_state: HeatAcclimState | None = None,
+    expected_race_temp_c: dict[str, float | None] | None = None,
+    heat_acclim_data_sparse: bool = False,
     etl: dict[str, str] | None = None,
 ):
     return q_layer2e_nutrition_baseline_payload(
@@ -263,8 +288,13 @@ def _andy_baseline_call(
         lifestyle=lifestyle or _andy_lifestyle(),
         included_disciplines=disciplines or _andy_disciplines(),
         framework_sport=framework_sport,
-        current_phase=current_phase,
+        plan_management_state=_pms(
+            current_phase,
+            heat_acclim_state=heat_acclim_state,
+            expected_race_temp_c=expected_race_temp_c,
+        ),
         etl_version_set=etl or _DEFAULT_ETL,
+        heat_acclim_data_sparse=heat_acclim_data_sparse,
         athlete_id="andy",
         today=date(2026, 5, 19),
     )
@@ -286,7 +316,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -302,7 +332,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -318,7 +348,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -334,7 +364,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=[],
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -350,7 +380,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -366,7 +396,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Race",  # not in {Base,Build,Peak,Taper}
+                plan_management_state=_pms("Race"),  # not in {Base,Build,Peak,Taper}
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -382,7 +412,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set={"0B": "x"},  # missing 0A
             )
 
@@ -398,7 +428,7 @@ class TestInputValidation:
                 lifestyle=_andy_lifestyle(),
                 included_disciplines=_andy_disciplines(),
                 framework_sport="Adventure Racing",
-                current_phase="Build",
+                plan_management_state=_pms("Build"),
                 etl_version_set=_DEFAULT_ETL,
             )
 
@@ -450,7 +480,7 @@ class TestPGEBaseline:
         assert payload.sleep_dep_overlay is not None
         assert "pge-2026" in payload.sleep_dep_overlay.applicable_events
 
-        # Heat acclim stub: every event surfaces 'unknown' + race_temp_unknown flag
+        # Heat overlay with no resolved temp: event surfaces 'unknown' + flag
         assert len(payload.heat_acclim_adjustments) == 1
         assert payload.heat_acclim_adjustments[0].temp_signal == "unknown"
 
@@ -697,7 +727,7 @@ class TestCunninghamPath:
             lifestyle=_andy_lifestyle(),
             included_disciplines=_andy_disciplines(),
             framework_sport="Adventure Racing",
-            current_phase="Build",
+            plan_management_state=_pms("Build"),
             etl_version_set=_DEFAULT_ETL,
             today=date(2026, 5, 19),
         )
@@ -869,37 +899,118 @@ class TestSleepDepOverlay:
         assert "sleep_dep_data_missing" in flag_types
 
 
-# ─── §5.8 heat acclim stub ──────────────────────────────────────────────────
+# ─── §5.8 heat acclim overlay (#220) ────────────────────────────────────────
 
 
-class TestHeatAcclimStub:
-    def test_every_event_gets_unknown_temp(self):
+def _heat_event(event_id: str, event_date: date) -> Layer2ETargetEvent:
+    return Layer2ETargetEvent(
+        event_id=event_id, event_name=event_id.upper(),
+        event_date=event_date, framework_sport="Adventure Racing",
+        estimated_duration_hr=8.0,
+    )
+
+
+def _adj_for(payload, event_id):
+    return next(a for a in payload.heat_acclim_adjustments if a.event_id == event_id)
+
+
+class TestHeatAcclimOverlay:
+    # `today` inside `_andy_baseline_call` is 2026-05-19.
+
+    def test_unresolved_temp_is_unknown_with_flag(self):
+        # No expected_race_temp_c entry → None → unknown band, no modifier.
         db = _FakeConn()
         db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
-        events = [
-            Layer2ETargetEvent(
-                event_id="e1", event_name="E1",
-                event_date=date(2026, 8, 1),
-                framework_sport="Adventure Racing",
-                estimated_duration_hr=8.0,
+        ev = _heat_event("e1", date(2026, 8, 1))
+        payload = _andy_baseline_call(db, target_events=[ev])
+        adj = _adj_for(payload, "e1")
+        assert adj.temp_signal == "unknown"
+        assert adj.na_modifier == 1.0 and adj.fluid_modifier == 1.0
+        assert {f.flag_type for f in payload.coaching_flags} >= {"race_temp_unknown"}
+
+    def test_cool_and_temperate_bands_no_flag(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        cool = _heat_event("cool", date(2026, 8, 1))
+        temperate = _heat_event("temperate", date(2026, 8, 1))
+        payload = _andy_baseline_call(
+            db, target_events=[cool, temperate],
+            expected_race_temp_c={"cool": 12.0, "temperate": 22.0},
+        )
+        cadj = _adj_for(payload, "cool")
+        assert cadj.temp_signal == "cool"
+        assert cadj.na_modifier == 0.85 and cadj.fluid_modifier == 0.85
+        assert cadj.flag is None
+        tadj = _adj_for(payload, "temperate")
+        assert tadj.temp_signal == "temperate"
+        assert tadj.na_modifier == 1.0 and tadj.fluid_modifier == 1.0
+        assert tadj.flag is None
+
+    def test_warm_band_modifiers_and_hot_band_modifiers(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        warm = _heat_event("warm", date(2026, 8, 1))   # far out → no gap flag
+        hot = _heat_event("hot", date(2026, 8, 1))
+        payload = _andy_baseline_call(
+            db, target_events=[warm, hot],
+            expected_race_temp_c={"warm": 29.0, "hot": 35.0},
+            heat_acclim_state=HeatAcclimState(
+                level="high", days_at_temp_last_30=20, last_assessment=date(2026, 5, 19)
             ),
-            Layer2ETargetEvent(
-                event_id="e2", event_name="E2",
-                event_date=date(2026, 9, 1),
-                framework_sport="Adventure Racing",
-                estimated_duration_hr=12.0,
+        )
+        wadj = _adj_for(payload, "warm")
+        assert wadj.temp_signal == "warm"
+        assert wadj.na_modifier == 1.15 and wadj.fluid_modifier == 1.15
+        assert wadj.flag is None  # high acclim → no flag
+        hadj = _adj_for(payload, "hot")
+        assert hadj.temp_signal == "hot"
+        assert hadj.na_modifier == 1.30 and hadj.fluid_modifier == 1.35
+
+    def test_low_acclim_under_14_days_fires_heat_acclim_gap(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        soon = _heat_event("soon", date(2026, 5, 25))  # 6 days out
+        payload = _andy_baseline_call(
+            db, target_events=[soon],
+            expected_race_temp_c={"soon": 34.0},
+            heat_acclim_state=HeatAcclimState(
+                level="low", days_at_temp_last_30=2, last_assessment=date(2026, 5, 19)
             ),
+        )
+        adj = _adj_for(payload, "soon")
+        assert adj.temp_signal == "hot"
+        assert adj.flag is not None and adj.flag.flag_type == "heat_acclim_gap"
+        assert "heat_acclim_gap" in {f.flag_type for f in payload.coaching_flags}
+
+    def test_low_acclim_with_runway_fires_in_progress(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        far = _heat_event("far", date(2026, 8, 1))  # >14 days out
+        payload = _andy_baseline_call(
+            db, target_events=[far],
+            expected_race_temp_c={"far": 33.0},
+            heat_acclim_state=HeatAcclimState(
+                level="low", days_at_temp_last_30=3, last_assessment=date(2026, 5, 19)
+            ),
+        )
+        adj = _adj_for(payload, "far")
+        assert adj.flag is not None
+        assert adj.flag.flag_type == "heat_acclim_in_progress"
+
+    def test_sparse_advisory_surfaces_once(self):
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        ev = _heat_event("e1", date(2026, 8, 1))
+        payload = _andy_baseline_call(
+            db, target_events=[ev],
+            expected_race_temp_c={"e1": 20.0},
+            heat_acclim_data_sparse=True,
+        )
+        sparse = [
+            f for f in payload.coaching_flags
+            if f.flag_type == "heat_acclim_data_sparse"
         ]
-        payload = _andy_baseline_call(db, target_events=events)
-        assert len(payload.heat_acclim_adjustments) == 2
-        for adj in payload.heat_acclim_adjustments:
-            assert adj.temp_signal == "unknown"
-            assert adj.na_modifier == 1.0
-            assert adj.fluid_modifier == 1.0
-        race_temp_flags = [
-            f for f in payload.coaching_flags if f.flag_type == "race_temp_unknown"
-        ]
-        assert len(race_temp_flags) == 2
+        assert len(sparse) == 1
 
 
 # ─── §5.9 HITL gates ────────────────────────────────────────────────────────
@@ -972,7 +1083,7 @@ class TestCoachingFlags:
             lifestyle=_andy_lifestyle(),
             included_disciplines=running_only,
             framework_sport="Marathon",
-            current_phase="Base",
+            plan_management_state=_pms("Base"),
             etl_version_set=_DEFAULT_ETL,
             today=date(2026, 5, 19),
         )

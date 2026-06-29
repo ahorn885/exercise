@@ -1705,6 +1705,14 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pf-windows .field-full > .form-control { max-width: 360px; }
 .app .pf-craftset { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
 .app .pf-craftset > .lbl { flex-basis: 100%; }
+
+/* "Your gear" surface (#884 slice 6a) — each group is a stack of label + own/
+   have-access <select> rows; the select is right-aligned and capped so the rows
+   line up regardless of label length. */
+.app .gear-group { margin-bottom: 18px; }
+.app .gear-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+.app .gear-row-label { flex: 1 1 auto; margin: 0; }
+.app .gear-row-access { flex: 0 0 auto; width: 140px; }
 .app .pf-craftset .form-check { margin: 0; }
 .app .pf-hint { font-size: 12px; color: var(--fg-3); margin: 5px 0 0; line-height: 1.5; }
 .app .pf-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; }

@@ -7,15 +7,17 @@ data, replacing the xlsx → `etl.layer0.run` re-import loop. See
 README is the how.
 
 The genesis baseline (the newest `etl/output/layer0_etl_v*.sql`, currently
-`v1.10.0`) is a full `pg_dump` of live `layer0` (schema + data, self-contained) —
+`v1.10.1`) is a full `pg_dump` of live `layer0` (schema + data, self-contained) —
 refreshed from live and collapsed with the pre-existing `schema.sql` + migrations
 `0001`–`0005` (in `etl/_archive/pre_v1.7.0_baseline/`, issue
 [#604](https://github.com/ahorn885/exercise/issues/604)), migrations
 `0006`–`0022` (in `etl/_archive/pre_v1.9.0_baseline/`, folded after the `0022`
-prod-apply — #884 slice 1), and migrations `0023`–`0030` (in
+prod-apply — #884 slice 1), migrations `0023`–`0030` (in
 `etl/_archive/pre_v1.10.0_baseline/`, folded after the `0029`/`0030` prod-apply —
-#884 slice 4.3). Migrations stack on top of it in order; this
-directory is **empty until the next migration lands** (the next is `0031`).
+#884 slice 4.3), and migrations `0031`–`0033` (in
+`etl/_archive/pre_v1.10.1_baseline/`, folded after the `0031`/`0032` (#255) +
+`0033` (#254) prod-apply). Migrations stack on top of it in order; this
+directory is **empty until the next migration lands** (the next is `0034`).
 Periodically the baseline is re-dumped from live and the intervening migrations
 fold into it — the consolidation that closes the genesis lag.
 

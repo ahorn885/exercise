@@ -61,7 +61,8 @@ def get_athlete_crafts(db, user_id: int) -> dict[str, list[str]]:
 
 
 def replace_athlete_crafts(
-    db, user_id: int, *, bike_types: list[str], paddle_crafts: list[str]
+    db, user_id: int, *, bike_types: list[str], paddle_crafts: list[str],
+    access_by_slug: dict[str, str] | None = None,
 ) -> None:
     """Replace the athlete's owned crafts (replace-all per family).
 
@@ -70,6 +71,12 @@ def replace_athlete_crafts(
     `CraftSelectionError` is raised and nothing is written. Only the craft
     column on each discipline-baseline row is touched — sibling baseline fields
     (mtb_skill, longest_ride_*, …) are preserved. Caller commits.
+
+    `access_by_slug` (#884 slice 6a) maps each selected slug → 'own' | 'access'
+    for the unified "Your gear" surface; slugs absent from it default to 'own'
+    (the onboarding own-only path). The baseline CSVs hold the full available set
+    (own ∪ access) — they feed Layer 1 substitution, which doesn't distinguish
+    access — while `athlete_gear` carries the per-craft access refinement.
     """
     bikes = _validate(bike_types, BIKE_TYPES, "bike type")
     paddles = _validate(paddle_crafts, PADDLE_CRAFT_TYPES, "paddle craft")
@@ -96,10 +103,14 @@ def replace_athlete_crafts(
     # baselines stay authoritative for the Layer 1 payload (builder reads them);
     # this is a forward-sync, not a move. Slugs are already enum-validated above
     # and BIKE_TYPES/PADDLE_CRAFT_TYPES ⊆ GEAR_REGISTRY, so no re-validation owed.
+    # The per-craft access ('own' | 'access') lands here (the unified store is the
+    # access authority — slice 6a); an unmapped slug defaults to 'own'. An out-of-
+    # set access value is rejected by replace_owned_gear_for_kinds (nothing written).
+    access = access_by_slug or {}
     replace_owned_gear_for_kinds(
         db,
         user_id,
-        {slug: "own" for slug in (*bikes, *paddles)},
+        {slug: access.get(slug, "own") for slug in (*bikes, *paddles)},
         {"bike", "paddle"},
     )
 
