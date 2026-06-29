@@ -1047,9 +1047,40 @@ def q_layer2a_discipline_classifier_payload(
             )
         )
 
+    # D-17 guard (#254): a *bare* sub-format parent (e.g. "Triathlon", exactly
+    # the whitelist key) reaching 2A means onboarding never resolved a
+    # sub-format. SDM is top-level-keyed so disciplines DO load, but PLA +
+    # weekly-totals are sub-format-keyed ("Triathlon (Standard / Olympic)" etc.)
+    # — every phase-load band joins NULL and the plan would silently get zero
+    # training volume. A correctly-resolved input carries the parenthetical and
+    # is NOT in `_SUB_FORMAT_SPORTS`, so this fires only on the unresolved bug
+    # case. Surface it loudly (unresolved flag + HITL + Rule-#15 log) instead of
+    # emitting a no-volume plan. The capture-side fix
+    # (`Onboarding_SportSubFormat_D17_254_Design_v1.md`) prevents this path;
+    # the guard catches legacy rows + any capture regression.
+    sub_format_unresolved = (
+        framework_sport in _SUB_FORMAT_SPORTS
+        and bool(raw_rows)
+        and all(r.get("base_pct_low") is None for r in raw_rows)
+    )
+    if sub_format_unresolved:
+        print(
+            f"q_layer2a: framework_sport={framework_sport!r} is a sub-format "
+            f"parent with zero phase_load rows — onboarding did not resolve a "
+            f"sub-format (D-17/#254). Flagging unresolved + forcing HITL."
+        )
+        unresolved_flags.append(
+            UnresolvedFlag(
+                raw_input=framework_sport,
+                suggested_match=None,
+                severity="error",
+            )
+        )
+
     # HITL gate per §5.6
     hitl_required = (
         not disciplines
+        or sub_format_unresolved
         or any(d.inclusion == "prompt_required" for d in disciplines)
     )
 

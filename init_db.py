@@ -3209,6 +3209,29 @@ _PG_MIGRATIONS = [
         END IF;
     END $$;""",
     "ALTER TABLE athlete_profile DROP COLUMN IF EXISTS coach_notes",
+    # #255 — system_category canonical retag (8 → 11). Remap existing
+    # health_conditions_log rows off the retired slugs so they keep matching the
+    # canonical enum + the Layer 2E supplement screen. endocrine/metabolic fold
+    # into endocrine_metabolic; gi_immune maps to gi (the GI-distress reading the
+    # curated v3 list led with — an athlete whose condition was actually an
+    # autoimmune one can re-pick immune_autoimmune in the editor). Idempotent: a
+    # no-op once no legacy slugs remain.
+    """UPDATE health_conditions_log
+          SET system_category = CASE system_category
+              WHEN 'metabolic'  THEN 'endocrine_metabolic'
+              WHEN 'endocrine'  THEN 'endocrine_metabolic'
+              WHEN 'gi_immune'  THEN 'gi'
+              ELSE system_category END
+        WHERE system_category IN ('metabolic', 'endocrine', 'gi_immune')""",
+    # #255 — body-part half. The injury picker is now side-less canonical with a
+    # dedicated `side` field; existing rows encoded the side in the body_part
+    # string ('Left Wrist'). Strip the leading Left/Right (the side already lives
+    # in injury_log.side, derived at the old save path) and align the back labels
+    # to canonical casing. Idempotent: the predicates exclude already-migrated
+    # rows.
+    "UPDATE injury_log SET body_part = regexp_replace(body_part, '^(Left|Right) ', '') WHERE body_part ~ '^(Left|Right) '",
+    "UPDATE injury_log SET body_part = 'Lower back' WHERE body_part = 'Lower Back'",
+    "UPDATE injury_log SET body_part = 'Upper back' WHERE body_part = 'Upper Back'",
 ]
 
 _CLOTHING_SEEDS = [

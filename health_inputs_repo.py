@@ -24,11 +24,14 @@ from athlete import KNOWN_MEDICATION_CLASSES, KNOWN_SYSTEM_CATEGORIES
 SYSTEM_CATEGORY_LABELS: dict[str, str] = {
     "cardiac": "Cardiac",
     "respiratory": "Respiratory",
-    "metabolic": "Metabolic",
+    "endocrine_metabolic": "Endocrine / Metabolic",
+    "gi": "GI",
     "neurological": "Neurological",
-    "gi_immune": "GI / Immune",
+    "cognitive_mental_health": "Cognitive / Mental health",
     "musculoskeletal": "Musculoskeletal",
-    "endocrine": "Endocrine",
+    "skin": "Skin",
+    "thermoregulation": "Thermoregulation",
+    "immune_autoimmune": "Immune / Autoimmune",
     "other": "Other",
 }
 MEDICATION_CLASS_LABELS: dict[str, str] = {
@@ -56,18 +59,23 @@ MEDICATION_CLASS_CHOICES: list[tuple[str, str]] = [
 ]
 
 # Curated, training-relevant condition vocab per system category (#543), sourced
-# from the reviewed `research/Vocabulary_Audit_v3.md` §2.2 canonical list mapped
-# onto the live 8-category enum. Drives the add-form's system-filtered Condition
-# select so capture is structured, not free text. The `other` category carries
-# no list (free text only); each listed category also offers an "Other (not
-# listed)" escape in the UI that *keeps* the system_category — so the Layer 2E
-# screen (which keys on `system_category`, not the name) never loses signal.
+# from the reviewed `research/Vocabulary_Audit_v3.md` §2.2 canonical list, now
+# keyed on the canonical 11-category enum (#255): the old `metabolic`+`endocrine`
+# lists merge under `endocrine_metabolic`, the old `gi_immune` list splits into
+# `gi` (GI-distress conditions) and `immune_autoimmune` (autoimmune conditions),
+# and `skin` / `thermoregulation` are added from §2.2 examples. Drives the
+# add-form's system-filtered Condition select so capture is structured, not free
+# text. Categories with no list (`cognitive_mental_health`, `other`) are
+# free-text only; each listed category also offers an "Other (not listed)"
+# escape in the UI that *keeps* the system_category — so the Layer 2E screen
+# (which keys on `system_category`, not the name) never loses signal.
 #
 # Inclusion rule (Andy 2026-06-17): list a condition ONLY if it changes *how*
 # training is prescribed (HR ceilings, fueling, load/recovery management,
 # return-to-load gating). Dropped: conditions with no training-prescription
 # impact, conditions that outright prohibit the training this app programs
-# (e.g. HCM), and mental-health conditions (no physical-training impact).
+# (e.g. HCM), and mental-health conditions (no physical-training impact) — which
+# is why `cognitive_mental_health` carries no curated list.
 CONDITIONS_BY_CATEGORY: dict[str, list[str]] = {
     "cardiac": [
         # HR-ceiling enforcement; avoid max-effort / high-HR-spike work.
@@ -79,27 +87,36 @@ CONDITIONS_BY_CATEGORY: dict[str, list[str]] = {
         "Asthma", "Exercise-induced bronchoconstriction", "COPD",
         "Post-COVID respiratory",
     ],
-    "metabolic": [
-        # Carb / fuel timing around sessions.
-        "Type 1 diabetes", "Type 2 diabetes",
+    "endocrine_metabolic": [
+        # Carb / fuel timing; volume-ramp and cortisol-aware load management.
+        "Type 1 diabetes", "Type 2 diabetes", "Hypothyroidism",
+        "Hyperthyroidism", "Adrenal insufficiency",
     ],
-    "endocrine": [
-        # Volume-ramp and cortisol-aware load management.
-        "Hypothyroidism", "Hyperthyroidism", "Adrenal insufficiency",
-    ],
-    "gi_immune": [
-        # Race-fueling / aid-station strategy; flare-aware load + recovery.
+    "gi": [
+        # Race-fueling / aid-station strategy; avoid high-jostle post-fueling.
         "IBS", "IBD / Crohn's / colitis", "Celiac disease",
-        "Chronic reflux (GERD)", "Rheumatoid arthritis", "Lupus", "MCAS",
-    ],
-    "musculoskeletal": [
-        # Permanent regression chains; flare-aware load management.
-        "Osteoarthritis", "Fibromyalgia", "Hypermobility / EDS",
+        "Chronic reflux (GERD)",
     ],
     "neurological": [
         # Return-to-load gating; coordination / seizure-risk caution.
         "Concussion history", "Migraine", "Epilepsy / seizure disorder",
         "Multiple sclerosis", "Peripheral neuropathy",
+    ],
+    "musculoskeletal": [
+        # Permanent regression chains; flare-aware load management.
+        "Osteoarthritis", "Fibromyalgia", "Hypermobility / EDS",
+    ],
+    "skin": [
+        # Sun-exposure exercise filtering; sweat-irritation management.
+        "Photosensitivity", "Cholinergic urticaria (sweat allergy)",
+    ],
+    "thermoregulation": [
+        # Heat/cold tolerance flags; pairs with heat-acclimation history.
+        "Heat intolerance", "Raynaud's",
+    ],
+    "immune_autoimmune": [
+        # Recovery-time inflation; flare-aware load management.
+        "Rheumatoid arthritis", "Lupus", "MCAS",
     ],
 }
 
