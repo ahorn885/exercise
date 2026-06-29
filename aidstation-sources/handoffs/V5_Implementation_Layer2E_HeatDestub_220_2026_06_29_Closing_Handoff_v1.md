@@ -2,8 +2,14 @@
 
 Closing handoff. #220 replaced the §5.8 heat-acclim stub with the real overlay
 fed by the Plan Management contract (#215 spec + #221 producer). Built this
-session on `claude/v5-implementation-onboarding-rbotu8`; PR not yet opened
-(push + bookkeep + wait for Andy's go).
+session on `claude/v5-implementation-onboarding-rbotu8`; **merged to `main`**
+(Andy's go 2026-06-29).
+
+> **NEXT STEP (decided): [#1024](https://github.com/ahorn885/exercise/issues/1024)
+> — wire `derive_current_phase` (§5.1 week-indexed phase) into the 2E
+> `current_phase`.** The next session continues here. Full scope + the
+> mechanically-applicable change are in §4 below; the inputs (`plan_start`,
+> `_compute_total_weeks`) are already on hand at the orchestrator's 2E call site.
 
 ## 1. What shipped
 
@@ -69,15 +75,36 @@ spec applies it in the §5.4 race-day path).
   (`conditions_log`, `race_events`); weather recomputed on read, never pinned to
   `etl_version_set` (PM spec §8).
 
-## 4. Discovered gap (filed as a new issue)
+## 4. NEXT STEP — #1024: wire `derive_current_phase` (the §5.1 refinement)
 
+Filed as **[#1024](https://github.com/ahorn885/exercise/issues/1024)** (sub of #210).
 `plan_management.derive_current_phase` (§5.1 — week-indexed active phase) is
 **built but unwired**: #221 added it to `plan_management.py` but no caller exists,
 and the orchestrator still passes `layer3b_payload.periodization_shape.start_phase`
 (always the first block, not today's phase). #220 deliberately did not switch it
-(changing `current_phase` alters 2E phase-scaling = a separate cross-layer decision,
-PM-1). Next session can wire it as a small follow-up. Verify: `git grep -n
-"derive_current_phase" -- '*.py'` shows only the def + this handoff, no call site.
+(changing `current_phase` alters 2E phase-scaling — per-phase calorie/macro targets
+— a separate cross-layer decision, the §5.1 / PM-1 soft spot). Verify the gap:
+`git grep -n "derive_current_phase" -- '*.py'` shows only the def + this handoff,
+no call site.
+
+**The change (mechanically-applicable, Rule #11):** in `layer4/orchestrator.py`,
+where `PlanManagementState` is assembled, replace
+
+```python
+current_phase=layer3b_payload.periodization_shape.start_phase,
+```
+
+with a call to `derive_current_phase(layer3b_payload, plan_start, today, total_weeks)`
+(import it from `plan_management`; `_compute_total_weeks` is already imported, and
+`plan_start`/`today` are in scope at the 2E call site). Then update the
+`test_layer4_orchestrator.py` happy-path assertion if the expected phase changes
+under the week-index (the fixture's `today` vs `plan_start` determines it).
+
+**Stop-and-ask check:** this is a **Trigger #3** behavior change (it shifts 2E's
+per-phase calorie/macro scaling for any athlete past their first block) and the
+spec flags PM-1 (3B-shape phase can diverge from Layer 4's reshaped calendar).
+Surface the before/after phase for the test athlete + confirm the PM-1 tradeoff
+with Andy before landing.
 
 ## 5. Files (5 code, at ceiling — cohesive de-stub the kickoff anticipated)
 
