@@ -109,7 +109,8 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
                re.race_terrain,
                re.event_locale_name, re.event_locale_mapbox_id,
                re.event_locale_place_name, re.event_locale_lat, re.event_locale_lng,
-               re.race_url, re.framework_sport, re.included_discipline_ids,
+               re.race_url, re.framework_sport, re.sport_sub_format,
+               re.included_discipline_ids,
                re.goal_outcome, re.first_time_at_distance,
                re.time_goal, re.race_pack_weight_kg,
                re.previous_attempts
@@ -252,6 +253,7 @@ def load_race_event_payload(db, race_event_id: int) -> RaceEventPayload | None:
         race_terrain=race_terrain,
         race_url=race_row["race_url"],
         framework_sport=race_row["framework_sport"],
+        sport_sub_format=race_row["sport_sub_format"],
         included_discipline_ids=raw_disc_filter,
         goal_outcome=race_row["goal_outcome"],
         first_time_at_distance=(
@@ -300,6 +302,7 @@ def create_race_event(
     event_locale_lng: float | None = None,
     race_url: str | None = None,
     framework_sport: str | None = None,
+    sport_sub_format: str | None = None,
     included_discipline_ids: list[str] | None = None,
     goal_outcome: str | None = None,
     first_time_at_distance: bool | None = None,
@@ -355,11 +358,11 @@ def create_race_event(
              race_terrain,
              event_locale_name, event_locale_mapbox_id, event_locale_place_name,
              event_locale_lat, event_locale_lng,
-             race_url, framework_sport, included_discipline_ids,
+             race_url, framework_sport, sport_sub_format, included_discipline_ids,
              goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
              previous_attempts,
              etl_version_set)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?::text[], ?, ?, ?, ?, ?::jsonb, ?::jsonb)
         RETURNING id
         """,
         (
@@ -382,6 +385,7 @@ def create_race_event(
             event_locale_lng,
             race_url,
             framework_sport,
+            sport_sub_format,
             included_discipline_ids,
             goal_outcome,
             first_time_at_distance,
@@ -504,7 +508,7 @@ def get_race_event(db, user_id: int, race_event_id: int) -> dict[str, Any] | Non
                race_terrain,
                event_locale_name, event_locale_mapbox_id, event_locale_place_name,
                event_locale_lat, event_locale_lng,
-               race_url, framework_sport, included_discipline_ids,
+               race_url, framework_sport, sport_sub_format, included_discipline_ids,
                goal_outcome, first_time_at_distance, time_goal, race_pack_weight_kg,
                previous_attempts,
                created_at, updated_at
@@ -567,6 +571,7 @@ def update_race_event(
     event_locale_lng: float | None = None,
     race_url: str | None = None,
     framework_sport: str | None = None,
+    sport_sub_format: str | None = None,
     included_discipline_ids: list[str] | None = None,
     goal_outcome: str | None = None,
     first_time_at_distance: bool | None = None,
@@ -614,6 +619,7 @@ def update_race_event(
                event_locale_lng = ?,
                race_url = ?,
                framework_sport = ?,
+               sport_sub_format = ?,
                included_discipline_ids = ?::text[],
                goal_outcome = ?,
                first_time_at_distance = ?,
@@ -641,6 +647,7 @@ def update_race_event(
             event_locale_lng,
             race_url,
             framework_sport,
+            sport_sub_format,
             included_discipline_ids,
             goal_outcome,
             first_time_at_distance,

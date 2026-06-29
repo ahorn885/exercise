@@ -80,7 +80,11 @@ from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
 from layer2_modality import resolve_training_substitution
-from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
+from layer2a.builder import (
+    _SUB_FORMAT_SPORTS,
+    Layer2AInputError,
+    q_layer2a_discipline_classifier_payload,
+)
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
 from layer2d.builder import q_layer2d_injury_risk_profile_payload
@@ -109,6 +113,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    PlanManagementState,
     RaceEventPayload,
     TrainingSubstitutionPayload,
 )
@@ -120,6 +125,7 @@ from layer4.hashing import (
 )
 from layer4.phase_structure import phase_structure_from_3b
 from layer4.plan_create import _compute_total_weeks
+from plan_management import derive_expected_race_temp_c, derive_heat_acclim_state
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -137,6 +143,7 @@ import locations
 from athlete_event_windows_repo import load_event_windows
 from athlete_gear_repo import GEAR_REGISTRY, load_gear_locales
 from race_events_repo import load_target_race_event_payload
+from sport_sub_format_repo import default_sub_format
 
 
 _AUTO_FIRE_DAYS_TO_EVENT_MAX = 14
@@ -1099,9 +1106,35 @@ def _upstream_full_cone(
         if target_race_event is not None
         else None
     )
+    # #254 / D-17 slice B — compose the Layer 2A sport input from the two-column
+    # model (D1′). `framework_sport` stays the TOP-LEVEL name everywhere else in
+    # the cone (2C/2D/3A/3B/2E read it as the bridge key); only Layer 2A needs
+    # the sub-format so its PLA join (phase_load_allocation, sub-format-keyed)
+    # resolves to real bands instead of silent NULLs. Resolution: the athlete's
+    # chosen `sport_sub_format` wins; else, for a known sub-format parent, the
+    # Layer-0 curated default (`sport_sub_format_map.is_default`); else the bare
+    # name unchanged (single-format sports, where the default lookup would be a
+    # no-op anyway — gated on `_SUB_FORMAT_SPORTS` so non-parents skip the read).
+    sub_format_override = (
+        target_race_event.sport_sub_format if target_race_event is not None else None
+    )
+    if sub_format_override:
+        framework_sport_for_2a = sub_format_override
+    elif framework_sport in _SUB_FORMAT_SPORTS:
+        framework_sport_for_2a = (
+            default_sub_format(db, framework_sport) or framework_sport
+        )
+    else:
+        framework_sport_for_2a = framework_sport
+    # Rule #15 — log the compose inputs + the chosen 2A sport.
+    print(
+        f"_upstream_full_cone: user_id={user_id} framework_sport={framework_sport!r} "
+        f"sport_sub_format={sub_format_override!r} -> "
+        f"framework_sport_for_2a={framework_sport_for_2a!r}"
+    )
     layer2a_payload = q_layer2a_discipline_classifier_payload(
         db,
-        framework_sport=framework_sport,
+        framework_sport=framework_sport_for_2a,
         discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
         athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
@@ -1293,6 +1326,30 @@ def _upstream_full_cone(
     included_disciplines = [
         d for d in layer2a_payload.disciplines if d.inclusion == "included"
     ]
+
+    # Plan Management contract (`Plan_Management_Spec_v1.md` §3) — assembled at
+    # read time for the 2E §5.8 heat overlay (#220). `current_phase` keeps the
+    # 3B start-phase derivation; the week-indexed §5.1 `derive_current_phase`
+    # stays unwired (a #221 gap, tracked) and is out of scope here. Coordinates
+    # for `expected_race_temp_c` come from the race-event payload (the 2E
+    # target-event shape doesn't carry them), keyed by the same str event_id.
+    heat_acclim_state, heat_acclim_data_sparse = derive_heat_acclim_state(
+        db, user_id, today
+    )
+    coords_by_event_id: dict[str, tuple[float | None, float | None]] = {}
+    if target_race_event is not None:
+        coords_by_event_id[str(target_race_event.race_event_id)] = (
+            target_race_event.event_locale_lat,
+            target_race_event.event_locale_lng,
+        )
+    plan_management_state = PlanManagementState(
+        current_phase=layer3b_payload.periodization_shape.start_phase,
+        heat_acclim_state=heat_acclim_state,
+        expected_race_temp_c=derive_expected_race_temp_c(
+            target_events, coords_by_event_id, today
+        ),
+    )
+
     layer2e_payload = q_layer2e_nutrition_baseline_payload(
         db,
         identity=layer1_payload.identity,
@@ -1302,8 +1359,9 @@ def _upstream_full_cone(
         lifestyle=layer1_payload.lifestyle,
         included_disciplines=included_disciplines,
         framework_sport=framework_sport,
-        current_phase=layer3b_payload.periodization_shape.start_phase,
+        plan_management_state=plan_management_state,
         etl_version_set=etl_version_set,
+        heat_acclim_data_sparse=heat_acclim_data_sparse,
         athlete_id=str(user_id),
         today=today,
     )

@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover
     requests = None  # type: ignore[assignment]
 
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _NORMALS_YEARS = 5  # recent complete years to average
 _WINDOW_DAYS = 3  # +/- days around the event's month/day
 _TIMEOUT_S = 6
@@ -151,3 +152,43 @@ def get_expected_conditions(
         sample_days=precip_days,
         sample_years=_NORMALS_YEARS,
     )
+
+
+def get_forecast_high(
+    latitude: float | None,
+    longitude: float | None,
+    target_date: date,
+    *,
+    fetcher: Fetcher | None = None,
+) -> float | None:
+    """Forecast daily-high °C for ``target_date`` at ``(latitude, longitude)``.
+
+    The forecast leg of `Plan_Management_Spec_v1.md` §5.3.2 — the sibling to
+    `get_expected_conditions` for events inside Open-Meteo's ~14-day forecast
+    horizon. Hits the forecast endpoint (no key required, same `Fetcher`
+    injection) and returns the `temperature_2m_max` for the target day, or
+    ``None`` on missing coordinates / network error / malformed-or-empty
+    response. Best-effort by design: a ``None`` lets §5.3 fall back to the
+    climate normal (`_blend`).
+    """
+    if latitude is None or longitude is None:
+        return None
+
+    fetch = fetcher or _default_fetch
+    data = fetch(
+        _FORECAST_URL,
+        {
+            "latitude": round(float(latitude), 3),
+            "longitude": round(float(longitude), 3),
+            "start_date": target_date.isoformat(),
+            "end_date": target_date.isoformat(),
+            "daily": "temperature_2m_max",
+            "timezone": "auto",
+        },
+    )
+    if not data:
+        return None
+    highs = (data.get("daily") or {}).get("temperature_2m_max") or []
+    if not highs or highs[0] is None:
+        return None
+    return round(float(highs[0]), 1)
