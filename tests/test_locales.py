@@ -30,14 +30,18 @@ from layer4.cache import (
 )
 from routes.locales import (
     _TRN_PATTERN,
+    _address_fingerprint,
     _category_default_private,
+    _create_gym_profile,
     _edit_locale,
     _evict_layer2b_on_terrain_change,
     _evict_layer2c_on_equipment_change,
     _find_gym_profile,
+    _find_gym_profile_by_fingerprint,
     _hydrate_locale_terrain_ids,
     _parse_locale_terrain,
     _resolve_private,
+    _resolve_shared_profile,
     _terrain_choices,
     delete_locale,
 )
@@ -885,3 +889,143 @@ class TestEditPrivacyOverride:
             if 'INSERT INTO gym_profiles' in sql
         ]
         assert gym_insert[0][6] is False
+
+
+# ─── #971 — name+geo crowd-source dedup ─────────────────────────────────────
+
+
+class TestAddressFingerprint:
+    """`_address_fingerprint(name, lat, lng)` — the name+geo dedup key. Same
+    hotel under minor coordinate drift → one bucket; same-name venues far apart
+    → distinct buckets; missing name/coords → None (mapbox_id-only matchable)."""
+
+    def test_normalizes_name_and_buckets_geo(self):
+        assert _address_fingerprint('Hilton Downtown', 30.2711, -97.7437) == (
+            'hilton downtown|30.271|-97.744'
+        )
+
+    def test_punctuation_and_case_collapse_to_same_key(self):
+        a = _address_fingerprint('Courtyard by Marriott®', 40.0001, -70.0001)
+        b = _address_fingerprint('  courtyard  by   marriott ', 40.0001, -70.0001)
+        assert a == b == 'courtyard by marriott|40.000|-70.000'
+
+    def test_same_hotel_minor_coord_drift_same_bucket(self):
+        # Two Mapbox lookups for the same hotel whose coords drift within the
+        # ~111 m grid resolve to one bucket — the dedup the issue is about.
+        a = _address_fingerprint('Marriott', 30.2711, -97.7437)
+        b = _address_fingerprint('Marriott', 30.2714, -97.7442)
+        assert a == b
+
+    def test_same_chain_far_apart_differs(self):
+        austin = _address_fingerprint('Marriott', 30.27, -97.74)
+        dallas = _address_fingerprint('Marriott', 32.78, -96.80)
+        assert austin != dallas
+
+    def test_missing_name_or_coords_returns_none(self):
+        assert _address_fingerprint('', 30.0, -97.0) is None
+        assert _address_fingerprint('Hilton', None, -97.0) is None
+        assert _address_fingerprint('Hilton', 30.0, None) is None
+        # A name that normalizes to empty (pure punctuation) is unmatchable.
+        assert _address_fingerprint('!!!', 30.0, -97.0) is None
+
+    def test_non_numeric_coords_returns_none(self):
+        assert _address_fingerprint('Hilton', 'x', 'y') is None
+
+
+class TestFindGymProfileByFingerprint:
+    """`_find_gym_profile_by_fingerprint` — the mapbox-miss fallback. Excludes
+    private profiles (mirrors `_find_gym_profile`) and short-circuits on None."""
+
+    def test_query_excludes_private_and_passes_fingerprint(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        _find_gym_profile_by_fingerprint(conn, 'hilton|30.271|-97.744')
+        assert conn.calls, 'expected a SELECT on gym_profiles'
+        sql, params = conn.calls[0]
+        assert 'FROM gym_profiles' in sql
+        assert 'address_fingerprint' in sql
+        assert 'private' in sql.lower()
+        assert params == ('hilton|30.271|-97.744',)
+
+    def test_none_fingerprint_short_circuits(self):
+        conn = _FakeConn()
+        assert _find_gym_profile_by_fingerprint(conn, None) is None
+        assert conn.calls == []
+
+
+class TestCreateGymProfileStampsFingerprint:
+    """`_create_gym_profile` writes the name+geo dedup key, appended LAST so the
+    positional params the privacy tests assert (private at index 6) don't
+    shift."""
+
+    def test_insert_includes_fingerprint_as_last_param(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'id': 5})  # RETURNING id
+        profile = _FakeRow({
+            'locale_name': 'Hilton Downtown', 'category': 'hotel_gym',
+            'mapbox_id': 'mb.1', 'lat': 30.2711, 'lng': -97.7437,
+        })
+        new_id = _create_gym_profile(conn, 1, profile, {'Barbell'}, {'Barbell'})
+        assert new_id == 5
+        inserts = [
+            (sql, params) for sql, params in conn.calls
+            if 'INSERT INTO gym_profiles' in sql
+        ]
+        assert inserts, 'expected a gym_profiles INSERT'
+        sql, params = inserts[0]
+        assert 'address_fingerprint' in sql
+        # Pre-existing positional contract is intact...
+        assert params[1] == 'Hilton Downtown'   # display_name
+        assert params[2] == 'hotel_gym'         # category
+        assert params[6] is False               # private (shareable category)
+        # ...and the fingerprint rides at the end.
+        assert params[-1] == 'hilton downtown|30.271|-97.744'
+
+    def test_missing_coords_stamps_null_fingerprint(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'id': 6})
+        # Categoryless, coordinate-less locale (legacy shape) → NULL fingerprint.
+        profile = _FakeRow({'locale_name': 'Home'})
+        _create_gym_profile(conn, 1, profile, set(), set())
+        params = next(
+            params for sql, params in conn.calls
+            if 'INSERT INTO gym_profiles' in sql
+        )
+        assert params[-1] is None
+
+
+class TestResolveSharedProfileFingerprintFallback:
+    """`_resolve_shared_profile` falls back to the name+geo key only when the
+    mapbox_id lookup misses, and leaves it untouched when mapbox_id hits."""
+
+    def test_falls_back_to_fingerprint_when_mapbox_misses(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)  # _find_gym_profile(mapbox) → miss
+        peer = {'id': 77, 'created_by_user_id': 99, 'equipment': '["Barbell"]'}
+        conn.queue_response(row=peer)  # _find_gym_profile_by_fingerprint → hit
+        profile = _FakeRow({
+            'mapbox_id': 'mb.new', 'gym_profile_id': None,
+            'locale_name': 'Hilton Downtown', 'lat': 30.2711, 'lng': -97.7437,
+        })
+        shared, gid = _resolve_shared_profile(conn, 1, profile)
+        assert gid is None
+        assert shared is not None and shared['id'] == 77
+        # The second query is the fingerprint lookup carrying the computed key.
+        fp_calls = [
+            (sql, params) for sql, params in conn.calls
+            if 'address_fingerprint' in sql
+        ]
+        assert fp_calls
+        assert fp_calls[0][1] == ('hilton downtown|30.271|-97.744',)
+
+    def test_no_fallback_when_mapbox_hits(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'id': 5, 'created_by_user_id': 99})  # mapbox hit
+        profile = _FakeRow({
+            'mapbox_id': 'mb.x', 'gym_profile_id': None,
+            'locale_name': 'Hilton', 'lat': 30.0, 'lng': -97.0,
+        })
+        shared, gid = _resolve_shared_profile(conn, 1, profile)
+        assert shared['id'] == 5
+        # No fingerprint query — the exact mapbox_id match wins.
+        assert not any('address_fingerprint' in sql for sql, _ in conn.calls)
