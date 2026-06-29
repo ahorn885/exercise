@@ -62,7 +62,7 @@ class _Conn:
 
 def _row(**kw):
     base = {'id': 1, 'nudge_type': 'connect_provider_14d',
-            'created_at': None, 'dismissed_at': None}
+            'created_at': None, 'dismissed_at': None, 'read_at': None}
     base.update(kw)
     return _FakeRow(base)
 
@@ -118,23 +118,32 @@ def test_feed_empty_all_caught_up(monkeypatch):
     assert 'style="' not in html
 
 
-def test_settings_renders_readonly(monkeypatch):
-    # §22 doesn't read account_nudges (it's registry-derived) — empty
-    # context-processor reads are enough to render.
+def test_settings_renders_preference_matrix(monkeypatch):
+    # §22 (#963) is now the per-type × per-channel delivery matrix. It reads
+    # notification_preferences (empty here → registry defaults render).
     client = _client(monkeypatch, [], [])
     resp = client.get('/notifications/settings')
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
     assert 'How AIDSTATION reaches you.' in html
-    # Both channels described; at least one live registry reminder shown.
+    # All three channels are column headers.
     assert 'In-app' in html
+    assert 'Push' in html
     assert 'Email' in html
-    assert 'fitness provider connected' in html
-    # Honest no-toggle posture: no checkboxes/selects, CSP-clean.
-    assert 'type="checkbox"' not in html
-    assert '<select' not in html
+    # Registry types appear as rows.
+    assert 'Plan ready' in html
+    assert 'Science update affects your plan' in html
+    # Functional matrix: real checkboxes named pref:<type>:<channel>, posting
+    # back to the settings endpoint. CSP-clean (no inline styles/handlers).
+    assert 'type="checkbox"' in html
+    assert 'name="pref:plan_ready:email"' in html
+    assert 'action="/notifications/settings"' in html
+    assert 'Save preferences' in html
+    # Push is wired-but-pending, surfaced honestly.
+    assert 'Coming with the app' in html
     assert 'style="' not in html
+    assert 'onclick=' not in html
 
 
 def test_command_palette_and_shortcuts_in_shell(monkeypatch):

@@ -1775,6 +1775,10 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .nf-meta { font-size: 10px; letter-spacing: 0.1em; color: var(--fg-3); margin: 6px 0 0; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
 .app .nf-cta { display: inline-block; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent); }
 .app .nf-dismiss { margin: 0; flex-shrink: 0; }
+.app .nf-row-actions { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; align-items: flex-end; }
+.app .nf-mark { margin: 0; }
+.app .nf-readall { margin: 0; display: inline-block; }
+.app .nf-unread .nf-msg { font-weight: 700; }
 .app .nf-list-muted .nf-msg { font-weight: 500; color: var(--fg-2); }
 .app .nf-earlier { margin-top: 6px; }
 .app .nf-earlier .eyebrow { margin-bottom: 8px; }
@@ -1783,11 +1787,26 @@ body.bulk-mode { padding-bottom: 80px; }
 
 @media (max-width: 859.98px) {
   .app .nf-row { flex-wrap: wrap; }
-  .app .nf-dismiss { width: 100%; margin-top: 8px; }
+  .app .nf-row-actions { flex-direction: row; width: 100%; margin-top: 8px; justify-content: flex-end; }
 }
 
-/* §22 Notification settings (read-only) */
+/* §22 Notification settings — per-type × per-channel delivery matrix (#963) */
 .app .ns-wrap { max-width: 760px; }
+.app .ns-matrix-scroll { overflow-x: auto; margin-top: 12px; }
+.app .ns-matrix { width: 100%; border-collapse: collapse; }
+.app .ns-matrix th, .app .ns-matrix td { text-align: left; padding: 12px 10px; vertical-align: top; border-top: 1px solid var(--hairline-2); }
+.app .ns-matrix thead th { border-top: 0; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); font-weight: 600; }
+.app .ns-matrix-ch { white-space: nowrap; }
+.app .ns-matrix-cell { white-space: nowrap; }
+.app .ns-matrix-type { min-width: 200px; }
+.app .ns-row-label { display: block; font-size: 14px; font-weight: 600; }
+.app .ns-row-desc { display: block; font-size: 12px; color: var(--fg-3); margin-top: 3px; line-height: 1.4; font-weight: 400; }
+.app .ns-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+.app .ns-toggle-text { color: var(--fg-2); }
+.app .ns-toggle-pending { opacity: 0.78; }
+.app .ns-na { color: var(--fg-3); }
+.app .ns-actions { margin-top: 16px; }
+/* §22 channel notes */
 .app .ns-channels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }
 .app .ns-channel { border: 1px solid var(--hairline-2); border-radius: 10px; padding: 14px; }
 .app .ns-channel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

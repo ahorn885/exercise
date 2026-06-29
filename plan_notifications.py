@@ -29,7 +29,23 @@ from __future__ import annotations
 
 from email_helper import send_email
 from email_templates import render_email, public_base_url
+from notification_prefs import type_for_plan_status as notif_type_for_plan_status
 from plan_naming import generated_plan_name, target_race_name
+
+
+def _email_channel_enabled(db, user_id: int, type_key: str) -> bool:
+    """True iff the athlete wants email for this notification type (#963).
+
+    Thin best-effort wrapper over the preference repo: a missing table (SQLite
+    dev) or any read fault fails open to the registry default (send), so the
+    email path is deploy-safe before the preference store lands and a store
+    hiccup never suppresses a real notification."""
+    try:
+        from notification_preferences_repo import channel_enabled
+        return channel_enabled(db, user_id, type_key, 'email')
+    except Exception as exc:  # noqa: BLE001 — fail open to the default (send)
+        print(f"_email_channel_enabled: pref read failed, sending anyway: {exc}")
+        return True
 
 
 def claim_terminal_notification(db, user_id: int, plan_version_id: int) -> bool:
@@ -149,6 +165,19 @@ def notify_plan_terminal(db, user_id: int, plan_version_id: int,
             )
             return True
 
+        # Honour the athlete's per-type email opt-in (#963). Fails open to the
+        # registry default (send) on any preference-store fault — a pref hiccup
+        # must never silently swallow a plan-lifecycle email. In-app delivery is
+        # gated separately at badge-read time (get_unseen_plan_notifications).
+        type_key = notif_type_for_plan_status(status)
+        if type_key and not _email_channel_enabled(db, user_id, type_key):
+            print(
+                f"notify_plan_terminal: email opted out for {type_key} "
+                f"(plan_version_id={plan_version_id} user_id={user_id}); "
+                f"in-app badge only"
+            )
+            return True
+
         display_name = (
             (row.get('display_name') or row.get('username') or '') if row else ''
         ).strip()
@@ -206,9 +235,21 @@ def get_unseen_plan_notifications(db, user_id: int) -> list[dict]:
         "ORDER BY notified_at DESC",
         (user_id,),
     ).fetchall()
+    # Honour an explicit in-app opt-out per notification type (#963). Only a
+    # stored `enabled = FALSE` suppresses the badge; the default (no row) keeps
+    # showing it. One small read, fail-closed to the empty set so a store fault
+    # never hides notifications.
+    try:
+        from notification_preferences_repo import disabled_in_app_types
+        muted = disabled_in_app_types(db, user_id)
+    except Exception as exc:  # noqa: BLE001 — suppress nothing on a read fault
+        print(f"get_unseen_plan_notifications: in_app gate read failed: {exc}")
+        muted = set()
     out = []
     for r in rows:
         status = r['generation_status']
+        if notif_type_for_plan_status(status) in muted:
+            continue
         out.append({
             'id': r['id'],
             'status': status,
