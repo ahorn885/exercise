@@ -363,17 +363,20 @@ def resolve_terrain_feasibility(
 # #884 slice 4b generalizes the gate from {bike, paddle} to every
 # discipline-unlocking gear kind. Two seams matter:
 #   - The discipline's gear kind is read from `gear_discipline_aliases`
-#     (`discipline_gear_kind`), NOT from `modality_groups.group_kind` — the two
-#     taxonomies DIVERGE (modality 'snow'/'climb' vs gear 'ski'/'snow'/'alpine'/
-#     'climbing'), so matching on the modality kind would never find the gear.
-#     For bike/paddle the two coincide, so this is byte-identical there.
+#     (`discipline_gear_kind`), NOT from `modality_groups.group_kind`. The gear
+#     taxonomy is FINER than the modality one — the single modality 'snow' splits
+#     into the gear families 'ski' / 'snow' / 'alpine' (so snowshoes never proxy
+#     for skis), which have no modality-vocab name. (The shared kinds — bike,
+#     paddle, snow, climb — are named identically across both, #884 slice 4b.)
+#     So the gear-side kind is the only one that matches owned gear; for bike/
+#     paddle the two coincide, so this is byte-identical there.
 #   - Owned same-kind gear is walked by ASCENDING `fidelity_rank` (0 = best). The
 #     D-028 ski ladder is the case that needs it: classic(0) → skate(1) →
 #     rollerskis(2, dryland). Bike/paddle gear is all rank 0 → the prior slug sort.
 # Swim gear is excluded (it drill-gates cardio drills, slice 3b — not a terrain
 # axis); it carries no `gear_discipline_aliases` row, so it never enters here.
 _CRAFT_GROUP_KINDS = frozenset(
-    {"bike", "paddle", "ski", "snow", "climbing", "alpine"}
+    {"bike", "paddle", "ski", "snow", "climb", "alpine"}
 )
 
 

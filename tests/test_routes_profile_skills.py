@@ -157,7 +157,7 @@ class TestSaveGearTogglesRoute:
         # Scoped DELETE (the four toggle kinds, sorted) + 2 INSERTs.
         delete = conn.calls[0]
         assert delete[0].startswith('DELETE FROM athlete_gear')
-        assert delete[1] == (7, 'alpine', 'climbing', 'ski', 'snow')
+        assert delete[1] == (7, 'alpine', 'climb', 'ski', 'snow')
         inserted = {c[1][1] for c in conn.calls if 'INSERT INTO athlete_gear' in c[0]}
         assert inserted == {'rollerskis', 'climbing_gear'}
         assert conn.commits == 1
@@ -185,7 +185,7 @@ class TestSaveGearTogglesRoute:
         # Replace-all within the toggle kinds → a single scoped DELETE, no INSERT.
         assert len(conn.calls) == 1
         assert conn.calls[0][0].startswith('DELETE FROM athlete_gear')
-        assert conn.calls[0][1] == (7, 'alpine', 'climbing', 'ski', 'snow')
+        assert conn.calls[0][1] == (7, 'alpine', 'climb', 'ski', 'snow')
         assert conn.commits == 1
         assert evictions == [7]
         assert response.status_code == 302

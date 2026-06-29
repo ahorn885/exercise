@@ -16,9 +16,11 @@ from __future__ import annotations
 from layer4.session_feasibility import resolve_craft_terrain_feasibility
 
 # discipline → modality group(s) (subset of live discipline_modality_membership).
-# #884 slice 4b: the gear-toggle disciplines join — note their MODALITY group_kind
-# (snow/climb) DIVERGES from their GEAR kind (ski/snow/climbing/alpine), which is
-# exactly why the cascade now gates on the gear-side `discipline_gear_kind`.
+# #884 slice 4b: the gear-toggle disciplines join — note the GEAR kind is FINER
+# than the MODALITY group_kind (the single modality 'snow' splits into gear
+# 'ski'/'snow'/'alpine'), which is why the cascade gates on the gear-side
+# `discipline_gear_kind`. The shared kinds (climb, snow, bike, paddle) are named
+# identically across both taxonomies (the 'climbing'→'climb' alignment, slice 4b).
 _DISC_GROUPS = {
     "D-001": ["foot"],
     "D-006": ["bike_pavement"],
@@ -31,7 +33,7 @@ _DISC_GROUPS = {
     "D-011": ["paddle_flatwater"],
     "D-028": ["snow_glide"],   # XC skiing — modality 'snow', gear 'ski'
     "D-017": ["snow_travel"],  # snowshoeing — modality 'snow', gear 'snow'
-    "D-012": ["climb"],        # rock climbing — modality 'climb', gear 'climbing'
+    "D-012": ["climb"],        # rock climbing — modality 'climb', gear 'climb'
     "D-018": ["snow_travel"],  # mountaineering — modality 'snow', gear 'alpine'
     "D-021": ["snow_glide"],   # skinning — modality 'snow', gear 'alpine'
     "D-022": ["snow_glide"],   # alpine descent — modality 'snow', gear 'alpine'
@@ -57,7 +59,7 @@ _CRAFT_KIND = {
     "road_bike": "bike", "gravel_bike": "bike", "mountain_bike": "bike",
     "kayak": "paddle", "canoe": "paddle", "packraft": "paddle",
     "classic_xc_ski": "ski", "skate_xc_ski": "ski", "rollerskis": "ski",
-    "snowshoes": "snow", "climbing_gear": "climbing",
+    "snowshoes": "snow", "climbing_gear": "climb",
     "mountaineering": "alpine", "skimo_at": "alpine",
 }
 # discipline → gear kind, derived off the alias table exactly as the orchestrator
@@ -332,10 +334,10 @@ class TestGearToggleClimbAlpine:
 
     def test_gearless_climber_strength_flags_gear_kind(self):
         # Skilled climber owns NO climbing gear, no machine → the gear STRENGTH
-        # terminal, flagged by the gear kind ('climbing', not 'craft'/'bike').
+        # terminal, flagged by the gear kind ('climb', not 'craft'/'bike').
         r = _resolve("D-012", [], pool=["EX-9"])
         assert r.tier == "strength" and r.craft_tier == "strength"
-        assert r.craft_kind == "climbing"
+        assert r.craft_kind == "climb"
 
     def test_climbing_gear_no_climb_terrain_is_terrain_strength(self):
         # Owns the gear but no crag/wall/machine in cluster → a TERRAIN strength

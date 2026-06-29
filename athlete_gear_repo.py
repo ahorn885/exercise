@@ -38,7 +38,7 @@ from layer4.cache_postgres import PostgresCacheBackend
 # (Decision 10).
 #
 # Two kinds of gear share this keyspace:
-#   - DISCIPLINE-UNLOCKING gear (bike/paddle/ski/snow/climbing/alpine) — aliases
+#   - DISCIPLINE-UNLOCKING gear (bike/paddle/ski/snow/climb/alpine) — aliases
 #     to disciplines in layer0.gear_discipline_aliases (migration 0024). Guarded
 #     in lockstep by test_athlete_gear_repo.test_registry_matches_layer0_keyspace.
 #   - DRILL-GATING swim gear (group_kind 'swim') — #884 slice 3b / Decision 11.
@@ -55,7 +55,11 @@ GEAR_REGISTRY: dict[str, str] = {
     "skate_xc_ski": "ski",
     "rollerskis": "ski",
     "snowshoes": "snow",
-    "climbing_gear": "climbing",
+    # #884 slice 4b — the climbing gear kind is `climb`, aligned with the modality
+    # vocab (`modality_groups.group_kind`), not the divergent `climbing` (Andy
+    # 2026-06-29). ski/snow/alpine keep their finer gear-family names (no modality
+    # equivalent — collapsing them would let snowshoes proxy for skis).
+    "climbing_gear": "climb",
     "mountaineering": "alpine",
     "skimo_at": "alpine",
     # Swim gear — drill-gating, non-discipline-unlocking (slice 3b).
@@ -78,10 +82,10 @@ _ACCESS_VALUES: tuple[str, ...] = ("own", "access")
 # slice of the store. Crafts (bike/paddle) have their own owned-craft picker; swim
 # gear is drill-gating (slice 6) — neither is captured here. These four kinds are
 # the owned-gear toggles that alias to a discipline in `gear_discipline_aliases`
-# (ski/snow/climbing/alpine), so capturing them un-starves the cascade's gear gate
+# (ski/snow/climb/alpine), so capturing them un-starves the cascade's gear gate
 # (#298). The capture writes `athlete_gear`; nothing READS the toggle kinds until
 # the slice-4b cascade extension lands (staged, like the slice-3 store itself).
-_GEAR_TOGGLE_KINDS: frozenset[str] = frozenset({"ski", "snow", "climbing", "alpine"})
+_GEAR_TOGGLE_KINDS: frozenset[str] = frozenset({"ski", "snow", "climb", "alpine"})
 
 # Presentation labels for the gear-toggle picker — the analogue of `athlete.
 # CRAFT_LABELS` for the bike/paddle picker. Slugs are the stored + aliased
@@ -152,7 +156,7 @@ def replace_owned_gear_for_kinds(
     kinds is preserved (#884 slice 4).
 
     Each capture surface owns a slice of the unified store: crafts → {'bike',
-    'paddle'}, gear toggles → {'ski','snow','climbing','alpine'} (slice 4b), swim
+    'paddle'}, gear toggles → {'ski','snow','climb','alpine'} (slice 4b), swim
     → {'swim'} (slice 6). This lets the per-surface forms write their own kinds
     without clobbering the others, while keeping one store the feasibility cascade
     reads (slice 4a). `owned` maps `gear_id → access`; every gear_id must be in
@@ -185,7 +189,7 @@ def replace_owned_gear_for_kinds(
 
 # ─── gear-toggle capture surface (slice 4b) ──────────────────────────────────
 # The profile gear-tab picker for the discipline-unlocking owned-gear toggles
-# (ski/snow/climbing/alpine). Mirrors the owned-craft picker
+# (ski/snow/climb/alpine). Mirrors the owned-craft picker
 # (`athlete_crafts_repo.load_craft_catalog` + `parse`-style helpers): catalog →
 # checkboxes, parse → `{gear_id: 'own'}`, write via `replace_owned_gear_for_kinds`
 # scoped to `_GEAR_TOGGLE_KINDS`. Replace-all within those kinds — an unchecked

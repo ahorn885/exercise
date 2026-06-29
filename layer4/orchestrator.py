@@ -219,7 +219,7 @@ class _UpstreamFullCone:
 # — it drill-gates cardio drills (slice 3b), not a terrain axis. Mirrors
 # `session_feasibility._CRAFT_GROUP_KINDS`.
 _CRAFT_ALIAS_GROUP_KINDS = frozenset(
-    {"bike", "paddle", "ski", "snow", "climbing", "alpine"}
+    {"bike", "paddle", "ski", "snow", "climb", "alpine"}
 )
 
 
