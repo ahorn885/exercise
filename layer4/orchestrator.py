@@ -212,24 +212,30 @@ class _UpstreamFullCone:
     layer3b_payload: Layer3BPayload
 
 
-# #884 slice 4a — the gear `group_kind`s that participate in the craft axis of
-# the feasibility/substitution cascade today. Slice 4b widens this to the other
-# discipline-unlocking kinds (ski/snow/climbing/alpine) when the fidelity-rank
-# walk lands; mirrors `session_feasibility._CRAFT_GROUP_KINDS`.
-_CRAFT_ALIAS_GROUP_KINDS = frozenset({"bike", "paddle"})
+# #884 slice 4b — the gear `group_kind`s that participate in the gear axis of the
+# feasibility/substitution cascade. Generalized from {bike, paddle} to every
+# discipline-unlocking kind (the fidelity-rank walk + the migration-0026
+# craft_terrain rows make ski/snow/climbing/alpine resolvable). Swim is excluded
+# — it drill-gates cardio drills (slice 3b), not a terrain axis. Mirrors
+# `session_feasibility._CRAFT_GROUP_KINDS`.
+_CRAFT_ALIAS_GROUP_KINDS = frozenset(
+    {"bike", "paddle", "ski", "snow", "climb", "alpine"}
+)
 
 
 def _collect_athlete_crafts(layer1_payload: Layer1Payload) -> list[str]:
     """The athlete's owned crafts, read from the unified `athlete_gear` store via
     `Layer1Payload.owned_gear` (#884 slice 3b populates it from `athlete_gear`,
-    riding `layer1_hash`). Filtered to the craft `group_kind`s the feasibility +
-    training-substitution cascade consumes today (bike/paddle); slice 4b widens
-    the gate to the other owned gear kinds (ski/snow/climbing/alpine) via the
-    fidelity-rank walk. Deduped + sorted for a stable cache hash.
+    riding `layer1_hash`). Filtered to the gear `group_kind`s the feasibility +
+    training-substitution cascade consumes (`_CRAFT_ALIAS_GROUP_KINDS` —
+    bike/paddle/ski/snow/climbing/alpine; swim is drill-gating only). Deduped +
+    sorted for a stable cache hash.
 
     #884 slice 4a cutover: the source moved off the cycling/paddling discipline
-    baselines onto `athlete_gear` (the gear store's craft rows are backfilled 1:1
-    from the same craft inventories), so the output is unchanged.
+    baselines onto `athlete_gear`. Slice 4b widens the kind filter so the
+    captured discipline-unlocking gear toggles (ski/snow/climbing/alpine) now feed
+    the cascade too — bike/paddle output is unchanged (the gear store's craft rows
+    are backfilled 1:1 from the same craft inventories).
     """
     from athlete_gear_repo import GEAR_REGISTRY
 
@@ -364,16 +370,20 @@ def _q_craft_discipline_aliases(db: Any) -> dict[str, list[str]]:
     return out
 
 
-def _q_modality_group_kind(db: Any) -> dict[str, str]:
-    """#540 slice 2c.2c — `{group_id: group_kind}` from `layer0.modality_groups`
-    (active rows). The craft axis reads it to find a discipline's `group_kind`
-    (bike/paddle = craft-bearing). Empty dict → the craft axis is inert (every
-    discipline passes straight to the terrain axis)."""
+def _q_gear_fidelity_rank(db: Any) -> dict[str, int]:
+    """#884 slice 4b — `{gear_id: fidelity_rank}` (0 = best) from
+    `layer0.gear_discipline_aliases` (active rows). The rank is per-gear in the
+    seed (each gear carries one rank across its discipline rows — the D-028 ski
+    ladder classic=0/skate=1/rollerskis=2 is the case that needs >0 ranks); MIN
+    collapses defensively if a future gear ever carried multiple. Drives the
+    ascending-rank walk in `resolve_craft_terrain_feasibility`. Empty dict → every
+    gear is rank 0 (the pre-4b slug ordering)."""
     cur = db.execute(
-        "SELECT group_id, group_kind FROM layer0.modality_groups "
-        "WHERE superseded_at IS NULL"
+        "SELECT gear_id, MIN(fidelity_rank) AS rank "
+        "FROM layer0.gear_discipline_aliases "
+        "WHERE superseded_at IS NULL GROUP BY gear_id"
     )
-    return {row["group_id"]: row["group_kind"] for row in cur.fetchall()}
+    return {row["gear_id"]: int(row["rank"]) for row in cur.fetchall()}
 
 
 def _q_craft_group_kind(db: Any) -> dict[str, str]:
@@ -489,7 +499,12 @@ class _FeasibilityInputs:
     craft_kind: dict[str, str]
     craft_terrain: dict[str, set[str]]
     discipline_groups: dict[str, list[str]]
-    group_kind_by_group: dict[str, str]
+    # #884 slice 4b — the gear axis maps read from `gear_discipline_aliases`:
+    # `discipline_gear_kind` (discipline → gear group_kind, the gear-side kind the
+    # cascade gates on) and `craft_fidelity_rank` (gear → rank, 0 = best, driving
+    # the ascending-rank walk).
+    discipline_gear_kind: dict[str, str]
+    craft_fidelity_rank: dict[str, int]
     pool_by_discipline: dict[str, list[str]]
     gated: dict[str, str]
     included: list[Any]
@@ -536,7 +551,18 @@ def _gather_feasibility_inputs(
     craft_kind = _q_craft_group_kind(db)
     craft_terrain = _q_craft_terrain_compatibility(db)
     discipline_groups = _q_modality_groups(db)
-    group_kind_by_group = _q_modality_group_kind(db)
+    # #884 slice 4b — the discipline's gear kind is the GEAR-side kind (read off
+    # `gear_discipline_aliases` via craft_disciplines×craft_kind), NOT the modality
+    # group kind: the two taxonomies diverge for ski/snow/climbing/alpine, so the
+    # cascade must gate on the gear kind to find the gear. Derived here without an
+    # extra query. `craft_fidelity_rank` drives the ascending-rank walk.
+    discipline_gear_kind = {
+        d: craft_kind[g]
+        for g, discs in craft_disciplines.items()
+        for d in discs
+        if g in craft_kind
+    }
+    craft_fidelity_rank = _q_gear_fidelity_rank(db)
 
     # The discipline's own mapped strength pool, ranked best-first by 2C
     # priority. tier 0 = unavailable at this locale set; keep 1/2/3.
@@ -578,7 +604,8 @@ def _gather_feasibility_inputs(
         craft_kind=craft_kind,
         craft_terrain=craft_terrain,
         discipline_groups=discipline_groups,
-        group_kind_by_group=group_kind_by_group,
+        discipline_gear_kind=discipline_gear_kind,
+        craft_fidelity_rank=craft_fidelity_rank,
         pool_by_discipline=pool_by_discipline,
         gated=gated,
         included=included,
@@ -624,7 +651,8 @@ def _resolve_included_feasibility(
             craft_disciplines=fi.craft_disciplines,
             craft_group_kind=fi.craft_kind,
             discipline_groups=fi.discipline_groups,
-            group_kind=fi.group_kind_by_group,
+            discipline_gear_kind=fi.discipline_gear_kind,
+            craft_fidelity_rank=fi.craft_fidelity_rank,
             craft_terrain=fi.craft_terrain,
             locale_order=locale_order,
             cluster_terrain_by_locale=terrain_by_locale,
@@ -696,8 +724,7 @@ def _build_terrain_feasibility(
     owned_crafts = fi.owned_crafts
     craft_terrain = fi.craft_terrain
     craft_kind = fi.craft_kind
-    discipline_groups = fi.discipline_groups
-    group_kind_by_group = fi.group_kind_by_group
+    discipline_gear_kind = fi.discipline_gear_kind
     gated = fi.gated
     included = fi.included
     name_by_discipline = fi.name_by_discipline
@@ -729,11 +756,11 @@ def _build_terrain_feasibility(
     )
 
     def _craft_kind_of(disc_id: str) -> str | None:
-        for g in discipline_groups.get(disc_id, []):
-            k = group_kind_by_group.get(g)
-            if k in ("bike", "paddle"):
-                return k
-        return None
+        # #884 slice 4b — read the gear-side kind (same source the cascade gates
+        # on) so the Rule #15 log reports ski/snow/climbing/alpine, not just
+        # bike/paddle. Returns None for non-gear disciplines (terrain-only).
+        k = discipline_gear_kind.get(disc_id)
+        return k if k in _CRAFT_ALIAS_GROUP_KINDS else None
 
     for d in included:
         d_id = d.discipline_id

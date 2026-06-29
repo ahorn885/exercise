@@ -3,8 +3,11 @@
 `materialize_canonical_wellness(db, uid, target_date)` (re)builds the single
 best-of `canonical_daily_wellness` row for one (user, date): it merges the three
 genuinely-multi-source fields (sleep hours / HRV / resting HR) field-by-field
-across the five device sources — freshest-non-null, garmin>whoop>oura>polar>coros
-tiebreak — and copies the Garmin-origin context fields (HRV/RHR baselines,
+across the five device sources — most-complete-record-wins with a per-metric
+gap-fill (decision 2 / #196 Phase 5 Track B, a port of the cardio merge), plus an
+optional per-athlete HARD PIN (`source_preferences_repo`, B2) that overrides the
+primary pick; garmin>whoop>oura>polar>coros breaks completeness ties — and copies
+the Garmin-origin context fields (HRV/RHR baselines,
 sleep score, training readiness, VO2max, acute training load) straight from
 `daily_wellness_metrics`. Idempotent: called on every wellness ingest for the
 affected date (Slice 2.2 wires the call sites), upserts ON CONFLICT (user_id,date).
@@ -21,9 +24,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-# Device priority for the freshest-non-null tiebreak. Garmin first (richest daily
+# Device priority for the completeness tiebreak. Garmin first (richest daily
 # source), then Whoop + Oura (dedicated recovery devices) above the watches
-# Polar/COROS. The sole owner since Slice 2.3 deduped the layer3a copy.
+# Polar/COROS. The sole owner since Slice 2.3 deduped the layer3a copy. As of B2
+# this is only a tiebreaker (between equally-complete records / a hard pin
+# overrides it); the primary pick is the most-complete daily record.
 _WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
     "garmin": 5,
     "whoop": 4,
@@ -36,18 +41,45 @@ _WELLNESS_SOURCE_PRIORITY: dict[str, int] = {
 _Candidate = tuple["datetime | None", float, str]
 
 
-def _coalesce(candidates: list[_Candidate]) -> tuple[float | None, str | None]:
-    """Freshest-non-null pick: newest ingest timestamp wins; ties (equal/missing
-    timestamps) break on `_WELLNESS_SOURCE_PRIORITY`. Deterministic so the merged
-    row — and the 3A bundle hash that reads it (Slice 2.3) — is stable across
-    resumable passes."""
+def _rank_sources(*metric_candidates: list[_Candidate]) -> list[str]:
+    """Order a day's sources richest-first for the most-complete merge: a source's
+    completeness = how many of the tracked metrics (sleep / hrv / rhr) it carries
+    that day; ties break on `_WELLNESS_SOURCE_PRIORITY` (garmin>whoop>oura>polar>
+    coros). This single order drives both the primary pick and the per-metric
+    gap-fill — a faithful port of the cardio merge (decision 2 / #196 Phase 5
+    Track B). Deterministic so the merged row — and the 3A integration_bundle_hash
+    that reads it (Slice 2.3) — is stable across resumable passes."""
+    score: dict[str, int] = {}
+    for cands in metric_candidates:
+        for src in {c[2] for c in cands}:
+            score[src] = score.get(src, 0) + 1
+    return sorted(score, key=lambda s: (-score[s], -_WELLNESS_SOURCE_PRIORITY[s]))
+
+
+def _coalesce(
+    candidates: list[_Candidate],
+    ranked: list[str],
+    pinned: "str | None",
+) -> tuple[float | None, str | None]:
+    """Pick one value+source for a single metric. HARD PIN first: if `pinned` is
+    set and carries a value for this metric, it wins (decision 1). Else most-
+    complete: the first source in `ranked` (richest daily record first) that has a
+    value here — i.e. primary-first per-metric gap-fill. Within a source the
+    freshest row wins (defensive — at most one row/source/day). Deterministic so
+    the 3A bundle hash that reads this (Slice 2.3) is stable across passes."""
     if not candidates:
         return None, None
-    best = max(
-        candidates,
-        key=lambda c: (c[0] or datetime.min, _WELLNESS_SOURCE_PRIORITY[c[2]]),
-    )
-    return best[1], best[2]
+    by_source: dict[str, tuple["datetime | None", float]] = {}
+    for ts, val, src in candidates:
+        cur = by_source.get(src)
+        if cur is None or (ts or datetime.min) >= (cur[0] or datetime.min):
+            by_source[src] = (ts, val)
+    if pinned is not None and pinned in by_source:
+        return by_source[pinned][1], pinned
+    for src in ranked:
+        if src in by_source:
+            return by_source[src][1], src
+    return None, None
 
 
 # Columns written to canonical_daily_wellness (order shared by INSERT + upsert).
@@ -65,6 +97,13 @@ _GARMIN_CTX_COLS = (
 
 def materialize_canonical_wellness(db: Any, uid: int, target_date: str) -> None:
     """(Re)build the canonical_daily_wellness row for (uid, target_date)."""
+    # Read the athlete's wellness source pin once (B2). A hard pin wins per metric
+    # when the pinned provider has a value; absent/empty → most-complete merge.
+    # Lazy import: source_preferences_repo imports this module (it reuses
+    # `_WELLNESS_SOURCE_PRIORITY`), so importing it at module scope would cycle.
+    from source_preferences_repo import WELLNESS, get_source_preferences
+    wellness_pin = get_source_preferences(db, uid).get(WELLNESS)
+
     sleep_c: list[_Candidate] = []
     hrv_c: list[_Candidate] = []
     rhr_c: list[_Candidate] = []
@@ -141,9 +180,10 @@ def materialize_canonical_wellness(db: Any, uid: int, target_date: str) -> None:
             if rhr is not None:
                 rhr_c.append((r["fetched_at"], rhr, provider))
 
-    sleep_h, sleep_src = _coalesce(sleep_c)
-    hrv_v, hrv_src = _coalesce(hrv_c)
-    rhr_v, rhr_src = _coalesce(rhr_c)
+    ranked = _rank_sources(sleep_c, hrv_c, rhr_c)
+    sleep_h, sleep_src = _coalesce(sleep_c, ranked, wellness_pin)
+    hrv_v, hrv_src = _coalesce(hrv_c, ranked, wellness_pin)
+    rhr_v, rhr_src = _coalesce(rhr_c, ranked, wellness_pin)
 
     coalesced = {
         "total_sleep_hours": round(sleep_h, 3) if sleep_h is not None else None,
@@ -187,8 +227,9 @@ def materialize_canonical_wellness(db: Any, uid: int, target_date: str) -> None:
         f"{f}<-{s}" for f, s in (("sleep", sleep_src), ("hrv", hrv_src), ("rhr", rhr_src))
         if s is not None)
     ctx_present = ", ".join(c for c in _GARMIN_CTX_COLS if ctx[c] is not None)
+    pin_note = f" pin={wellness_pin}" if wellness_pin else ""
     print(f"[wellness-canon] user={uid} date={target_date} "
-          f"merged={{{merged}}} garmin_ctx={{{ctx_present}}}")
+          f"merged={{{merged}}} garmin_ctx={{{ctx_present}}}{pin_note}")
 
 
 # ── Slice 2.2: ingest-hook + backfill entry points ────────────────────────

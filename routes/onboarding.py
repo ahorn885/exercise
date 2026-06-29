@@ -966,22 +966,14 @@ def _write_account_nudge(db, uid, nudge_type):
     )
 
 
-@bp.route('/target-race', methods=['GET'])
-def target_race():
-    """Render the v5 §H.2 target-race form (Step 3c).
+def _render_target_race_form(db, uid, target):
+    """Render the onboarding target-race form (Step 3c).
 
-    If the athlete already has a target race_events row (e.g., migrated
-    from legacy athlete_profile.target_event_*, or returning to onboarding
-    after a prior save), the form pre-populates from it and POST updates
-    the existing row. Otherwise POST creates a new row with
-    `is_target_event=TRUE`.
+    `target` is the loaded DB row on GET (or None for a first-time athlete), or
+    a `routes.race_events._race_form_echo` dict when re-rendering after a failed
+    save POST so the athlete's auto-filled fetched details + picked distance
+    survive instead of being wiped by a redirect to a blank form (#947).
     """
-    db = get_db()
-    uid = current_user_id()
-
-    target = _get_target_race_row(db, uid)
-    terrain_choices = _terrain_choices(db)
-
     # D-73 Phase 5.2 Bucket E.(b)-B2 + E.(c)-C1 — discipline grid for the
     # B2 `<select multiple>` rendered as checkboxes + the per-row terrain
     # discipline_id `<select>`. Initial render resolves
@@ -1012,7 +1004,7 @@ def target_race():
     return render_template(
         'onboarding/target_race.html',
         target=target,
-        terrain_choices=terrain_choices,
+        terrain_choices=_terrain_choices(db),
         discipline_choices=discipline_choices,
         initial_framework_sport=initial_framework_sport,
         framework_sport_choices=framework_sport_choices,
@@ -1021,6 +1013,21 @@ def target_race():
         mapbox_acked=_disclosure_acked(db, uid),
         mapbox_disclosure_version=MAPBOX_DISCLOSURE_VERSION,
     )
+
+
+@bp.route('/target-race', methods=['GET'])
+def target_race():
+    """Render the v5 §H.2 target-race form (Step 3c).
+
+    If the athlete already has a target race_events row (e.g., migrated
+    from legacy athlete_profile.target_event_*, or returning to onboarding
+    after a prior save), the form pre-populates from it and POST updates
+    the existing row. Otherwise POST creates a new row with
+    `is_target_event=TRUE`.
+    """
+    db = get_db()
+    uid = current_user_id()
+    return _render_target_race_form(db, uid, _get_target_race_row(db, uid))
 
 
 @bp.route('/target-race', methods=['POST'])
@@ -1034,6 +1041,27 @@ def target_race_save():
     """
     db = get_db()
     uid = current_user_id()
+
+    # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
+    # location hidden inputs ride alongside the rest of the form (populated
+    # client-side by the picker JS); race_url is a new athlete-typed input.
+    # `_race_form_echo` re-renders the form with the athlete's input on any
+    # failed-validation gate below instead of redirecting to a blank one (#947).
+    from routes.race_events import (
+        _extract_mapbox_locale_from_form,
+        _parse_estimated_duration_hr,
+        _parse_first_time_at_distance,
+        _parse_goal_outcome,
+        _parse_pack_weight_kg,
+        _parse_previous_attempts,
+        _parse_primary_metric,
+        _parse_race_url,
+        _race_form_echo,
+        _remap_discipline_filter_on_sport_change,
+        _rescope_terrain_to_included,
+        _terrain_discipline_mismatch_flash,
+        _terrain_discipline_mismatches,
+    )
 
     name = _parse_str_field(request.form, 'name')
     event_date = _parse_date_field(request.form, 'event_date')
@@ -1050,7 +1078,7 @@ def target_race_save():
     if errors:
         for msg in errors:
             flash(msg, 'danger')
-        return redirect(url_for('onboarding.target_race'))
+        return _render_target_race_form(db, uid, _race_form_echo(request.form))
 
     new_distance_km = _parse_decimal_field(request.form, 'distance_km')
     new_total_elevation_gain_m = _parse_decimal_field(
@@ -1058,23 +1086,6 @@ def target_race_save():
     )
     new_notes = _parse_str_field(request.form, 'notes')
     new_race_terrain = _parse_race_terrain(request.form)
-    # D-73 Phase 5.2 walkthrough #1 + #2a (2026-05-21) — Mapbox-anchored race
-    # location hidden inputs ride alongside the rest of the form (populated
-    # client-side by the picker JS); race_url is a new athlete-typed input.
-    from routes.race_events import (
-        _extract_mapbox_locale_from_form,
-        _parse_estimated_duration_hr,
-        _parse_first_time_at_distance,
-        _parse_goal_outcome,
-        _parse_pack_weight_kg,
-        _parse_previous_attempts,
-        _parse_primary_metric,
-        _parse_race_url,
-        _remap_discipline_filter_on_sport_change,
-        _rescope_terrain_to_included,
-        _terrain_discipline_mismatch_flash,
-        _terrain_discipline_mismatches,
-    )
     new_locale_fields = _extract_mapbox_locale_from_form(request.form)
     new_race_url = _parse_race_url(request.form)
     new_estimated_duration_hr = _parse_estimated_duration_hr(request.form)
@@ -1093,7 +1104,7 @@ def target_race_save():
     # valve for athletes who can't find their race in Mapbox.
     if not new_locale_fields['event_locale_mapbox_id']:
         flash('Pick a race location before saving.', 'danger')
-        return redirect(url_for('onboarding.target_race'))
+        return _render_target_race_form(db, uid, _race_form_echo(request.form))
 
     target = _get_target_race_row(db, uid)
     # #892 — re-map (don't wipe) the discipline narrowing when the race event
@@ -1138,7 +1149,7 @@ def target_race_save():
     )
     if mismatches:
         flash(_terrain_discipline_mismatch_flash(mismatches), 'danger')
-        return redirect(url_for('onboarding.target_race'))
+        return _render_target_race_form(db, uid, _race_form_echo(request.form))
 
     if target:
         update_race_event(

@@ -50,6 +50,7 @@ from datetime import date, timedelta
 from flask import (
     Blueprint,
     render_template,
+    make_response,
     request,
     redirect,
     url_for,
@@ -1739,7 +1740,7 @@ def plan_review(plan_version_id: int):
         # the review reflects current reality (#213 Reading-B staleness).
         return _rekick_stale_gate(db, uid, plan_version_id)
 
-    return render_template(
+    resp = make_response(render_template(
         'plan_create/review.html',
         plan_version=plan_version,
         gate=gate,
@@ -1748,6 +1749,9 @@ def plan_review(plan_version_id: int):
         resolve_url=url_for(
             'plan_create.resolve_review_item', plan_version_id=plan_version_id
         ),
+        recheck_url=url_for(
+            'plan_create.recheck_review', plan_version_id=plan_version_id
+        ),
         generate_url=url_for(
             'plan_create.generate_from_review', plan_version_id=plan_version_id
         ),
@@ -1755,7 +1759,16 @@ def plan_review(plan_version_id: int):
             'plan_create.delete_plan', plan_version_id=plan_version_id
         ),
         plans_url=url_for('plans.list_plans'),
-    )
+    ))
+    # The review screen must re-fetch on browser back/forward rather than restore
+    # from the bfcache — otherwise an athlete who clicks [Fix this], edits the
+    # blocker, and hits Back lands on a stale page where "nothing happened" and the
+    # only recourse is a manual reload. `no-store` forces a real GET on return, so
+    # the staleness re-check (`_gate_inputs_changed`) fires and re-evaluates the
+    # gate against the edit (#960). The template's `pageshow` handler is the
+    # belt-and-suspenders for browsers that restore from bfcache anyway.
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    return resp
 
 
 @bp.route('/<int:plan_version_id>/review/resolve', methods=['POST'])
@@ -1861,6 +1874,45 @@ def generate_from_review(plan_version_id: int):
         (plan_version_id, uid),
     )
     db.commit()
+    return redirect(
+        url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
+    )
+
+
+@bp.route('/<int:plan_version_id>/review/recheck', methods=['POST'])
+def recheck_review(plan_version_id: int):
+    """Athlete-initiated "I've fixed it — re-check" from the review screen (#960).
+
+    The deliberate counterpart to the automatic Reading-B staleness re-kick: a
+    blocker can't be acknowledged (§5.1), so fix-the-input → re-check is the only
+    path forward, and the athlete shouldn't have to discover that by reloading the
+    page. Flips the parked row back to `generating` and hands off to the progress
+    poller, which re-runs the pipeline and re-evaluates the Layer 3D gate against
+    current inputs — re-parking with fresh findings, or proceeding to synthesis if
+    the edit cleared the gate. The UPDATE is guarded on `needs_review` so repeat
+    clicks are idempotent."""
+    db = get_db()
+    uid = current_user_id()
+
+    plan_version = _load_plan_version(db, uid, plan_version_id)
+    if plan_version is None or plan_version['generation_status'] != 'needs_review':
+        abort(404)
+
+    db.execute(
+        "UPDATE plan_versions SET generation_status = 'generating', "
+        "generation_error = NULL WHERE id = ? AND user_id = ? "
+        "AND generation_status = 'needs_review'",
+        (plan_version_id, uid),
+    )
+    db.commit()
+    # Rule #15 — make athlete-initiated re-checks observable in /admin/logs so
+    # their frequency is visible alongside the automatic staleness re-fires.
+    print(
+        f"recheck_review: plan_version_id={plan_version_id} uid={uid} — "
+        f"athlete-initiated re-check; needs_review -> generating to re-evaluate "
+        f"the Layer 3D gate against current inputs (#960)"
+    )
+    flash("Re-checking your plan against your latest changes…", 'secondary')
     return redirect(
         url_for('plan_create.plan_progress', plan_version_id=plan_version_id)
     )

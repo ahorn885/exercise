@@ -78,7 +78,7 @@ _KEYSPACE_0024 = {
 # EX126/EX128 in layer0.cardio_drill_gear_requirements (migration 0025); paddles/
 # fins are seeded vocab with no gated drill yet (Andy 2026-06-23).
 _SWIM_GEAR = {"pull_buoy", "kickboard", "paddles", "fins"}
-_GROUP_KINDS = {"bike", "paddle", "ski", "snow", "climbing", "alpine", "swim"}
+_GROUP_KINDS = {"bike", "paddle", "ski", "snow", "climb", "alpine", "swim"}
 
 
 class TestKeyspace:
@@ -173,9 +173,9 @@ class TestReplaceForKinds:
 
     def test_empty_clears_only_those_kinds(self):
         conn = _FakeConn()
-        replace_owned_gear_for_kinds(conn, 1, {}, {"ski", "snow", "climbing", "alpine"})
+        replace_owned_gear_for_kinds(conn, 1, {}, {"ski", "snow", "climb", "alpine"})
         assert len(conn.calls) == 1
-        assert conn.calls[0][1] == (1, "alpine", "climbing", "ski", "snow")
+        assert conn.calls[0][1] == (1, "alpine", "climb", "ski", "snow")
 
     def test_off_surface_gear_raises_and_writes_nothing(self):
         # A craft surface ({bike,paddle}) cannot write a ski-kind gear_id.
@@ -201,7 +201,7 @@ class TestGearToggleCapture:
         # toggle slugs (group_kind ∈ _GEAR_TOGGLE_KINDS). No craft, no swim gear.
         toggle_slugs = {g for g, k in GEAR_REGISTRY.items() if k in _GEAR_TOGGLE_KINDS}
         assert set(GEAR_TOGGLE_LABELS) == toggle_slugs
-        assert _GEAR_TOGGLE_KINDS == {"ski", "snow", "climbing", "alpine"}
+        assert _GEAR_TOGGLE_KINDS == {"ski", "snow", "climb", "alpine"}
 
     def test_catalog_is_toggle_slugs_in_keyspace_order(self):
         catalog = load_gear_toggle_catalog()
@@ -241,7 +241,7 @@ class TestGearToggleCapture:
         conn.queue_response(rows=[
             {"gear_id": "road_bike", "group_kind": "bike", "access": "own"},
             {"gear_id": "rollerskis", "group_kind": "ski", "access": "own"},
-            {"gear_id": "climbing_gear", "group_kind": "climbing", "access": "own"},
+            {"gear_id": "climbing_gear", "group_kind": "climb", "access": "own"},
             {"gear_id": "pull_buoy", "group_kind": "swim", "access": "own"},
         ])
         # _GEAR_IDS order: rollerskis precedes climbing_gear.
