@@ -1,6 +1,6 @@
 # V5 Implementation — Notification Triggers: Plan-Attention Nudge (#964) — Closing Handoff (2026-06-29)
 
-**Branch:** `claude/notification-triggers-staleness-76ptlf` · **PR:** not yet opened (push + bookkeep + wait for Andy's go) · **Issue:** [#964](https://github.com/ahorn885/exercise/issues/964) (type:feature, priority:med, area:notifications) · **Epic:** #259 (notifications subsystem) · **Suite:** full `tests/` **3782 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
+**Branch:** `claude/notification-triggers-staleness-76ptlf` · **PR:** not yet opened (push + bookkeep + wait for Andy's go) · **Issue:** [#964](https://github.com/ahorn885/exercise/issues/964) (type:feature, priority:med, area:notifications) · **Epic:** #259 (notifications subsystem) · **Suite:** full `tests/` **3783 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
 **Context:** Continuation of the #964 thread. The first slice (PR #1006, merged) shipped 3 reminder/staleness triggers + the reconciling cron framework. **Andy chose (AskUserQuestion 2026-06-29) the plan-attention nudge** as the next slice (over race-week-14d / hold-for-#939 / a recurring-mechanism design). This builds the "incomplete plan / plan requiring attention" checklist item.
 
 > **▶ IMMEDIATE NEXT: STAY ON THE #964 THREAD.** The race-week-14d reminder is the next clean reconcile-pattern addition *if Andy greenlights building ahead of #939* (see §5). No schema/DDL in this slice → **no Neon/layer0 apply owed** (rides the existing public-schema cron; `account_nudges` + `plan_versions` are live).
@@ -11,9 +11,9 @@
 
 | nudge_type | Fires when | CTA |
 |---|---|---|
-| `plan_needs_review` | A **live** plan version (`superseded_at IS NULL AND archived_at IS NULL`) has sat at `generation_status='needs_review'` for ≥3 days | `plans.list_plans` |
+| `plan_needs_review` | A **live** plan version (`superseded_at IS NULL AND archived_at IS NULL`) has sat at `generation_status='needs_review'` past an escalation rung | `plans.list_plans` |
 
-Threshold is a module constant in `routes/nudges.py` (`PLAN_REVIEW_STALE_DAYS = 3`) — tune there.
+**Escalation ladder (Andy 2026-06-29).** The nudge first appears at rung 1, then **re-surfaces** (floats to top + marked unread) at each later rung if the athlete read/dismissed it, then stays until the plan is resolved. Rungs are a module constant in `routes/nudges.py`: `PLAN_REVIEW_RUNGS = ('1 day', '2 days', '7 days')`, measured from when the plan parked (`plan_versions.created_at`). **Andy pivoted to a day-granular ladder so the existing DAILY cron is kept** (an earlier 6h/24h/3d ladder would have forced an hourly cron / `vercel.json` change — not worth it). Tune the cadence by editing `PLAN_REVIEW_RUNGS`; adding a rung is a one-line change (the re-surface OR-clause is built off the tuple).
 
 ## 2. Grounding correction (done BEFORE building)
 
@@ -25,16 +25,19 @@ The earlier handoff flagged the plan-attention nudge as "depends on the #215 Pla
 
 ## 3. The mechanism — reuses the #1006 reconcile framework verbatim
 
-No new infrastructure. Added one `{nudge_type, insert, delete}` entry to `_STALENESS_RECONCILE`, so it **rides the existing `GET /cron/nudges/reconcile`** (`scan_reconcile_staleness`, daily). Because it's the existing cron endpoint, **no `app.py` auth-exempt entry and no `vercel.json` schedule were needed** (contrast the first slice, which added a new endpoint).
+No new infrastructure. Added one `{nudge_type, insert, delete, resurface}` entry to `_STALENESS_RECONCILE`, so it **rides the existing `GET /cron/nudges/reconcile`** (`scan_reconcile_staleness`, daily). Because it's the existing cron endpoint, **no `app.py` auth-exempt entry and no `vercel.json` schedule change were needed** (contrast the first slice, which added a new endpoint). The cron loop runs **delete → insert → resurface** per spec, where `resurface` is optional (only `plan_needs_review` defines it); the JSON response gains a `resurfaced` map.
 
-- **INSERT** arms the nudge for any user with a live plan parked at the gate ≥`PLAN_REVIEW_STALE_DAYS` days (grace window keyed off `pv.created_at` — generation parks at the gate shortly after start, so `created_at` is a close proxy for "parked at"), `ON CONFLICT DO NOTHING`.
-- **DELETE** clears once no live (`needs_review` + non-superseded + non-archived) plan remains for the user — resolved, superseded, archived, or deleted — letting the nudge re-fire on a *later* parked plan. The grace-window clause is intentionally omitted from the DELETE (it only ever becomes *more* true with age, so it plays no part in clearing).
+- **INSERT** (first fire) arms the nudge for any user with a live plan parked at the gate past rung 1 (`pv.created_at <= NOW() - INTERVAL '1 day'`; generation parks at the gate shortly after start, so `created_at` is a close proxy for "parked at"), `ON CONFLICT DO NOTHING`.
+- **RE-SURFACE** (escalation) re-arms an existing row once a *later* rung (2 days, 7 days) has elapsed since the plan parked AND the row was last surfaced before that rung: `SET dismissed_at = NULL, read_at = NULL, created_at = NOW()`. Re-stamping `created_at` to now is what **bounds it to once per rung** — after firing, `created_at` sits at/after the rung threshold, so the `created_at < park + rung` guard is false on the next run. Anchored to ANY of the user's parked plans via `EXISTS` (avoids the multi-parked-plan `UPDATE...FROM` join ambiguity). The OR-clause over the later rungs is built off `PLAN_REVIEW_RUNGS[1:]`.
+- **DELETE** clears once no live (`needs_review` + non-superseded + non-archived) plan remains for the user — resolved, superseded, archived, or deleted — letting the nudge re-fire on a *later* parked plan. The rung clauses are intentionally omitted from the DELETE (age only ever becomes *more* true, so it plays no part in clearing). DELETE runs before RE-SURFACE, so a row whose plan just cleared is removed, not re-armed.
+
+**Cron-gap degradation:** if the daily cron misses runs and a plan is already past several rungs when first seen, the INSERT stamps `created_at = NOW()` (past all elapsed rungs) so the athlete gets one nudge rather than a backlog of re-surfaces — acceptable.
 
 ## 4. Files touched
 
 - **`notification_prefs.py`** — registered `plan_needs_review` in `NOTIFICATION_TYPES`. Channels **`['in_app', 'push']`**, defaults in_app/push True, **`category: 'warning'`** (it blocks a plan from completing, unlike the passive `info` staleness types). **Email non-applicable** (same posture as the staleness slice — no nudge→email path).
-- **`routes/nudges.py`** — (a) `PLAN_REVIEW_STALE_DAYS = 3` constant; (b) a `NUDGE_REGISTRY['plan_needs_review']` entry → CTA `plans.list_plans`, `notification_type` self-link, `category='warning'`; (c) the `_STALENESS_RECONCILE` spec entry (insert/delete above).
-- **`tests/test_nudges_staleness.py`** — added `RECONCILE_TYPES` (the 4 cron types), `TestPlanNeedsReviewWiring` (registry entry shape + the `warning` category + in_app/push/email-non-applicable pref registration), and `test_plan_needs_review_spec_targets_live_parked_plans` (both statements share the live-parked predicate; grace window arms insert but never clears delete). Updated `test_spec_covers_all_staleness_types` to assert the full `RECONCILE_TYPES` set.
+- **`routes/nudges.py`** — (a) `PLAN_REVIEW_RUNGS = ('1 day', '2 days', '7 days')` + the derived `_PLAN_REVIEW_RESURFACE_OR` clause; (b) a `NUDGE_REGISTRY['plan_needs_review']` entry → CTA `plans.list_plans`, `notification_type` self-link, `category='warning'`; (c) the `_STALENESS_RECONCILE` spec entry (insert/delete/**resurface**); (d) the cron loop runs the optional `resurface` per spec and returns a `resurfaced` map.
+- **`tests/test_nudges_staleness.py`** — added `RECONCILE_TYPES` (the 4 cron types), `TestPlanNeedsReviewWiring` (registry entry shape + the `warning` category + in_app/push/email-non-applicable pref registration), `test_plan_needs_review_spec_targets_live_parked_plans` (all three statements share the live-parked predicate; rung-1 arms the insert, delete is age-agnostic), and `test_plan_needs_review_resurface_escalates_on_later_rungs` (re-surface clears dismissal/unread + re-stamps `created_at`; driven by the later rungs, not rung 1). Updated `test_spec_covers_all_staleness_types` (full `RECONCILE_TYPES` set) and the cron-route test (delete→insert→resurface order + the `resurfaced` count).
 
 **No template change** — `warning` is already a handled category in both `templates/_account_nudges.html` (`alert-warning`) and `templates/nudges/feed.html` (the `warn` chip branch).
 
@@ -54,7 +57,7 @@ The reconcile framework stays reusable — a new condition nudge is: a notificat
 
 ## 7. Verification
 
-- Full suite **3782 passed / 30 skipped** locally (deps installed ad-hoc in-container: `pip install -r requirements.txt pytest Flask-WTF`). Only the 3 pre-existing Layer3B `evidence_basis` warnings (#217).
+- Full suite **3783 passed / 30 skipped** locally (deps installed ad-hoc in-container: `pip install -r requirements.txt pytest Flask-WTF`). Only the 3 pre-existing Layer3B `evidence_basis` warnings (#217).
 - **No Neon/layer0 apply owed** (rides the existing public-schema cron; `account_nudges` + `plan_versions` tables are live).
 - **3 substantive files** (`notification_prefs.py`, `routes/nudges.py`, `tests/test_nudges_staleness.py`) — under the 5-file ceiling.
 
@@ -62,11 +65,11 @@ The reconcile framework stays reusable — a new condition nudge is: a notificat
 
 | File | Anchor string | Check |
 |---|---|---|
-| `routes/nudges.py` | `PLAN_REVIEW_STALE_DAYS = 3` | grep |
+| `routes/nudges.py` | `PLAN_REVIEW_RUNGS = ('1 day', '2 days', '7 days')` | grep |
+| `routes/nudges.py` | `'resurface':` in the `plan_needs_review` spec | grep |
 | `routes/nudges.py` | `'plan_needs_review': {` in `NUDGE_REGISTRY` | grep |
-| `routes/nudges.py` | `'nudge_type': 'plan_needs_review'` in `_STALENESS_RECONCILE` | grep |
 | `notification_prefs.py` | `'key': 'plan_needs_review'` | grep |
-| `tests/test_nudges_staleness.py` | `class TestPlanNeedsReviewWiring` | grep |
+| `tests/test_nudges_staleness.py` | `test_plan_needs_review_resurface_escalates_on_later_rungs` | grep |
 
 ### Operating notes for next session (Rule #13 read order)
 

@@ -457,7 +457,22 @@ LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
 BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
 BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
-PLAN_REVIEW_STALE_DAYS = 3    # plan parked at the review gate this long ⇒ nudge
+# Escalating re-surface ladder for `plan_needs_review`, measured from when the
+# plan parked at the review gate (`plan_versions.created_at`). The nudge first
+# appears at rung 1 (1 day); if the athlete read or dismissed it, it RE-SURFACES
+# (floated to top, marked unread) when each later rung elapses — another day, then
+# a week — after which it stays put until the plan is resolved. All rungs are
+# day-granular so the existing DAILY cron (`vercel.json`) honours them.
+PLAN_REVIEW_RUNGS = ('1 day', '2 days', '7 days')
+# OR-clause covering the re-surface rungs (every rung past the first): a row is
+# re-surfaced when a later rung has elapsed since the plan parked AND the row was
+# last surfaced before that rung. Built off the ladder so adding a rung is a
+# one-line change to PLAN_REVIEW_RUNGS.
+_PLAN_REVIEW_RESURFACE_OR = ' OR '.join(
+    f"(NOW() >= pv.created_at + INTERVAL '{r}' "
+    f"AND an.created_at < pv.created_at + INTERVAL '{r}')"
+    for r in PLAN_REVIEW_RUNGS[1:]
+)
 
 # Per-type reconcile spec. Each entry pairs the INSERT that ARMS the nudge while
 # its condition holds with the DELETE that CLEARS it once the condition lifts —
@@ -577,11 +592,10 @@ _STALENESS_RECONCILE = [
     {
         'nudge_type': 'plan_needs_review',
         # A live (non-superseded, non-archived) plan version parked at the Layer
-        # 3D review gate for at least the grace window. Archived plans are
-        # excluded — the athlete deliberately shelved those. The grace window
-        # keys off `created_at` (generation parks at the gate shortly after
-        # start, so it's a close proxy for "parked at"); it gives the athlete a
-        # few days to resolve the gate before being reminded.
+        # 3D review gate. Archived plans are excluded — the athlete deliberately
+        # shelved those. The first-fire delay (rung 1) keys off `created_at`
+        # (generation parks at the gate shortly after start, so it's a close
+        # proxy for "parked at"). Later rungs re-surface via `resurface` below.
         'insert': f'''
             INSERT INTO account_nudges (user_id, nudge_type)
             SELECT DISTINCT pv.user_id, 'plan_needs_review'
@@ -589,7 +603,7 @@ _STALENESS_RECONCILE = [
             WHERE pv.generation_status = 'needs_review'
               AND pv.superseded_at IS NULL
               AND pv.archived_at IS NULL
-              AND pv.created_at <= NOW() - INTERVAL '{PLAN_REVIEW_STALE_DAYS} days'
+              AND pv.created_at <= NOW() - INTERVAL '{PLAN_REVIEW_RUNGS[0]}'
               AND NOT EXISTS (
                   SELECT 1 FROM account_nudges an
                   WHERE an.user_id = pv.user_id AND an.nudge_type = 'plan_needs_review'
@@ -599,8 +613,8 @@ _STALENESS_RECONCILE = [
         ''',
         # Clears once no live plan remains at the gate — the athlete resolved it
         # (status flips off 'needs_review'), superseded it, archived it, or
-        # deleted it. The grace-window clause is intentionally omitted: it only
-        # ever becomes *more* true with age, so it plays no part in clearing.
+        # deleted it. The rung clauses are intentionally omitted: age only ever
+        # becomes *more* true, so it plays no part in clearing.
         'delete': '''
             DELETE FROM account_nudges an
             WHERE an.nudge_type = 'plan_needs_review'
@@ -611,6 +625,28 @@ _STALENESS_RECONCILE = [
                     AND pv.archived_at IS NULL
               )
             RETURNING id
+        ''',
+        # Re-surface (escalation): once a later rung has elapsed since the plan
+        # parked AND the row was last surfaced before that rung, make it fresh
+        # again — clear `dismissed_at`/`read_at` and re-stamp `created_at = NOW()`
+        # so it floats to the top of the feed and reads unread. Re-stamping is
+        # what bounds it to once per rung: after firing, `created_at` sits at/after
+        # the rung threshold, so the `created_at < park + rung` guard is false next
+        # run. Anchored to ANY of the user's parked plans via EXISTS (avoids the
+        # multi-parked-plan join ambiguity); the still-parked guard means a row
+        # whose plan just cleared is deleted above, not re-surfaced here.
+        'resurface': f'''
+            UPDATE account_nudges an
+            SET dismissed_at = NULL, read_at = NULL, created_at = NOW()
+            WHERE an.nudge_type = 'plan_needs_review'
+              AND EXISTS (
+                  SELECT 1 FROM plan_versions pv WHERE pv.user_id = an.user_id
+                    AND pv.generation_status = 'needs_review'
+                    AND pv.superseded_at IS NULL
+                    AND pv.archived_at IS NULL
+                    AND ({_PLAN_REVIEW_RESURFACE_OR})
+              )
+            RETURNING an.id
         ''',
     },
 ]
@@ -628,25 +664,33 @@ def scan_reconcile_staleness():
       2. **INSERT** one row per newly-eligible athlete (condition holds, no
          existing row). `ON CONFLICT DO NOTHING` makes overlapping cron fires
          idempotent.
+      3. **RE-SURFACE** (optional, `plan_needs_review` only): a type with a
+         `resurface` statement re-arms an existing row when a later escalation
+         rung has elapsed — clears `dismissed_at`/`read_at` + re-stamps
+         `created_at` so a previously-seen nudge comes back fresh.
 
     Display still honours per-type in-app preferences at read time
     (`get_active_nudges`), so this stays preference-agnostic — toggling a type
     off mutes it without disturbing the reconciled rows.
 
     Token-gated like the other cron drains. Returns JSON
-    `{inserted: {type: n, ...}, cleared: {type: n, ...}}`.
+    `{inserted: {...}, cleared: {...}, resurfaced: {...}}`.
     """
     if not cron_authorized():
         abort(401)
     db = get_db()
     inserted: dict[str, int] = {}
     cleared: dict[str, int] = {}
+    resurfaced: dict[str, int] = {}
     for spec in _STALENESS_RECONCILE:
         t = spec['nudge_type']
         cleared[t] = len(db.execute(spec['delete']).fetchall())
         inserted[t] = len(db.execute(spec['insert']).fetchall())
+        if spec.get('resurface'):
+            resurfaced[t] = len(db.execute(spec['resurface']).fetchall())
     db.commit()
-    return jsonify(inserted=inserted, cleared=cleared), 200
+    return jsonify(inserted=inserted, cleared=cleared,
+                   resurfaced=resurfaced), 200
 
 
 @bp.route('/nudges/<int:nudge_id>/dismiss', methods=['POST'])

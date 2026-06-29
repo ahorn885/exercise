@@ -36,6 +36,7 @@ os.environ['DATABASE_URL'] = ''
 import notification_prefs as np  # noqa: E402
 from routes.nudges import (  # noqa: E402
     NUDGE_REGISTRY,
+    PLAN_REVIEW_RUNGS,
     _STALENESS_RECONCILE,
     get_active_nudges,
 )
@@ -218,15 +219,34 @@ class TestReconcileSpec:
                     if s['nudge_type'] == 'plan_needs_review')
         ins = ' '.join(spec['insert'].split())
         dele = ' '.join(spec['delete'].split())
+        res = ' '.join(spec['resurface'].split())
         # Fires only on a live (non-superseded, non-archived) plan parked at the
-        # review gate; both statements share that exact predicate.
+        # review gate; all three statements share that exact predicate.
         for clause in ("generation_status = 'needs_review'",
                        'superseded_at IS NULL', 'archived_at IS NULL'):
             assert clause in ins
             assert clause in dele
-        # Grace window arms the insert but never clears the delete.
-        assert "INTERVAL '3 days'" in ins
+            assert clause in res
+        # Rung 1 arms the first insert; the delete is age-agnostic.
+        assert "INTERVAL '1 day'" in ins
         assert 'INTERVAL' not in dele
+
+    def test_plan_needs_review_resurface_escalates_on_later_rungs(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'plan_needs_review')
+        res = ' '.join(spec['resurface'].split())
+        # Re-surface re-arms a seen nudge: clears dismissal + unread + floats it
+        # up (re-stamped created_at). Re-stamping is what bounds it to once per
+        # rung (created_at then sits at/after the threshold).
+        assert res.startswith('UPDATE account_nudges')
+        assert 'dismissed_at = NULL' in res
+        assert 'read_at = NULL' in res
+        assert 'created_at = NOW()' in res
+        # The later rungs (every PLAN_REVIEW_RUNGS entry past the first) drive it;
+        # the first rung is the insert gate, not a re-surface.
+        for rung in PLAN_REVIEW_RUNGS[1:]:
+            assert "INTERVAL '%s'" % rung in res
+        assert "INTERVAL '%s'" % PLAN_REVIEW_RUNGS[0] not in res
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):
@@ -266,10 +286,16 @@ class TestReconcileRoute:
     def test_authorized_runs_delete_then_insert_per_type(self, monkeypatch):
         monkeypatch.setenv('CRON_SECRET', 's3cret')
         conn = _FakeConn()
-        # Per type: delete returns 1 cleared row, insert returns 2 armed rows.
-        for _ in _STALENESS_RECONCILE:
-            conn.queue([{'id': 10}])             # delete
+        # Per type: delete (1 cleared), insert (2 armed), and — for a type with
+        # a `resurface` statement — an update (1 re-armed), in that order.
+        expected_kinds = []
+        for s in _STALENESS_RECONCILE:
+            conn.queue([{'id': 10}])              # delete
             conn.queue([{'id': 20}, {'id': 21}])  # insert
+            expected_kinds += ['DELETE', 'INSERT']
+            if s.get('resurface'):
+                conn.queue([{'id': 30}])          # resurface
+                expected_kinds.append('UPDATE')
         client = _cron_client(monkeypatch, conn)
         resp = client.get('/cron/nudges/reconcile',
                           headers={'Authorization': 'Bearer s3cret'})
@@ -278,7 +304,10 @@ class TestReconcileRoute:
         for s in _STALENESS_RECONCILE:
             assert body['cleared'][s['nudge_type']] == 1
             assert body['inserted'][s['nudge_type']] == 2
-        # Exactly one commit, and the statements ran delete-before-insert.
+            if s.get('resurface'):
+                assert body['resurfaced'][s['nudge_type']] == 1
+        # Exactly one commit, and the statements ran in delete→insert→resurface
+        # order per type.
         assert conn.commits == 1
         kinds = [c[0].split()[0] for c in conn.calls]
-        assert kinds == ['DELETE', 'INSERT'] * len(_STALENESS_RECONCILE)
+        assert kinds == expected_kinds
