@@ -80,7 +80,11 @@ from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
 from layer2_modality import resolve_training_substitution
-from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
+from layer2a.builder import (
+    _SUB_FORMAT_SPORTS,
+    Layer2AInputError,
+    q_layer2a_discipline_classifier_payload,
+)
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
 from layer2d.builder import q_layer2d_injury_risk_profile_payload
@@ -109,6 +113,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    PlanManagementState,
     RaceEventPayload,
     TrainingSubstitutionPayload,
 )
@@ -120,6 +125,7 @@ from layer4.hashing import (
 )
 from layer4.phase_structure import phase_structure_from_3b
 from layer4.plan_create import _compute_total_weeks
+from plan_management import derive_expected_race_temp_c, derive_heat_acclim_state
 from layer4.session_feasibility import (
     EventWindowOverride,
     EventWindowSegment,
@@ -135,8 +141,9 @@ from layer4.single_session import SingleSessionRequest
 from layer4.validator import skill_gated_disciplines
 import locations
 from athlete_event_windows_repo import load_event_windows
-from athlete_craft_locale_repo import load_craft_locales
+from athlete_gear_repo import GEAR_REGISTRY, load_gear_locales
 from race_events_repo import load_target_race_event_payload
+from sport_sub_format_repo import default_sub_format
 
 
 _AUTO_FIRE_DAYS_TO_EVENT_MAX = 14
@@ -877,10 +884,15 @@ def _build_event_window_overlay(
         )
         return [], overlapping
 
-    # Slice 4 (#581 WS-H) — the standing craft↔locale map, loaded once. The away
-    # branch unions the crafts kept at any locale in the destination cluster (b)
-    # with the window's brought-craft (c) → the away segment's owned_crafts.
-    craft_locale_map = load_craft_locales(db, user_id)
+    # #884 slice 5 — the standing gear↔locale map, loaded once off the UNIFIED
+    # `athlete_gear_locale` store (the cutover replaced the legacy craft-locale
+    # read; routes/locales.py now writes the gear store). The away branch unions
+    # the gear kept at any locale in the destination cluster (b) with the window's
+    # brought gear (c), then filters to the craft cascade kinds → the away
+    # segment's owned_crafts. Byte-identical for bike/paddle (the store is
+    # backfilled 1:1); ski/snow/climb/alpine gear kept at a destination now feeds
+    # the away cascade once the slice-6 picker captures those kinds.
+    gear_locale_map = load_gear_locales(db, user_id)
     raw: list[tuple[date, date, EventWindowOverride]] = []
     for w in overlapping:
         base_ov = EventWindowOverride(
@@ -924,14 +936,22 @@ def _build_event_window_overlay(
             away_cluster = locations.cluster_locale_ids(
                 db, user_id, anchor_locale=away_ov.away_locale
             )
-            # Slice 4 (#581 WS-H): away craft = brought-craft on this window (c) ∪
-            # standing craft kept at any locale in the destination cluster (b).
+            # #884 slice 5: away gear = brought gear on this window (c) ∪ standing
+            # gear kept at any locale in the destination cluster (b), filtered to
+            # the craft cascade kinds (GEAR_REGISTRY group_kind ∈
+            # _CRAFT_ALIAS_GROUP_KINDS — same filter `_collect_athlete_crafts`
+            # applies at home), so swim/other gear can't leak into owned_crafts.
             # Empty union → byte-identical to the Slice-2a owned_crafts=[] path.
+            # (Brought stays the brought_craft (c) field — craft slugs ARE gear_ids;
+            # the brought-gear picker generalizes in slice 6.)
             brought = set(away_ov.brought_craft)
             standing = {
-                c for loc in away_cluster for c in craft_locale_map.get(loc, ())
+                g for loc in away_cluster for g in gear_locale_map.get(loc, ())
             }
-            away_crafts = sorted(brought | standing)
+            away_crafts = sorted(
+                g for g in (brought | standing)
+                if GEAR_REGISTRY.get(g) in _CRAFT_ALIAS_GROUP_KINDS
+            )
             reduced = _resolve_included_feasibility(
                 fi,
                 locale_order=away_cluster,
@@ -1086,9 +1106,35 @@ def _upstream_full_cone(
         if target_race_event is not None
         else None
     )
+    # #254 / D-17 slice B — compose the Layer 2A sport input from the two-column
+    # model (D1′). `framework_sport` stays the TOP-LEVEL name everywhere else in
+    # the cone (2C/2D/3A/3B/2E read it as the bridge key); only Layer 2A needs
+    # the sub-format so its PLA join (phase_load_allocation, sub-format-keyed)
+    # resolves to real bands instead of silent NULLs. Resolution: the athlete's
+    # chosen `sport_sub_format` wins; else, for a known sub-format parent, the
+    # Layer-0 curated default (`sport_sub_format_map.is_default`); else the bare
+    # name unchanged (single-format sports, where the default lookup would be a
+    # no-op anyway — gated on `_SUB_FORMAT_SPORTS` so non-parents skip the read).
+    sub_format_override = (
+        target_race_event.sport_sub_format if target_race_event is not None else None
+    )
+    if sub_format_override:
+        framework_sport_for_2a = sub_format_override
+    elif framework_sport in _SUB_FORMAT_SPORTS:
+        framework_sport_for_2a = (
+            default_sub_format(db, framework_sport) or framework_sport
+        )
+    else:
+        framework_sport_for_2a = framework_sport
+    # Rule #15 — log the compose inputs + the chosen 2A sport.
+    print(
+        f"_upstream_full_cone: user_id={user_id} framework_sport={framework_sport!r} "
+        f"sport_sub_format={sub_format_override!r} -> "
+        f"framework_sport_for_2a={framework_sport_for_2a!r}"
+    )
     layer2a_payload = q_layer2a_discipline_classifier_payload(
         db,
-        framework_sport=framework_sport,
+        framework_sport=framework_sport_for_2a,
         discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
         athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
@@ -1280,6 +1326,30 @@ def _upstream_full_cone(
     included_disciplines = [
         d for d in layer2a_payload.disciplines if d.inclusion == "included"
     ]
+
+    # Plan Management contract (`Plan_Management_Spec_v1.md` §3) — assembled at
+    # read time for the 2E §5.8 heat overlay (#220). `current_phase` keeps the
+    # 3B start-phase derivation; the week-indexed §5.1 `derive_current_phase`
+    # stays unwired (a #221 gap, tracked) and is out of scope here. Coordinates
+    # for `expected_race_temp_c` come from the race-event payload (the 2E
+    # target-event shape doesn't carry them), keyed by the same str event_id.
+    heat_acclim_state, heat_acclim_data_sparse = derive_heat_acclim_state(
+        db, user_id, today
+    )
+    coords_by_event_id: dict[str, tuple[float | None, float | None]] = {}
+    if target_race_event is not None:
+        coords_by_event_id[str(target_race_event.race_event_id)] = (
+            target_race_event.event_locale_lat,
+            target_race_event.event_locale_lng,
+        )
+    plan_management_state = PlanManagementState(
+        current_phase=layer3b_payload.periodization_shape.start_phase,
+        heat_acclim_state=heat_acclim_state,
+        expected_race_temp_c=derive_expected_race_temp_c(
+            target_events, coords_by_event_id, today
+        ),
+    )
+
     layer2e_payload = q_layer2e_nutrition_baseline_payload(
         db,
         identity=layer1_payload.identity,
@@ -1289,8 +1359,9 @@ def _upstream_full_cone(
         lifestyle=layer1_payload.lifestyle,
         included_disciplines=included_disciplines,
         framework_sport=framework_sport,
-        current_phase=layer3b_payload.periodization_shape.start_phase,
+        plan_management_state=plan_management_state,
         etl_version_set=etl_version_set,
+        heat_acclim_data_sparse=heat_acclim_data_sparse,
         athlete_id=str(user_id),
         today=today,
     )

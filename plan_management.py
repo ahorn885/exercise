@@ -10,19 +10,24 @@ two #221 surfaces:
 - **§5.2 `derive_heat_acclim_state`** — the athlete's heat-acclimation `level`
   from logged training conditions, with a `heat_acclim_data_sparse` advisory
   when the signal is thin. Produces the `HeatAcclimState` 2E §5.8 consumes.
-
-The remaining contract field — `expected_race_temp_c` (§5.3) — plus the
-`weather_client.get_forecast_high` leg and the 2E §5.8 overlay wiring land with
-the #220 de-stub PR (`Plan_Management_Spec_v1.md` §12).
+- **§5.3 `derive_expected_race_temp_c`** — the per-event expected daytime high
+  °C (climate normal blended toward the live forecast inside the 14-day
+  horizon), or `None` when the locale has no coordinates. The third
+  `PlanManagementState` field; consumed by the 2E §5.8 heat-acclim overlay
+  (#220). Pairs with `weather_client.get_forecast_high` (§5.3.2).
 
 Heat-acclim state is **derived, never stored** (Athlete_Data_Integration_Spec
 §2.6): no new schema, recomputed on read from `public.conditions_log`.
+Expected race temp is likewise recomputed on read (the forecast leg varies
+day-to-day by design — §8).
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Protocol
 
+import weather_client
 from layer4.context import HeatAcclimState, Layer3BPayload
 from layer4.phase_structure import phase_for_date, phase_structure_from_3b
 
@@ -153,4 +158,97 @@ def derive_heat_acclim_state(
     return state, data_sparse
 
 
-__all__ = ["derive_current_phase", "derive_heat_acclim_state"]
+# ─── §5.3 expected race temperature ──────────────────────────────────────────
+
+# §5.3: Open-Meteo's forecast reach. Events ≤14 days out blend the climate
+# normal toward the live forecast; further out use the normal alone.
+_FORECAST_HORIZON_DAYS = 14
+
+
+class _EventForTemp(Protocol):
+    """The slice §5.3 reads off each event — `Layer2ETargetEvent` satisfies it.
+    Locale coordinates are supplied separately (`coords_by_event_id`) because
+    the 2E target-event shape doesn't carry them; they live on the race-event
+    payload the orchestrator already holds."""
+
+    event_id: str
+    event_date: date
+
+
+def _blend(
+    normal_high: float | None, forecast_high: float | None, days_out: int
+) -> float | None:
+    """§5.3.3 — linear blend on horizon proximity: full forecast weight at the
+    event, full normal weight at the horizon edge. Either source missing →
+    fall back to the other; both missing handled by the caller."""
+    if forecast_high is None:
+        return normal_high  # forecast failed → climate normal
+    if normal_high is None:
+        return forecast_high  # no archive sample → trust the forecast
+    w_forecast = 1.0 - (days_out / _FORECAST_HORIZON_DAYS)
+    return round(w_forecast * forecast_high + (1.0 - w_forecast) * normal_high, 1)
+
+
+def derive_expected_race_temp_c(
+    events: list[_EventForTemp],
+    coords_by_event_id: dict[str, tuple[float | None, float | None]],
+    today: date,
+    *,
+    fetcher=None,
+) -> dict[str, float | None]:
+    """`Plan_Management_Spec_v1.md` §5.3 — expected daytime-high °C per event.
+
+    Climate normal (`weather_client.get_expected_conditions`) for far-out
+    events; blended toward the live forecast (`get_forecast_high`, §5.3.2) once
+    the event is inside the 14-day horizon. ``None`` when the locale has no
+    coordinates or both fetches fail — 2E §5.8 then surfaces
+    `temp_signal='unknown'` + `race_temp_unknown` (a first-class value, not an
+    error). Coordinates come from ``coords_by_event_id`` (keyed by the same
+    `event_id` 2E uses) since the target-event shape doesn't carry them.
+    ``fetcher`` is injected through to both weather legs for deterministic
+    tests (§8).
+    """
+    out: dict[str, float | None] = {}
+    for ev in events:
+        lat, lng = coords_by_event_id.get(ev.event_id, (None, None))
+        if lat is None or lng is None:
+            out[ev.event_id] = None
+            print(
+                f"plan_management.derive_expected_race_temp_c: event={ev.event_id} "
+                f"source=unresolved reason=no_coords temp=None"
+            )
+            continue
+
+        normal = weather_client.get_expected_conditions(
+            lat, lng, ev.event_date, today=today, fetcher=fetcher
+        )
+        normal_high = normal.temp_max_c if normal else None
+        days_out = (ev.event_date - today).days
+
+        if 0 <= days_out <= _FORECAST_HORIZON_DAYS:
+            forecast_high = weather_client.get_forecast_high(
+                lat, lng, ev.event_date, fetcher=fetcher
+            )
+            temp = _blend(normal_high, forecast_high, days_out)
+            source = "forecast_blend" if forecast_high is not None else "normal"
+        else:
+            forecast_high = None
+            temp = normal_high
+            source = "normal"
+
+        out[ev.event_id] = temp
+        # Rule #15 — per-event chosen temp + source + days_out + both legs.
+        print(
+            f"plan_management.derive_expected_race_temp_c: event={ev.event_id} "
+            f"source={'unresolved' if temp is None else source} temp={temp} "
+            f"days_out={days_out} normal_high={normal_high} "
+            f"forecast_high={forecast_high}"
+        )
+    return out
+
+
+__all__ = [
+    "derive_current_phase",
+    "derive_heat_acclim_state",
+    "derive_expected_race_temp_c",
+]

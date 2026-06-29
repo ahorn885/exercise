@@ -3256,6 +3256,34 @@ _PG_MIGRATIONS = [
     # cron). NULL ⇒ schedules never fire (fail-safe — can't localize the clock
     # without it). Nullable so existing users need no backfill.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
+    # #254 / D-17 slice B — sport SUB-format capture (two-column model, D1′).
+    # `framework_sport` stays the top-level bridge key; this new column holds the
+    # athlete's chosen full PLA sub-format name for the five sub-format-parent
+    # sports (NULL = the orchestrator composes the parent's curated default from
+    # layer0.sport_sub_format_map at the Layer 2A boundary). Public-schema, so it
+    # auto-applies on each Vercel deploy. IF NOT EXISTS keeps it re-run safe.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS sport_sub_format TEXT NULL",
+    # D5 one-time backfill — set the parent's is_default sub-format on existing
+    # rows whose framework_sport is one of the five parents and whose
+    # sport_sub_format is still NULL, so legacy/pre-capture target events compose
+    # to a real PLA sport_name (no silent NULL bands) before the capture UI
+    # (slice B2) ships. Guarded on the Layer-0 table existing (it lands via the
+    # gated layer0-apply, not this public migration list) so a DB without it is a
+    # clean no-op; idempotent (the NULL predicate excludes already-backfilled
+    # rows). Athlete intent wins — rows that already carry a sport_sub_format are
+    # never overwritten, even if the Layer-0 default later moves.
+    """DO $$
+    BEGIN
+        IF to_regclass('layer0.sport_sub_format_map') IS NOT NULL THEN
+            UPDATE race_events re
+               SET sport_sub_format = m.sub_format_sport
+              FROM layer0.sport_sub_format_map m
+             WHERE re.sport_sub_format IS NULL
+               AND m.parent_sport = re.framework_sport
+               AND m.is_default = TRUE
+               AND m.superseded_at IS NULL;
+        END IF;
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [
