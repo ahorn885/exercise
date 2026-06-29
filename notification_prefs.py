@@ -150,6 +150,18 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app', 'push'],
         'defaults': {'in_app': True, 'push': True},
     },
+    # Target race within the 14-day race-week window with no race-week brief
+    # generated yet for the active plan version. A reminder to act, not a blocker
+    # (`info`), reconciled by the same daily cron.
+    {
+        'key': 'race_week_plan_due',
+        'label': 'Generate your race-week brief',
+        'description': "A reminder to generate your race-week brief once your "
+                       'target race is within two weeks.',
+        'category': 'info',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
 ]
 
 TYPES_BY_KEY = {t['key']: t for t in NOTIFICATION_TYPES}

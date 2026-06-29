@@ -191,6 +191,9 @@ def _race_row(**overrides):
         "race_url": None,
         # D-73 Phase 5.2 Bucket E.(b) — per-race framework_sport override.
         "framework_sport": None,
+        # #254 / D-17 slice B — chosen sport sub-format (None = single-format
+        # sport / legacy row / parent default applied at compose time).
+        "sport_sub_format": None,
         # D-73 Phase 5.2 Bucket E.(b)-B2 — per-race discipline filter
         # override. None = use full bridge defaults (pre-B2 behavior).
         "included_discipline_ids": None,
@@ -1233,6 +1236,76 @@ class TestFrameworkSportOverride:
         assert "framework_sport = ?" in sql
         # None appears in params for the framework_sport column slot.
         assert None in params
+
+
+class TestSportSubFormatColumn:
+    """Per-race `sport_sub_format` column (#254 / D-17 slice B, two-column
+    model D1′). Holds the athlete's chosen full PLA sub-format name; NULL =
+    single-format sport / legacy row / parent default applied at compose
+    time. Threads through create/update/load alongside `framework_sport`."""
+
+    def test_load_payload_populates_sport_sub_format_when_present(self):
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(
+                framework_sport="Triathlon",
+                sport_sub_format="Triathlon (Half / 70.3)",
+            )
+        )
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.sport_sub_format == "Triathlon (Half / 70.3)"
+
+    def test_load_payload_defaults_sport_sub_format_to_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=_race_row())
+        conn.queue_response(rows=[])
+        payload = load_race_event_payload(conn, race_event_id=10)
+        assert payload is not None
+        assert payload.sport_sub_format is None
+
+    def test_get_race_event_surfaces_sport_sub_format(self):
+        conn = _FakeConn()
+        conn.queue_response(
+            row=_race_row(sport_sub_format="Skimo (Individual / Team)")
+        )
+        result = get_race_event(conn, user_id=1, race_event_id=10)
+        assert result is not None
+        assert result["sport_sub_format"] == "Skimo (Individual / Team)"
+        assert "sport_sub_format" in conn.calls[0][0]
+
+    def test_create_passes_sport_sub_format_kwarg(self):
+        conn = _FakeConn()
+        conn.queue_response(row={"id": 42})
+        create_race_event(
+            conn,
+            user_id=1,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+            framework_sport="Triathlon",
+            sport_sub_format="Triathlon (Standard / Olympic)",
+        )
+        sql, params = conn.calls[0]
+        assert "sport_sub_format" in sql
+        assert "Triathlon (Standard / Olympic)" in params
+
+    def test_update_passes_sport_sub_format_kwarg(self):
+        conn = _FakeConn()
+        update_race_event(
+            conn,
+            user_id=1,
+            race_event_id=10,
+            name="Race",
+            event_date=date(2026, 7, 17),
+            race_format="single_day",
+            framework_sport="Triathlon",
+            sport_sub_format="Triathlon (Sprint)",
+        )
+        sql, params = conn.calls[0]
+        assert "sport_sub_format = ?" in sql
+        assert "Triathlon (Sprint)" in params
 
 
 class TestIncludedDisciplineIdsOverride:

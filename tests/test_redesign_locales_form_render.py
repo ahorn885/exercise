@@ -84,6 +84,8 @@ def test_form_shared_inherit_shows_override_chips():
     assert '+ override' in html        # 'db' is an add on top of shared
     assert 'shared' in html            # 'bb' inherited
     assert 'Inherited from the shared profile' in html
+    # #971 Slice 3 — inherit mode offers the explicit "report as wrong" flag.
+    assert 'name="report_correction"' in html
     # shared modes are not legacy → no city field.
     assert 'name="city"' not in html
     assert 'style="' not in html

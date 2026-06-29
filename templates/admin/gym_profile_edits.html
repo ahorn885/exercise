@@ -1,0 +1,75 @@
+{# #971 Slice 3 — Admin · crowd-sourced gym/hotel equipment-profile review.
+   Peer-proposed corrections to a shared profile: approve folds the change into
+   the shared profile (every inheritor picks it up); reject discards it. #}
+{% extends 'base.html' %}
+{% set nav_active = '' %}
+{% block title %}Admin · Gym profile reviews — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('admin.dashboard') }}">Admin</a> · <b>Gym profile reviews</b>{% endblock %}
+
+{% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.curation_flags') }}">Curation gaps</a>
+<a class="btn btn-ghost btn-sm" href="{{ url_for('admin.dashboard') }}">Back to users</a>
+{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Admin · gym profile reviews</p>
+    <h1 class="page-title">Crowd-sourced equipment corrections.</h1>
+    <p class="page-sub">
+      When an athlete inherits a shared gym/hotel profile and saves a different
+      equipment view, that difference is proposed here as a correction.
+      <b>Approve</b> folds it into the shared profile so every athlete at that
+      location picks it up; <b>reject</b> discards it. {{ pending|length }}
+      profile{{ '' if pending|length == 1 else 's' }} with open proposals.
+    </p>
+  </div>
+</div>
+
+{% if pending %}
+{% for p in pending %}
+<div class="card card-flush adm-tablewrap" style="margin-bottom:1rem">
+  <div class="card-pad">
+    <b>{{ p.display_name or 'Profile #' ~ p.id }}</b>
+    <span class="chip solid">{{ (p.category or 'uncategorized').replace('_', ' ') }}</span>
+    <span class="chip" title="Profile id">#{{ p.id }}</span>
+    <p class="page-sub" style="margin-top:.35rem">
+      Shared equipment:
+      {% if p.shared_tags %}{{ p.shared_tags|join(', ') }}{% else %}<span class="dim">(none)</span>{% endif %}
+    </p>
+  </div>
+  <table class="data">
+    <thead>
+      <tr><th>Proposed by</th><th>Add</th><th>Remove</th><th>When</th><th>Review</th></tr>
+    </thead>
+    <tbody>
+      {% for prop in p.proposals %}
+      <tr>
+        <td class="dim mono"><a class="link" href="{{ url_for('admin.user_detail', user_id=prop.by) }}">User #{{ prop.by }}</a></td>
+        <td>{% if prop.adds %}<span class="chip good">{{ prop.adds|join(', ') }}</span>{% else %}—{% endif %}</td>
+        <td>{% if prop.removes %}<span class="chip bad">{{ prop.removes|join(', ') }}</span>{% else %}—{% endif %}</td>
+        <td class="dim mono">{{ (prop.at|string)[:19] }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin.review_gym_profile_edit', gym_profile_id=p.id) }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="approve">
+            <input type="hidden" name="proposer_id" value="{{ prop.by }}">
+            <button type="submit" class="btn btn-primary btn-sm">Approve</button>
+          </form>
+          <form method="post" action="{{ url_for('admin.review_gym_profile_edit', gym_profile_id=p.id) }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="reject">
+            <input type="hidden" name="proposer_id" value="{{ prop.by }}">
+            <button type="submit" class="btn btn-ghost btn-sm">Reject</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% else %}
+<div class="card card-pad adm-none-card">No pending corrections. Every shared profile matches its athletes' views. 🎉</div>
+{% endif %}
+{% endblock %}

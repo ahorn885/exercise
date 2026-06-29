@@ -43,9 +43,10 @@ from routes.nudges import (  # noqa: E402
 
 STALENESS_TYPES = ['log_reminder', 'body_metric_stale', 'injury_review']
 # All types the reconcile cron arms/clears — the staleness three plus the
-# plan-attention nudge (`warning` category, so it's excluded from the
-# `info`-asserting parametrized tests above and covered on its own below).
-RECONCILE_TYPES = STALENESS_TYPES + ['plan_needs_review']
+# plan-attention nudge and the race-week reminder (both covered on their own
+# below; `plan_needs_review` is `warning`, so it's excluded from the
+# `info`-asserting parametrized tests above).
+RECONCILE_TYPES = STALENESS_TYPES + ['plan_needs_review', 'race_week_plan_due']
 
 
 # ─── Shared fake conn (mirrors tests/test_nudges.py) ────────────────────────
@@ -148,6 +149,31 @@ class TestPlanNeedsReviewWiring:
         assert np.is_applicable('plan_needs_review', 'email') is False
 
 
+class TestRaceWeekPlanDueWiring:
+    """The race-week reminder fires when the target race is inside the 14-day
+    window with no brief generated yet. `info` category (a reminder to act, not
+    a blocker) with its own mutable notification type."""
+
+    def test_registry_entry(self):
+        entry = NUDGE_REGISTRY['race_week_plan_due']
+        assert entry['message']
+        assert entry['cta_label']
+        # CTA lands on the plan list (view_brief 404s pre-brief, generate is POST).
+        assert entry['cta_endpoint'] == 'plans.list_plans'
+        assert entry['category'] == 'info'
+        assert entry['notification_type'] == 'race_week_plan_due'
+        assert entry.get('display_delay_days', 0) == 0
+
+    def test_notification_type_registered_in_app_and_push(self):
+        t = np.TYPES_BY_KEY['race_week_plan_due']
+        assert t['channels'] == ['in_app', 'push']
+        assert t['category'] == 'info'
+        assert np.default_enabled('race_week_plan_due', 'in_app') is True
+        assert np.default_enabled('race_week_plan_due', 'push') is True
+        # Email non-applicable — no nudge→email path (same posture as staleness).
+        assert np.is_applicable('race_week_plan_due', 'email') is False
+
+
 # ─── 2. Preference gating in get_active_nudges ──────────────────────────────
 
 
@@ -247,6 +273,29 @@ class TestReconcileSpec:
         for rung in PLAN_REVIEW_RUNGS[1:]:
             assert "INTERVAL '%s'" % rung in res
         assert "INTERVAL '%s'" % PLAN_REVIEW_RUNGS[0] not in res
+
+    def test_race_week_plan_due_spec_targets_target_race_and_active_plan(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'race_week_plan_due')
+        ins = ' '.join(spec['insert'].split())
+        dele = ' '.join(spec['delete'].split())
+        # No escalation ladder for this one — a plain insert/delete pair.
+        assert 'resurface' not in spec
+        # Both fire/clear off the same eligibility: the athlete's target race
+        # inside the 14-day window, still future, with an active plan that has no
+        # brief yet. The brief-absent check keys off `race_week_briefs`.
+        for clause in ('re.is_target_event = TRUE',
+                       're.event_date >= CURRENT_DATE',
+                       'CURRENT_DATE + %d' % 14,
+                       'FROM race_week_briefs rwb'):
+            assert clause in ins
+            assert clause in dele
+        # Active-plan predicate mirrors load_active_plan_version_id (ready, not
+        # archived, not completed) so the brief check targets the right version.
+        for clause in ("generation_status = 'ready'",
+                       'archived_at IS NULL', 'completed_at IS NULL'):
+            assert clause in ins
+            assert clause in dele
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):

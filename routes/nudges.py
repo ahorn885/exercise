@@ -155,6 +155,20 @@ NUDGE_REGISTRY = {
         'category': 'warning',
         'notification_type': 'plan_needs_review',
     },
+    # Target race inside the 14-day race-week window with no race-week brief yet
+    # on the active plan version. CTA lands on the plan list (the `view_brief`
+    # surface 404s until a brief exists, and `generate_brief` is POST-only) —
+    # one click from the [Generate race-week brief] button on the plan view.
+    'race_week_plan_due': {
+        'message': (
+            'Your target race is under two weeks out. Generate your race-week '
+            'brief for taper, fueling, kit, and pacing.'
+        ),
+        'cta_label': 'Open your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'info',
+        'notification_type': 'race_week_plan_due',
+    },
 }
 
 # Registry knobs that are internal plumbing, stripped from the per-row overlay
@@ -457,6 +471,33 @@ LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
 BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
 BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
+RACE_WEEK_DUE_DAYS = 14       # target race within this window + no brief ⇒ nudge
+
+# EXISTS-true iff the user (`re.user_id`) has an ACTIVE plan version with NO
+# race-week brief yet. "Active" mirrors `load_active_plan_version_id`
+# (generation_status='ready', not archived, not completed, most-recent wins) —
+# the version the race-week-brief orchestrator attaches its Taper overrides to,
+# so the brief-absent check must key off that exact version. Requiring an active
+# plan keeps the CTA actionable (no plan ⇒ nothing to generate a brief from);
+# the scalar subquery resolving to NULL (no active plan) makes the outer EXISTS
+# false. Reused verbatim by the `race_week_plan_due` insert + delete below.
+_ACTIVE_PLAN_NO_BRIEF = '''
+            EXISTS (
+                SELECT 1 FROM plan_versions pv
+                WHERE pv.id = (
+                    SELECT p.id FROM plan_versions p
+                    WHERE p.user_id = re.user_id
+                      AND p.generation_status = 'ready'
+                      AND p.archived_at IS NULL
+                      AND p.completed_at IS NULL
+                    ORDER BY p.created_at DESC, p.id DESC
+                    LIMIT 1
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM race_week_briefs rwb
+                    WHERE rwb.plan_version_id = pv.id
+                )
+            )'''
 # Escalating re-surface ladder for `plan_needs_review`, measured from when the
 # plan parked at the review gate (`plan_versions.created_at`). The nudge first
 # appears at rung 1 (1 day); if the athlete read or dismissed it, it RE-SURFACES
@@ -647,6 +688,48 @@ _STALENESS_RECONCILE = [
                     AND ({_PLAN_REVIEW_RESURFACE_OR})
               )
             RETURNING an.id
+        ''',
+    },
+    {
+        'nudge_type': 'race_week_plan_due',
+        # The athlete's target race sits inside the 14-day race-week window (still
+        # future) and they have not generated the race-week brief for their active
+        # plan version yet. `event_date` is a real DATE column, so plain date
+        # arithmetic (`CURRENT_DATE + N`) applies — no TO_CHAR ISO-text cutoff like
+        # the log/body/injury specs above (those columns are TEXT). At most one
+        # target race per athlete (partial UNIQUE index), so no DISTINCT is needed.
+        # One-shot fire — no escalation ladder (handoff §6 starting shape).
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT re.user_id, 'race_week_plan_due'
+            FROM race_events re
+            WHERE re.is_target_event = TRUE
+              AND re.event_date >= CURRENT_DATE
+              AND re.event_date <= CURRENT_DATE + {RACE_WEEK_DUE_DAYS}
+              AND {_ACTIVE_PLAN_NO_BRIEF}
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = re.user_id AND an.nudge_type = 'race_week_plan_due'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        # Clears once the athlete is no longer eligible — brief generated for the
+        # active version, race passed (`event_date` now in the past), target race
+        # removed/changed, or the active plan went away. Mirrors the insert
+        # eligibility in a NOT EXISTS, the same shape as `plan_needs_review`.
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'race_week_plan_due'
+              AND NOT EXISTS (
+                  SELECT 1 FROM race_events re
+                  WHERE re.user_id = an.user_id
+                    AND re.is_target_event = TRUE
+                    AND re.event_date >= CURRENT_DATE
+                    AND re.event_date <= CURRENT_DATE + {RACE_WEEK_DUE_DAYS}
+                    AND {_ACTIVE_PLAN_NO_BRIEF}
+              )
+            RETURNING id
         ''',
     },
 ]
