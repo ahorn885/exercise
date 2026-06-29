@@ -96,9 +96,14 @@ def test_run_url_parse_success_payload():
     assert out['ok'] is True
     assert out['fields']['name'] == 'Big Race'
     assert out['fields']['event_date'] == '2026-09-05'
+    # #948 — the form JS toggles the discipline checkbox grid from this field
+    # and pre-fills the terrain editor from terrain.entries; keep both in the
+    # payload so the auto-fill has data to thread into the form.
+    assert out['fields']['included_discipline_ids'] == ['D-001']
     assert out['distance_options'][0]['label'] == '50K'
     assert out['terrain']['pct_basis'] == 'estimated'
     assert out['terrain']['entries'][0]['terrain_id'] == 'TRN-020'
+    assert out['terrain']['entries'][0]['discipline_id'] is None
     assert out['confidence'] == 'high'
 
 

@@ -1,5 +1,6 @@
 """Tests for the profile Skills capture surface — the Gear & skills tab
-(`/profile?tab=gear`, #894) GET render + `/profile/skills` POST handler.
+(`/profile?tab=gear`, #894) GET render + `/profile/skills` POST handler — plus
+the #884 slice-4b gear-toggle capture (`/profile/gear-toggles`).
 Mirrors the `tests/test_onboarding_skills.py` `_FakeConn` substrate.
 """
 
@@ -129,5 +130,63 @@ class TestSaveSkillsRoute:
         assert len(conn.calls) == 1  # vocab SELECT only
         assert conn.commits == 0
         assert evictions == []
+        assert response.status_code == 302
+        assert 'tab=gear' in response.location
+
+
+class TestSaveGearTogglesRoute:
+    def test_post_writes_scoped_gear_evicts_and_redirects(self, monkeypatch):
+        app = _make_profile_app()
+        conn = _FakeConn()
+        import routes.profile as pf_mod
+        evictions = []
+        monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+        monkeypatch.setattr(
+            pf_mod, 'evict_layer1_on_gear_change',
+            lambda db, uid: evictions.append(uid),
+        )
+
+        with app.test_request_context(
+            '/profile/gear-toggles',
+            method='POST',
+            data={'gear__rollerskis': '1', 'gear__climbing_gear': '1'},
+        ):
+            response = pf_mod.save_gear_toggles()
+
+        # Scoped DELETE (the four toggle kinds, sorted) + 2 INSERTs.
+        delete = conn.calls[0]
+        assert delete[0].startswith('DELETE FROM athlete_gear')
+        assert delete[1] == (7, 'alpine', 'climbing', 'ski', 'snow')
+        inserted = {c[1][1] for c in conn.calls if 'INSERT INTO athlete_gear' in c[0]}
+        assert inserted == {'rollerskis', 'climbing_gear'}
+        assert conn.commits == 1
+        assert evictions == [7]
+        assert response.status_code == 302
+        assert 'tab=gear' in response.location
+
+    def test_empty_form_clears_only_toggle_kinds(self, monkeypatch):
+        app = _make_profile_app()
+        conn = _FakeConn()
+        import routes.profile as pf_mod
+        evictions = []
+        monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+        monkeypatch.setattr(
+            pf_mod, 'evict_layer1_on_gear_change',
+            lambda db, uid: evictions.append(uid),
+        )
+
+        with app.test_request_context(
+            '/profile/gear-toggles', method='POST', data={}
+        ):
+            response = pf_mod.save_gear_toggles()
+
+        # Replace-all within the toggle kinds → a single scoped DELETE, no INSERT.
+        assert len(conn.calls) == 1
+        assert conn.calls[0][0].startswith('DELETE FROM athlete_gear')
+        assert conn.calls[0][1] == (7, 'alpine', 'climbing', 'ski', 'snow')
+        assert conn.commits == 1
+        assert evictions == [7]
         assert response.status_code == 302
         assert 'tab=gear' in response.location

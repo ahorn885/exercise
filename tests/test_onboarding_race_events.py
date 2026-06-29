@@ -465,7 +465,7 @@ class TestTargetRaceSaveMapboxRequired:
     find their race in Mapbox.
     """
 
-    def test_post_without_mapbox_id_flashes_and_redirects(self, monkeypatch):
+    def test_post_without_mapbox_id_flashes_and_rerenders(self, monkeypatch):
         app = _make_onboarding_app()
         conn = _FakeConn()
         import routes.onboarding as ob_mod
@@ -478,6 +478,14 @@ class TestTargetRaceSaveMapboxRequired:
         monkeypatch.setattr(ob_mod, 'update_race_event',
                             lambda *a, **k: pytest.fail(
                                 'update_race_event called past gate'))
+        # #947 — a failed gate must RE-RENDER the form with the athlete's
+        # submitted (auto-filled) values intact rather than redirect to a blank
+        # GET that wipes the fetched details + picked distance.
+        captured = {}
+        def fake_render(db, uid, target):
+            captured['target'] = target
+            return 'rendered'
+        monkeypatch.setattr(ob_mod, '_render_target_race_form', fake_render)
 
         with app.test_request_context(
             '/onboarding/target-race',
@@ -486,14 +494,16 @@ class TestTargetRaceSaveMapboxRequired:
                 'name': 'Test Race',
                 'event_date': '2026-07-17',
                 'race_format': 'continuous_multi_day',
+                'distance_km': '50',
                 # `event_locale_mapbox_id` deliberately absent.
             },
         ):
             response = ob_mod.target_race_save()
 
-        assert response.status_code == 302
-        # Redirects back to /onboarding/target-race (the GET form).
-        assert '/target-race' in response.location
+        assert response == 'rendered'
+        # Submitted values are carried back into the re-rendered form.
+        assert captured['target']['name'] == 'Test Race'
+        assert captured['target']['distance_km'] == 50.0
 
     def test_skip_path_still_works(self, monkeypatch):
         # The [Skip] button bypasses the Mapbox gate entirely. Athletes
