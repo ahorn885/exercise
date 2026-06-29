@@ -186,6 +186,7 @@ def _queue_target_race_event(
     time_goal: str | None = None,
     race_pack_weight_kg=None,
     previous_attempts: list | None = None,
+    sport_sub_format: str | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -224,6 +225,10 @@ def _queue_target_race_event(
             # framework_sport override. None exercises the fallback to
             # athlete-profile primary_sport.
             "framework_sport": framework_sport,
+            # #254 / D-17 slice B — chosen sport sub-format. Default None
+            # exercises the parent-default / bare-parent compose paths; tests
+            # asserting override precedence pass it through explicitly.
+            "sport_sub_format": sport_sub_format,
             # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race
             # discipline filter override. None = use full bridge defaults
             # (pre-B2 behavior).
@@ -746,6 +751,94 @@ class TestHappyPath:
         assert isinstance(l4_kwargs["layer1_payload"], dict)
         # Per-locale dict keyed by primary locale slug
         assert set(l4_kwargs["layer2c_payloads"].keys()) == {"home"}
+
+
+# ─── #254 / D-17 slice B: sport sub-format compose at the Layer 2A boundary ──
+
+
+class TestSportSubFormatCompose:
+    """#254 — the orchestrator composes the Layer 2A `framework_sport` input
+    from the two-column model (D1′): the athlete's chosen `sport_sub_format`
+    wins; else a sub-format parent resolves to its Layer-0 curated default;
+    else the bare name passes through unchanged. Only the Layer 2A call sees
+    the sub-format — `framework_sport` stays top-level everywhere else (2E
+    still gets the parent, asserted via `l2e_kwargs`)."""
+
+    def _run(self, conn, cache):
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+        # mocks[1] is q_layer2a; mocks[5] is q_layer2e.
+        return mocks[1].call_args.kwargs, mocks[5].call_args.kwargs
+
+    def test_parent_resolves_to_layer0_default(self):
+        # Bare sub-format parent + no athlete pick → the Layer-0 default is
+        # composed into the 2A input (the silent-NULL-bands fix). The default
+        # read fires (parent ∈ _SUB_FORMAT_SPORTS), queued between etl + locale.
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Triathlon")
+        _queue_etl_version_set(conn)
+        conn.queue(row={"sub_format_sport": "Triathlon (Standard / Olympic)"})
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, l2e_kwargs = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon (Standard / Olympic)"
+        # D1′ — the top-level name still flows to the rest of the cone.
+        assert l2e_kwargs["framework_sport"] == "Triathlon"
+
+    def test_athlete_chosen_sub_format_wins(self):
+        # An explicit `sport_sub_format` overrides the default — and skips the
+        # Layer-0 read entirely (no default-lookup response queued).
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            framework_sport="Triathlon",
+            sport_sub_format="Triathlon (Full / Ironman 140.6)",
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, l2e_kwargs = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon (Full / Ironman 140.6)"
+        assert l2e_kwargs["framework_sport"] == "Triathlon"
+
+    def test_parent_with_no_default_falls_back_to_bare_name(self):
+        # Parent is in the whitelist but the map returns no default row → the
+        # bare parent passes through (Layer 2A's own guard then HITL-gates it).
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Triathlon")
+        _queue_etl_version_set(conn)
+        conn.queue(row=None)  # default lookup miss
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, _ = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon"
+
+    def test_non_parent_sport_is_inert(self):
+        # A single-format sport never triggers the Layer-0 read (not in the
+        # whitelist) → no extra queued response, name unchanged.
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Trail Running")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, _ = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Trail Running"
 
 
 # ─── #732 slice 1: prior Taper window + plan version resolution ──────────────

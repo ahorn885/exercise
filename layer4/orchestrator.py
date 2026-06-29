@@ -80,7 +80,11 @@ from typing import Any, Literal
 
 from layer1.builder import build_layer1_payload
 from layer2_modality import resolve_training_substitution
-from layer2a.builder import Layer2AInputError, q_layer2a_discipline_classifier_payload
+from layer2a.builder import (
+    _SUB_FORMAT_SPORTS,
+    Layer2AInputError,
+    q_layer2a_discipline_classifier_payload,
+)
 from layer2b.builder import q_layer2b_terrain_classifier_payload
 from layer2c.builder import q_layer2c_equipment_mapper_payload
 from layer2d.builder import q_layer2d_injury_risk_profile_payload
@@ -137,6 +141,7 @@ import locations
 from athlete_event_windows_repo import load_event_windows
 from athlete_craft_locale_repo import load_craft_locales
 from race_events_repo import load_target_race_event_payload
+from sport_sub_format_repo import default_sub_format
 
 
 _AUTO_FIRE_DAYS_TO_EVENT_MAX = 14
@@ -1086,9 +1091,35 @@ def _upstream_full_cone(
         if target_race_event is not None
         else None
     )
+    # #254 / D-17 slice B — compose the Layer 2A sport input from the two-column
+    # model (D1′). `framework_sport` stays the TOP-LEVEL name everywhere else in
+    # the cone (2C/2D/3A/3B/2E read it as the bridge key); only Layer 2A needs
+    # the sub-format so its PLA join (phase_load_allocation, sub-format-keyed)
+    # resolves to real bands instead of silent NULLs. Resolution: the athlete's
+    # chosen `sport_sub_format` wins; else, for a known sub-format parent, the
+    # Layer-0 curated default (`sport_sub_format_map.is_default`); else the bare
+    # name unchanged (single-format sports, where the default lookup would be a
+    # no-op anyway — gated on `_SUB_FORMAT_SPORTS` so non-parents skip the read).
+    sub_format_override = (
+        target_race_event.sport_sub_format if target_race_event is not None else None
+    )
+    if sub_format_override:
+        framework_sport_for_2a = sub_format_override
+    elif framework_sport in _SUB_FORMAT_SPORTS:
+        framework_sport_for_2a = (
+            default_sub_format(db, framework_sport) or framework_sport
+        )
+    else:
+        framework_sport_for_2a = framework_sport
+    # Rule #15 — log the compose inputs + the chosen 2A sport.
+    print(
+        f"_upstream_full_cone: user_id={user_id} framework_sport={framework_sport!r} "
+        f"sport_sub_format={sub_format_override!r} -> "
+        f"framework_sport_for_2a={framework_sport_for_2a!r}"
+    )
     layer2a_payload = q_layer2a_discipline_classifier_payload(
         db,
-        framework_sport=framework_sport,
+        framework_sport=framework_sport_for_2a,
         discipline_id_filter=discipline_id_filter,
         etl_version_set=etl_version_set,
         athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),

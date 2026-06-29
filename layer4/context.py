@@ -1334,6 +1334,16 @@ class RaceEventPayload(_Base):
     # `framework_sport_missing` / `unknown_sport` errors still apply if the
     # value doesn't resolve against `layer0.sport_discipline_bridge`.
     framework_sport: str | None = Field(default=None, max_length=100)
+    # #254 / D-17 slice B (2026-06-29) — the athlete's chosen sport SUB-format
+    # for the five sub-format-parent sports (Triathlon, Skimo, LDC, Canoe /
+    # Kayak Marathon, OWMS). `framework_sport` stays the TOP-LEVEL name (all
+    # bridge/terrain consumers untouched — D1′ two-column model); this holds
+    # the full `phase_load_allocation.sport_name` sub-format the athlete picked
+    # (or NULL → the orchestrator composes the parent's curated default from
+    # `layer0.sport_sub_format_map` at the Layer 2A boundary). NULL for the
+    # single-format sports + legacy rows. Max length covers the longest PLA
+    # sub-format name with comfortable headroom.
+    sport_sub_format: str | None = Field(default=None, max_length=120)
     # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race discipline
     # filter override. When non-None, Layer 2A's classifier post-filters
     # the bridge-derived discipline list to just these canonical IDs
