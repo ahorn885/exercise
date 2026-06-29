@@ -13,7 +13,11 @@ import pytest
 
 from layer4.context import GoalViability, HeatAcclimState, Layer3BPayload, PeriodizationShape
 from layer4.errors import Layer4InputError
-from plan_management import derive_current_phase, derive_heat_acclim_state
+from plan_management import (
+    derive_current_phase,
+    derive_expected_race_temp_c,
+    derive_heat_acclim_state,
+)
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -222,3 +226,93 @@ class TestDeriveHeatAcclimState:
         assert params[0] == 77.0
         assert params[1] == 42
         assert params[2] == (_TODAY - timedelta(days=30)).isoformat()
+
+
+# ─── §5.3 derive_expected_race_temp_c ────────────────────────────────────────
+
+
+class _Ev:
+    """Minimal event satisfying the §5.3 read surface (event_id + event_date)."""
+
+    def __init__(self, event_id: str, event_date: date):
+        self.event_id = event_id
+        self.event_date = event_date
+
+
+_COORDS = {"e1": (44.32, -93.20)}
+
+
+def _weather_fetcher(normal_high: float | None, forecast_high: float | None):
+    """One fetcher serving both legs — archive URL → climate-normal sample,
+    forecast URL → single-day high. ``None`` on either → that leg fails."""
+
+    def fetch(url, params):
+        if "archive" in url:
+            if normal_high is None:
+                return None
+            return {
+                "daily": {
+                    "temperature_2m_max": [normal_high],
+                    "temperature_2m_min": [normal_high - 10.0],
+                    "precipitation_sum": [0.0],
+                }
+            }
+        if forecast_high is None:
+            return None
+        return {"daily": {"temperature_2m_max": [forecast_high]}}
+
+    return fetch
+
+
+class TestDeriveExpectedRaceTempC:
+    def test_no_coords_is_none_without_fetching(self):
+        # §13.3 — locale with no coordinates → None, no weather call.
+        def fetch(url, params):  # pragma: no cover - must not be called
+            raise AssertionError("should not fetch without coords")
+
+        ev = _Ev("nocoord", date(2026, 7, 17))
+        out = derive_expected_race_temp_c([ev], {}, _TODAY, fetcher=fetch)
+        assert out == {"nocoord": None}
+
+    def test_far_out_uses_climate_normal_only(self):
+        # >14 days out → normal leg only (forecast not consulted).
+        ev = _Ev("e1", _TODAY + timedelta(days=40))
+        out = derive_expected_race_temp_c(
+            [ev], _COORDS, _TODAY,
+            fetcher=_weather_fetcher(normal_high=26.0, forecast_high=99.0),
+        )
+        assert out == {"e1": 26.0}
+
+    def test_inside_horizon_blends_normal_and_forecast(self):
+        # §13.2 — 10 days out, normal 29, forecast 33 →
+        # w_forecast = 1 - 10/14 ≈ 0.2857 → 0.2857·33 + 0.7143·29 ≈ 30.1.
+        ev = _Ev("e1", _TODAY + timedelta(days=10))
+        out = derive_expected_race_temp_c(
+            [ev], _COORDS, _TODAY,
+            fetcher=_weather_fetcher(normal_high=29.0, forecast_high=33.0),
+        )
+        assert out["e1"] == 30.1
+
+    def test_forecast_failure_inside_horizon_falls_back_to_normal(self):
+        ev = _Ev("e1", _TODAY + timedelta(days=5))
+        out = derive_expected_race_temp_c(
+            [ev], _COORDS, _TODAY,
+            fetcher=_weather_fetcher(normal_high=24.0, forecast_high=None),
+        )
+        assert out["e1"] == 24.0
+
+    def test_no_normal_sample_trusts_forecast(self):
+        ev = _Ev("e1", _TODAY + timedelta(days=5))
+        out = derive_expected_race_temp_c(
+            [ev], _COORDS, _TODAY,
+            fetcher=_weather_fetcher(normal_high=None, forecast_high=31.0),
+        )
+        assert out["e1"] == 31.0
+
+    def test_both_legs_fail_is_none(self):
+        ev = _Ev("e1", _TODAY + timedelta(days=5))
+        out = derive_expected_race_temp_c(
+            [ev], _COORDS, _TODAY,
+            fetcher=_weather_fetcher(normal_high=None, forecast_high=None),
+        )
+        assert out["e1"] is None

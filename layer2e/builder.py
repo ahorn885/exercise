@@ -47,17 +47,20 @@ Drift translations between spec §3 and deployed `Layer1*` types
                                   → low/moderate/high
   spec caffeine strategy 4-enum   → caffeine_loading/taper/maintain/avoid
 
-The `current_phase` parameter is retained for spec-shape compliance per
-§3, but the algorithm computes daily baselines for all four phases per
-§5.2.3 'cross-phase visibility' — Layer 4 needs the projection across
-the periodization, not only the active phase.
+`current_phase` arrives inside the §3 `plan_management_state` contract
+(`Plan_Management_Spec_v1.md` §3); it is retained for spec-shape compliance,
+but the algorithm computes daily baselines for all four phases per §5.2.3
+'cross-phase visibility' — Layer 4 needs the projection across the
+periodization, not only the active phase. The same `plan_management_state`
+carries the `heat_acclim_state` + `expected_race_temp_c` the §5.8 overlay
+consumes (#220 de-stub).
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from layer4.context import (
     AthleteSupplementRecord,
@@ -66,6 +69,7 @@ from layer4.context import (
     DailyPhaseTargets,
     DietaryPatternFlag,
     HeatAcclimEventAdjustment,
+    HeatAcclimState,
     HealthConditionRecord,
     IntegratedSupplement,
     Layer1HealthStatus,
@@ -78,6 +82,7 @@ from layer4.context import (
     Layer2EPayload,
     Layer2ETargetEvent,
     MacroTargets,
+    PlanManagementState,
     RaceDayFueling,
     RaceDaySupplementSuggestion,
     SleepDepFuelingOverlay,
@@ -92,7 +97,6 @@ logger = logging.getLogger(__name__)
 
 _REQUIRED_ETL_KEYS: frozenset[str] = frozenset({"0A"})
 _PHASES: tuple[str, ...] = ("Base", "Build", "Peak", "Taper")
-_PHASE_LITERAL = Literal["Base", "Build", "Peak", "Taper"]
 
 # §4 sanity floors (preconditions #2 + #3)
 _BODY_WEIGHT_MIN_KG: float = 20.0
@@ -1118,40 +1122,151 @@ def _build_sleep_dep_overlay(
     return overlay, flags
 
 
-# ─── §5.8 Heat acclim overlay (STUB) ────────────────────────────────────────
+# ─── §5.8 Heat acclim overlay ───────────────────────────────────────────────
+
+# §5.8: full heat acclimatization takes 10–14 days minimum; under that with a
+# `low` acclim state we flag a heat-acclim gap.
+_HEAT_FULL_ACCLIM_DAYS = 14
 
 
-def _stub_heat_acclim_adjustments(
-    target_events: list[Layer2ETargetEvent],
-) -> tuple[list[HeatAcclimEventAdjustment], list[Layer2ECoachingFlag]]:
-    # Vertical-slice stub. PlanManagementState + HeatAcclimState
-    # contracts (open items 2E-2/3/4) are not yet authored; race
-    # temperature forecasts have no source-of-truth. Per spec §5.8
-    # 'expected_temp is None' branch — every event surfaces with
-    # temp_signal='unknown' + a race_temp_unknown coaching flag.
-    adjustments: list[HeatAcclimEventAdjustment] = []
-    flags: list[Layer2ECoachingFlag] = []
-    for ev in target_events:
-        flag = Layer2ECoachingFlag(
-            flag_type="race_temp_unknown",
-            event_id=ev.event_id,
-            supplement_id=None,
+def _hot_event_adjustment(
+    heat_acclim_state: HeatAcclimState,
+    event: Layer2ETargetEvent,
+    severity: str,
+    today: date,
+) -> tuple[float, float, Layer2ECoachingFlag | None]:
+    """`Layer2E_Spec.md` §5.8 `_hot_event_adjustment` — fluid/Na modifiers for a
+    warm/hot event plus a heat-acclim flag when the athlete is under-acclimatized.
+
+    `na_mod`/`fluid_mod`: 1.15/1.15 (warm), 1.30/1.35 (hot). `salt_tolerance`
+    is intentionally not consumed here — the spec applies it later in the §5.4
+    race-day path (`_salt_tolerance_modifier`), not in the heat band.
+    """
+    days_to_race = (event.event_date - today).days
+    if heat_acclim_state.level == "low" and days_to_race < _HEAT_FULL_ACCLIM_DAYS:
+        flag: Layer2ECoachingFlag | None = Layer2ECoachingFlag(
+            flag_type="heat_acclim_gap",
+            event_id=event.event_id,
             message=(
-                f"Expected race temperature for {ev.event_name} has no "
-                "Plan Management forecast — heat-acclim band modifiers "
-                "deferred until the PM contract lands."
+                f"{event.event_name} is expected to run {severity}; your heat "
+                f"acclimation is low with {days_to_race} days to the event — "
+                "not enough runway for full acclimatization (10–14 days minimum)."
+            ),
+            severity="moderate",
+            metadata={
+                "heat_acclim_level": heat_acclim_state.level,
+                "days_to_race": days_to_race,
+            },
+        )
+    elif heat_acclim_state.level == "low":
+        flag = Layer2ECoachingFlag(
+            flag_type="heat_acclim_in_progress",
+            event_id=event.event_id,
+            message=(
+                f"{event.event_name} is expected to run {severity}; run your "
+                "heat-acclimation protocol — there's still time to adapt before "
+                "the event."
             ),
             severity="info",
-            metadata={"stub_phase": "vertical_slice_2_5"},
+            metadata={"heat_acclim_level": heat_acclim_state.level},
         )
+    else:
+        flag = None
+
+    na_mod = 1.15 if severity == "warm" else 1.30
+    fluid_mod = 1.15 if severity == "warm" else 1.35
+    return na_mod, fluid_mod, flag
+
+
+def _heat_acclim_overlay(
+    target_events: list[Layer2ETargetEvent],
+    plan_state: PlanManagementState,
+    heat_acclim_data_sparse: bool,
+    today: date,
+) -> tuple[list[HeatAcclimEventAdjustment], list[Layer2ECoachingFlag]]:
+    """`Layer2E_Spec.md` §5.8 — per-event fluid/Na band modifiers from the Plan
+    Management contract (#220 de-stub).
+
+    Bands on `expected_race_temp_c[event_id]`: `<18` cool 0.85/0.85, `<26`
+    temperate 1.0/1.0, `<32` warm, `≥32` hot (warm/hot route through
+    `_hot_event_adjustment`). `None` (coordinate-less event or both weather
+    fetches failed, PM §5.3.4) keeps the `temp_signal='unknown'` +
+    `race_temp_unknown` branch with no modifier. When the heat-acclim signal is
+    thin (`heat_acclim_data_sparse`, PM §5.2.4) one `heat_acclim_data_sparse`
+    advisory is surfaced so a `low` reading from absent data isn't misread as a
+    confirmed-unacclimatized one.
+    """
+    adjustments: list[HeatAcclimEventAdjustment] = []
+    flags: list[Layer2ECoachingFlag] = []
+    heat_state = plan_state.heat_acclim_state
+
+    for ev in target_events:
+        expected_temp = plan_state.expected_race_temp_c.get(ev.event_id)
+        if expected_temp is None:
+            signal = "unknown"
+            na_mod = fluid_mod = 1.0
+            flag: Layer2ECoachingFlag | None = Layer2ECoachingFlag(
+                flag_type="race_temp_unknown",
+                event_id=ev.event_id,
+                message=(
+                    f"Expected race temperature for {ev.event_name} isn't "
+                    "resolved yet (no locale coordinates, or weather lookup "
+                    "failed) — no heat band modifiers applied."
+                ),
+                severity="info",
+                metadata={"reason": "expected_race_temp_unresolved"},
+            )
+        elif expected_temp < 18:
+            signal, na_mod, fluid_mod, flag = "cool", 0.85, 0.85, None
+        elif expected_temp < 26:
+            signal, na_mod, fluid_mod, flag = "temperate", 1.0, 1.0, None
+        elif expected_temp < 32:
+            signal = "warm"
+            na_mod, fluid_mod, flag = _hot_event_adjustment(
+                heat_state, ev, "warm", today
+            )
+        else:
+            signal = "hot"
+            na_mod, fluid_mod, flag = _hot_event_adjustment(
+                heat_state, ev, "hot", today
+            )
+
         adjustments.append(HeatAcclimEventAdjustment(
             event_id=ev.event_id,
-            temp_signal="unknown",
-            na_modifier=1.0,
-            fluid_modifier=1.0,
+            temp_signal=signal,
+            na_modifier=na_mod,
+            fluid_modifier=fluid_mod,
             flag=flag,
         ))
-        flags.append(flag)
+        if flag is not None:
+            flags.append(flag)
+
+        # Rule #15 — per-event chosen temp + band + the acclim inputs behind it.
+        print(
+            f"layer2e._heat_acclim_overlay: event={ev.event_id} "
+            f"expected_temp_c={expected_temp} signal={signal} na_mod={na_mod} "
+            f"fluid_mod={fluid_mod} acclim_level={heat_state.level} "
+            f"days_at_temp_last_30={heat_state.days_at_temp_last_30} "
+            f"flag={flag.flag_type if flag else None}"
+        )
+
+    # PM §5.2.4 — one sparse-data advisory per build (athlete-level, not per event).
+    if heat_acclim_data_sparse and target_events:
+        flags.append(Layer2ECoachingFlag(
+            flag_type="heat_acclim_data_sparse",
+            event_id=None,
+            message=(
+                "Heat-acclimation was read from very few logged training "
+                "conditions (<5 days in the last 30) — treated as low to stay "
+                "safe for a hot race, but log your conditions to sharpen it."
+            ),
+            severity="info",
+            metadata={
+                "days_at_temp_last_30": heat_state.days_at_temp_last_30,
+                "level": heat_state.level,
+            },
+        ))
+
     return adjustments, flags
 
 
@@ -1260,9 +1375,10 @@ def q_layer2e_nutrition_baseline_payload(
     lifestyle: Layer1Lifestyle,
     included_disciplines: list[Layer2ADiscipline],
     framework_sport: str,
-    current_phase: _PHASE_LITERAL,
+    plan_management_state: PlanManagementState,
     *,
     etl_version_set: dict[str, str],
+    heat_acclim_data_sparse: bool = False,
     athlete_id: str | None = None,
     today: date | None = None,
 ) -> Layer2EPayload:
@@ -1291,7 +1407,7 @@ def q_layer2e_nutrition_baseline_payload(
         lifestyle,
         included_disciplines,
         framework_sport,
-        current_phase,
+        plan_management_state.current_phase,
         etl_version_set,
     )
 
@@ -1344,8 +1460,11 @@ def q_layer2e_nutrition_baseline_payload(
         target_events, lifestyle
     )
 
-    # §5.8 heat acclim — stub.
-    heat_adjustments, heat_flags = _stub_heat_acclim_adjustments(target_events)
+    # §5.8 heat acclim overlay — per-event band modifiers from the Plan
+    # Management contract (heat_acclim_state + expected_race_temp_c).
+    heat_adjustments, heat_flags = _heat_acclim_overlay(
+        target_events, plan_management_state, heat_acclim_data_sparse, today
+    )
 
     # §5.9 HITL — gate 5 only this slice.
     hitl_items = _emit_hitl_items(health_status, target_events)
