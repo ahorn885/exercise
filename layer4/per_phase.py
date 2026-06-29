@@ -2733,12 +2733,10 @@ def render_user_prompt(
     parts.append(
         f"Experience level: {layer1_payload.get('experience_level', 'unknown')}"
     )
-    coach_notes = layer1_payload.get("coach_notes")
-    if coach_notes:
-        parts.append(f"Coach notes: {coach_notes}")
     # #690 — surface the durable Coaching Memory preferences (suppress-on-empty)
     # so the synthesizer honors an explicit high-variety request + prefer/avoid
-    # exercise notes; the strength section reads this block by name.
+    # exercise notes; the strength section reads this block by name. (#954 — the
+    # free-text `coach_notes` field was retired into this same Coaching memory.)
     parts.extend(_format_coaching_memory(layer1_payload))
     parts.append("")
     parts.append("Active injuries (hard constraints; never overridable):")

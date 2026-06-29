@@ -1490,7 +1490,7 @@ class ParsedIntent(_Base):
 # wellness_self_report joinpoints). Section-keyed sub-models follow the
 # v5 §A-§L spec structure. Top-level convenience fields surface the keys
 # Layer 4 entry points currently `.get(...)` from the opaque dict
-# (experience_level / coach_notes / available_days_per_week
+# (experience_level / available_days_per_week
 # / travel_constraint / sleep_baseline / daily_availability_windows) so
 # `.model_dump()` produces a dict consumable by Layer 4 unchanged per
 # `Upstream_Implementation_Plan_v1.md` §6 item 3 mitigation.
@@ -1922,15 +1922,12 @@ class Layer1Payload(_Base):
     # Layer-4-consumed convenience fields (top-level so `.model_dump()` produces
     # a dict where Layer 4's `.get("experience_level")` etc. continue to work
     # per `Upstream_Implementation_Plan_v1.md` §8 mitigation). `experience_level`
-    # + `coach_notes` are self-reported on `athlete_profile`;
-    # `travel_constraint` is summarized from the athlete's event windows (#304).
+    # is self-reported on `athlete_profile`; `travel_constraint` is summarized
+    # from the athlete's event windows (#304). (Free-text coach-facing notes were
+    # retired in #954 — merged into `coaching_preferences` / Coach memory.)
     experience_level: Literal[
         "novice", "developing", "intermediate", "advanced", "elite"
     ] | None = None
-    # Single free-text athlete→coach field (merged from the legacy `notes` +
-    # `coaching_voice_preferences` pair). Rendered into the synthesizer's
-    # athlete context across every Layer 4 surface.
-    coach_notes: str | None = None
     # §G per-week capacity scalars (promoted from the retired Layer1Availability
     # wrapper). `doubles_feasible` gates second-window scheduling; the session
     # grid reads `two_a_day_preference` (friendly density control) +

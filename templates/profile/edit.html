@@ -14,7 +14,7 @@
 {% set nav_active = 'athlete' %}
 {% set sub = active_tab if active_tab in ['athlete', 'health', 'gear'] else 'athlete' %}
 {% set is_first_run = not (profile.date_of_birth or profile.primary_sport or profile.height_cm
-   or profile.weekly_hours_target or profile.body_weight_kg or profile.coach_notes) %}
+   or profile.weekly_hours_target or profile.body_weight_kg) %}
 {% set unit_pref = profile.unit_preference or 'imperial' %}
 {% set wt_label = profile.weight_unit_label or 'lb' %}
 {% block title %}Athlete — AIDSTATION{% endblock %}
@@ -141,12 +141,15 @@
     </div>
   </div>
 
+  {# #954 — "Notes for the coach" merged into Coach memory (one coach-facing
+     surface). Free-form context the coach should know — life constraints,
+     communication style, anything — now lives there as durable preferences. #}
   <div class="card card-pad stack">
     <p class="eyebrow">● Notes for the coach</p>
-    <label class="field">
-      <textarea name="coach_notes" rows="4" class="form-control form-control-sm"
-                placeholder="Anything the coach should know — life constraints, schedule pressure, training context — and how you want the coach to communicate (e.g. blunt and concise, more context on the why, minimal cheerleading).">{{ profile.coach_notes or '' }}</textarea>
-    </label>
+    <p class="pf-hint">Anything the coach should know — life constraints, schedule pressure, training
+      context, or how you want the coach to communicate — now lives in
+      <a href="{{ url_for('profile.coach_memory') }}">Coach memory</a>, alongside the preferences the
+      coach picks up from chat and plan reviews.</p>
   </div>
 
   <div class="pf-save">

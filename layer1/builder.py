@@ -159,7 +159,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         as_of=datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
         # Layer-4-consumed convenience fields.
         experience_level=convenience["experience_level"],
-        coach_notes=convenience["coach_notes"],
         coaching_preferences=coaching_preferences,
         available_days_per_week=available_days_per_week,
         travel_constraint=travel_constraint,
@@ -194,7 +193,6 @@ _PROFILE_COLS = (
     "height_cm",
     "primary_sport",
     "weekly_hours_target",
-    "coach_notes",
     "body_weight_kg",
     "hrmax_bpm",
     "lactate_threshold_hr_bpm",
@@ -261,7 +259,7 @@ def _load_athlete_profile(db, user_id: int):
             _empty_event_scalars(),
             _empty_lifestyle(),
             _empty_availability_scalars(),
-            {"experience_level": None, "coach_notes": None},
+            {"experience_level": None},
         )
 
     identity = Layer1Identity(
@@ -323,7 +321,6 @@ def _load_athlete_profile(db, user_id: int):
     }
     convenience = {
         "experience_level": row["experience_level"],
-        "coach_notes": row["coach_notes"],
     }
     return (identity, performance, training_scalars, event_scalars, lifestyle,
             availability_scalars, convenience)

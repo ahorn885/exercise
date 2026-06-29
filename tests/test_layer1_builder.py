@@ -142,7 +142,6 @@ class TestEmptyUser:
         assert isinstance(payload.as_of, datetime)
         # Top-level convenience fields.
         assert payload.experience_level is None
-        assert payload.coach_notes is None
         assert payload.coaching_preferences == []
         assert payload.available_days_per_week == 0
         assert payload.travel_constraint is None
@@ -203,7 +202,6 @@ class TestFullyPopulated:
             "height_cm": 180.0,
             "primary_sport": "adventure_racing",
             "weekly_hours_target": 14.0,
-            "coach_notes": "PGE 2026 prep",
             "body_weight_kg": 78.5,
             "hrmax_bpm": 188,
             "lactate_threshold_hr_bpm": 168,
@@ -506,13 +504,13 @@ class TestFullyPopulated:
         assert payload.event_goal.plan_duration_weeks_no_event is None
 
     def test_convenience_fields_threaded(self):
-        # #304 — experience_level + coach_notes round-trip from
-        # athlete_profile; travel_constraint is summarized from event windows.
+        # #304 — experience_level round-trips from athlete_profile;
+        # travel_constraint is summarized from event windows. (#954 — the
+        # free-text coach_notes field was retired into coaching_preferences.)
         conn = _FakeConn()
         self._queue_andy(conn)
         payload = build_layer1_payload(conn, user_id=1)
         assert payload.experience_level == "advanced"
-        assert payload.coach_notes == "PGE 2026 prep"
         assert payload.travel_constraint is not None
         assert "2026-07-01–2026-07-05: training at Moab" in payload.travel_constraint
         assert "brings gravel_bike" in payload.travel_constraint
@@ -596,7 +594,6 @@ class TestFullyPopulated:
         dumped = payload.model_dump()
         # Layer 4 reads these keys via `.get(...)` today.
         assert "experience_level" in dumped
-        assert "coach_notes" in dumped
         assert "available_days_per_week" in dumped
         assert "travel_constraint" in dumped
         assert "sleep_baseline" in dumped
@@ -750,7 +747,7 @@ class TestWeightingSumInvariant:
 # Helper: full athlete_profile column list (mirrors layer1.builder._PROFILE_COLS).
 _PROFILE_COL_NAMES = (
     "date_of_birth", "sex", "height_cm", "primary_sport",
-    "weekly_hours_target", "coach_notes", "body_weight_kg", "hrmax_bpm",
+    "weekly_hours_target", "body_weight_kg", "hrmax_bpm",
     "lactate_threshold_hr_bpm", "vo2max", "cycling_ftp_w",
     "doubles_feasible", "two_a_day_preference", "peak_sessions_max",
     "years_structured_training",
