@@ -310,11 +310,17 @@ def get_coaching_context(db, plan_id=None, lookback_days=14, locale='home'):
     ctx['available_equipment'] = [{'tag': n, 'label': n} for n in equipment_names]
 
     locale_profile = db.execute(
-        'SELECT notes, city FROM locale_profiles WHERE locale = ? AND user_id = ?',
+        'SELECT notes, lat, lng FROM locale_profiles WHERE locale = ? AND user_id = ?',
         (locale, uid)
     ).fetchone()
     ctx['locale_notes'] = locale_profile['notes'] if locale_profile and locale_profile['notes'] else ''
-    ctx['locale_city'] = locale_profile['city'] if locale_profile and locale_profile['city'] else ''
+    # #941 — weather/clothing resolves off the Mapbox-anchored coordinates, not
+    # the retired free-text `city`. wttr.in accepts a bare "lat,lng" token; an
+    # un-anchored locale (no coords) yields '' and clothing degrades gracefully.
+    if locale_profile and locale_profile['lat'] is not None and locale_profile['lng'] is not None:
+        ctx['locale_weather_location'] = f"{float(locale_profile['lat']):.4f},{float(locale_profile['lng']):.4f}"
+    else:
+        ctx['locale_weather_location'] = ''
 
     # Active injuries
     injuries = db.execute(
@@ -739,10 +745,14 @@ Tailor discipline emphasis to the race disciplines listed above.
     return plan, response.usage
 
 
-def get_clothing_context(db, plan_id: int, city: str, days_ahead: int = 7) -> list:
+def get_clothing_context(db, plan_id: int, location: str, days_ahead: int = 7) -> list:
     """
     Return clothing context for upcoming outdoor sessions in the next `days_ahead` days.
     Fetches a weather forecast from wttr.in and matches against conditions_log history.
+
+    `location` is a wttr.in location token — #941 passes a Mapbox-anchored
+    "lat,lng" string; an empty token skips the forecast (clothing degrades to
+    the bare session list).
     """
     today = date.today()
     today_str = today.isoformat()
@@ -762,9 +772,9 @@ def get_clothing_context(db, plan_id: int, city: str, days_ahead: int = 7) -> li
         return []
 
     forecast_by_date = {}
-    if city:
+    if location:
         try:
-            resp = requests.get(f'https://wttr.in/{city}?format=j1', timeout=5)
+            resp = requests.get(f'https://wttr.in/{location}?format=j1', timeout=5)
             for day in resp.json().get('weather', []):
                 d = day.get('date', '')
                 hourly = day.get('hourly', [])
@@ -863,7 +873,7 @@ def run_review(db, plan_id: int, tier: int, notes: str = '', locale: str = 'home
     lookback = {1: 7, 2: 14, 3: 30}.get(tier, 14)
     ctx = get_coaching_context(db, plan_id=plan_id, lookback_days=lookback, locale=locale)
     sport_module = _get_plan_sport_module(db, plan_id)
-    city = ctx.get('locale_city', '')
+    location = ctx.get('locale_weather_location', '')
 
     if tier == 3:
         plan = db.execute(
@@ -897,7 +907,7 @@ Use the full training history below as context for progressive overload and volu
         ).fetchall()
         delta_section += f'\n## Full Remaining Plan\n{json.dumps([dict(u) for u in upcoming], indent=2, default=str)}\n'
 
-        clothing = get_clothing_context(db, plan_id, city)
+        clothing = get_clothing_context(db, plan_id, location)
         clothing_section = (
             f'\n## Upcoming Session Clothing Context (next 7 days)\n{json.dumps(clothing, indent=2, default=str)}\n'
             if clothing else ''
@@ -921,7 +931,7 @@ The item_id values come from plan_health.upcoming_items or the Full Remaining Pl
         if below:
             delta_section += f'\nNOTE: {len(below)} of {len(delta)} recent sessions are below plan. Consider reducing intensity or volume on next sessions.\n'
 
-        clothing = get_clothing_context(db, plan_id, city)
+        clothing = get_clothing_context(db, plan_id, location)
         if clothing:
             delta_section += f'\n## Upcoming Session Clothing Context (next 7 days)\n{json.dumps(clothing, indent=2, default=str)}\n'
 

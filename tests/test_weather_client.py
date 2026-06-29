@@ -117,3 +117,30 @@ class TestSummaryLine:
         assert "~18°C" in line
         assert "40%" in line
         assert "5-yr" in line
+
+    def test_summary_line_metric_explicit(self):
+        ec = ExpectedConditions(
+            temp_max_c=30.2,
+            temp_min_c=18.4,
+            wet_day_probability_pct=40,
+            sample_days=35,
+            sample_years=5,
+        )
+        line = ec.summary_line('metric')
+        assert "~30°C" in line
+        assert "~18°C" in line
+        assert "°F" not in line
+
+    def test_summary_line_imperial_renders_fahrenheit(self):
+        # Issue #946 — imperial athletes see °F, not °C.
+        ec = ExpectedConditions(
+            temp_max_c=30.0,  # 86°F
+            temp_min_c=10.0,  # 50°F
+            wet_day_probability_pct=40,
+            sample_days=35,
+            sample_years=5,
+        )
+        line = ec.summary_line('imperial')
+        assert "~86°F" in line
+        assert "~50°F" in line
+        assert "°C" not in line

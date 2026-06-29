@@ -1,8 +1,9 @@
 {# Redesign (Phase 6 secondary form) — Location equipment editor. Companion to
    §16 Locations; migrated off base_legacy onto the new shell. All field names
    + POST actions preserved: equipment[] checkboxes, locale_terrain_ids[],
-   city (legacy only), notes; plus the upgrade / refresh / delete affordances
-   and the three modes (legacy · shared_build · shared_inherit). #}
+   notes; plus the upgrade / refresh / delete affordances and the three modes
+   (legacy · shared_build · shared_inherit). #941 retired the free-text city
+   field — weather resolves off the Mapbox lat/lng. #}
 {% extends 'base.html' %}
 {% set nav_active = 'locations' %}
 {% block title %}{{ (profile['locale_name'] if profile and profile['locale_name'] else locale) | capitalize }} · equipment — AIDSTATION{% endblock %}
@@ -106,11 +107,6 @@
     </fieldset>
     {% endif %}
 
-    {% if mode == 'legacy' %}
-    <label class="field loc-mw"><span class="lbl">City <span class="loc-opt">(optional — e.g. "Minneapolis, MN")</span></span>
-      <input type="text" name="city" class="form-control form-control-sm" value="{{ city }}"
-             placeholder="City where this location is"></label>
-    {% endif %}
     <label class="field loc-mw"><span class="lbl">Notes <span class="loc-opt">(optional — e.g. "DB up to 50 lb, no rack")</span></span>
       <textarea name="notes" class="form-control form-control-sm" rows="2">{{ notes }}</textarea></label>
 

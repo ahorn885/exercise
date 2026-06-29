@@ -89,6 +89,7 @@ def _fake_session(**overrides):
         locale_name="Home",
         plan_version_id=65,
         date=date(2026, 6, 12),
+        session_index_in_day=0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -108,6 +109,9 @@ class TestV2SessionCard:
         assert card["intensity"] == "moderate"
         assert card["plan_version_id"] == 65
         assert card["item_date"] == "2026-06-12"
+        # Deep-link key (#956): the session's slot within its day pairs with
+        # item_date to target `#s-2026-06-12-0` on the plan page.
+        assert card["session_index"] == 0
         # No race name supplied → the plain fallback label (#620).
         assert card["plan_name"] == "Training plan"
 
@@ -166,6 +170,9 @@ class TestRestDayCard:
         assert card["intensity"] is None
         assert card["plan_name"] == "Pocket Gopher Extreme 2026"
         assert card["item_date"] == "2026-06-22"
+        # No session row to slot into → deep-link to the day group, not a
+        # session anchor (#956): the template renders `#day-<iso>`.
+        assert card["session_index"] is None
 
     def test_plan_name_falls_back_when_missing(self):
         card = _rest_day_card(65, None, date(2026, 6, 22))

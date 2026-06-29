@@ -187,6 +187,60 @@ def test_notify_badge_armed_but_no_email_without_address(monkeypatch):
     assert sent == []
 
 
+def test_notify_skips_email_when_opted_out(monkeypatch):
+    """Per-type email opt-out (#963): claim still wins (badge armed) but no
+    email is sent; returns True (in-app only)."""
+    import notification_preferences_repo as nprepo
+    monkeypatch.setattr(nprepo, "channel_enabled",
+                        lambda db, uid, t, ch: False)
+    sent = []
+    monkeypatch.setattr(pn, "send_email", lambda *a, **k: sent.append(a) or True)
+    monkeypatch.setattr(pn, "target_race_name", lambda db, uid: "Race")
+    db = _RecordingDb(responses=[
+        _Cur(row={"id": 7}),       # claim wins
+        _Cur(row=_user_row()),     # user lookup (has email)
+    ])
+    out = pn.notify_plan_terminal(db, 1, 7, {"generation_status": "ready"})
+    assert out is True
+    assert sent == []
+
+
+def test_notify_sends_when_email_opted_in(monkeypatch):
+    """Explicit opt-in (the default) still sends."""
+    import notification_preferences_repo as nprepo
+    monkeypatch.setattr(nprepo, "channel_enabled",
+                        lambda db, uid, t, ch: True)
+    sent = []
+    monkeypatch.setattr(pn, "send_email", lambda *a, **k: sent.append(a) or True)
+    monkeypatch.setattr(pn, "target_race_name", lambda db, uid: "Race")
+    db = _RecordingDb(responses=[
+        _Cur(row={"id": 7}),
+        _Cur(row=_user_row()),
+    ])
+    out = pn.notify_plan_terminal(db, 1, 7, {"generation_status": "ready"})
+    assert out is True
+    assert len(sent) == 1
+
+
+def test_unseen_filters_muted_in_app_type(monkeypatch):
+    """A type the user turned off for in-app is dropped from the badge feed."""
+    import notification_preferences_repo as nprepo
+    monkeypatch.setattr(nprepo, "disabled_in_app_types",
+                        lambda db, uid: {"plan_ready"})
+    monkeypatch.setattr(pn, "target_race_name", lambda db, uid: "Race")
+    rows = [
+        _FakeRow(id=7, generation_status="ready", generation_error=None,
+                 scope_start_date=None, scope_end_date=None),
+        _FakeRow(id=8, generation_status="failed",
+                 generation_error="boom",
+                 scope_start_date=None, scope_end_date=None),
+    ]
+    db = _RecordingDb(responses=[_Cur(rows=rows)])
+    out = pn.get_unseen_plan_notifications(db, 42)
+    # ready muted → only the failed row survives.
+    assert [n["id"] for n in out] == [8]
+
+
 def test_notify_swallows_faults(monkeypatch, capsys):
     """A fault anywhere in delivery must NEVER propagate (the plan is already
     terminal + durable); it rolls back and logs."""
