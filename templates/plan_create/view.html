@@ -146,12 +146,24 @@
           <strong>{{ d }}</strong><span class="dow">{{ dow }}</span>
         </div>
         {% set dn = nutrition_by_date.get(d) %}
+        {% set dc = conditions_by_date.get(d) %}
+        {# #942 — fuel/hydration guidance used to appear twice: the fueling note
+           (plus the electrolyte pick) under the date, and a "heat" weather chip
+           that was also about hydration/electrolytes. Split the heat advisory
+           out of the weather flags and fold it into the fueling note as one
+           coherent fuel+hydration line. Cold-start / rain advisories are about
+           kit, so they stay with the conditions. #}
+        {% set fuel = namespace(heat=none, weather_flags=[]) %}
+        {% if dc %}{% for f in dc.advisory_flags %}{% if f.startswith('heat') %}{% set fuel.heat = f %}{% else %}{% set fuel.weather_flags = fuel.weather_flags + [f] %}{% endif %}{% endfor %}{% endif %}
+        {# Only fold heat into the fuel block when a fuel block exists to hold it;
+           otherwise it stays a weather chip so the guidance still shows once. #}
+        {% set merge_heat = dn is not none and fuel.heat is not none %}
         {% if dn %}
         <div class="day-fuel">
           <span class="chip{{ ' accent' if dn.load_tier in ['hard', 'peak'] else '' }}">⚡ {{ dn.total_kcal }} kcal</span>
           {% if dn.carb_loading_applied %}<span class="chip accent">🍝 carb load</span>{% endif %}
           <span class="rail-note day-fuel-macros">C {{ dn.macros.cho_g }} · P {{ dn.macros.protein_g }} · F {{ dn.macros.fat_g }} g</span>
-          {% if dn.fueling_note %}<p class="day-fuel-note">{{ dn.fueling_note }}</p>{% endif %}
+          {% if dn.fueling_note or merge_heat %}<p class="day-fuel-note">{{ dn.fueling_note }}{% if merge_heat %} In the heat, {{ fuel.heat.split('—', 1)[1] | trim }}.{% endif %}</p>{% endif %}
           {% if dn.supplement_recs %}
           <p class="day-fuel-note">💊 {% for s in dn.supplement_recs %}{{ s.name }}{% if s.dose %} {{ s.dose }}{% endif %}{% if s.timing %} ({{ s.timing }}){% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
           {% endif %}
@@ -171,7 +183,6 @@
           {% endif %}
         </div>
         {% endif %}
-        {% set dc = conditions_by_date.get(d) %}
         {% if dc %}
         {% set band_icon = {'freezing': '🥶', 'cold': '❄️', 'cool': '🌥️', 'mild': '🌤️', 'warm': '☀️', 'hot': '🔥'} %}
         <div class="day-weather">
@@ -179,9 +190,10 @@
           <span class="rail-note day-weather-temps">{{ dc.temp_max_c|round|int }}° / {{ dc.temp_min_c|round|int }}°C{% if dc.wet_day_probability_pct %} · 💧 {{ dc.wet_day_probability_pct }}%{% endif %}</span>
           {% if dc.clothing_summary %}<p class="day-weather-note">👕 {{ dc.clothing_summary }}</p>{% endif %}
           {% if dc.kit_items %}<p class="day-weather-note">🎒 {{ dc.kit_items | join(', ') }}</p>{% endif %}
-          {% if dc.advisory_flags %}
+          {% set shown_flags = fuel.weather_flags if merge_heat else dc.advisory_flags %}
+          {% if shown_flags %}
           <div class="day-weather-flags">
-            {% for f in dc.advisory_flags %}<span class="chip warn">{{ f }}</span>{% endfor %}
+            {% for f in shown_flags %}<span class="chip warn">{{ f }}</span>{% endfor %}
           </div>
           {% endif %}
         </div>
