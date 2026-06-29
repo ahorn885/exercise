@@ -803,20 +803,25 @@ def _row_provider(row) -> str:
     return 'unknown'
 
 
-def _primary_rank(row):
-    """Primary-selection sort key: richest completeness first, then the static
-    source order as the tiebreaker (lower index = preferred)."""
-    return (-_completeness_score(row), _SOURCE_ORDER.get(_row_provider(row), len(_SOURCE_ORDER)))
+def _primary_rank(row, pin=None):
+    """Primary-selection sort key: a hard source pin first (#196 P5 B3 — when the
+    cluster has a copy from the pinned provider it leads), then richest completeness,
+    then the static source order as the tiebreaker (lower index = preferred)."""
+    return (0 if pin and _row_provider(row) == pin else 1,
+            -_completeness_score(row),
+            _SOURCE_ORDER.get(_row_provider(row), len(_SOURCE_ORDER)))
 
 
 def materialize_canonical_activity(db, uid: int, cluster_id: int):
     """(Re)build the single best-of canonical_activity record for a cluster + its
     per-field provenance. Idempotent: called at the tail of cluster_activity on
-    every member add, so a late cross-source arrival re-merges. Picks the richest
-    copy as primary (weighted completeness; static source order breaks ties),
-    gap-fills each field from the highest-scoring copy that carries it, upserts the
-    canonical row (ON CONFLICT cluster_id) and replaces the cluster's provenance.
-    Rule #15: logs the members, the chosen primary, and the per-field source map."""
+    every member add, so a late cross-source arrival re-merges. Picks the primary
+    copy — a hard cardio source pin first (#196 P5 B3 — when the cluster has a copy
+    from the pinned provider), else the richest copy (weighted completeness; static
+    source order breaks ties) — gap-fills each field from the highest-scoring copy
+    that carries it, upserts the canonical row (ON CONFLICT cluster_id) and replaces
+    the cluster's provenance.
+    Rule #15: logs the members, the chosen primary, the per-field source map + pin."""
     id_cols = tuple(col for col, _name in _PROVIDER_ID_COLUMNS)
     select_cols = ', '.join(('id',) + _CANONICAL_FIELDS + id_cols)
     members = db.execute(
@@ -831,7 +836,14 @@ def materialize_canonical_activity(db, uid: int, cluster_id: int):
         print(f"[cardio-canon] cluster={cluster_id} user={uid} no members -> cleared")
         return
 
-    ranked = sorted(members, key=_primary_rank)
+    # Read the athlete's cardio source pin once (#196 P5 B3). A hard pin makes a
+    # copy from the pinned provider primary when the cluster has one; absent/empty
+    # → the automatic most-complete merge. Lazy import keeps this route module's
+    # import graph cheap and mirrors B2's wellness pin read.
+    from source_preferences_repo import CARDIO, get_source_preferences
+    cardio_pin = get_source_preferences(db, uid).get(CARDIO)
+
+    ranked = sorted(members, key=lambda m: _primary_rank(m, cardio_pin))
     primary = ranked[0]
 
     # Best-of merge: each field takes the value of the highest-scoring copy that
@@ -871,9 +883,10 @@ def materialize_canonical_activity(db, uid: int, cluster_id: int):
         )
 
     field_map = ', '.join(f'{f}<-{prov}' for f, (_id, prov) in sorted(provenance.items()))
+    pin_note = f" pin={cardio_pin}" if cardio_pin else ""
     print(f"[cardio-canon] cluster={cluster_id} user={uid} members={len(members)} "
           f"primary=id{primary['id']}/{_row_provider(primary)} "
-          f"score={_completeness_score(primary)} fields={{{field_map}}}")
+          f"score={_completeness_score(primary)} fields={{{field_map}}}{pin_note}")
 
 
 def _bulk_insert_cardio(db, data: dict, uid: int, gid: str,
