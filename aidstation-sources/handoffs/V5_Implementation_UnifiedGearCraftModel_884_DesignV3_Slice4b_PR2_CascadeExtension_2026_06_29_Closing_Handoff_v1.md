@@ -4,7 +4,7 @@
 **Date:** 2026-06-29
 **Predecessor handoff:** `V5_Implementation_UnifiedGearCraftModel_884_DesignV3_Slice4b_GearToggleCapture_2026_06_28_Closing_Handoff_v1.md` (PR-1, merged as `d2dc258` / PR #976)
 **Branch:** `claude/884-gear-toggle-capture-w4nug5`
-**Status:** cascade extension + taxonomy normalization (Andy directed both land together). 4 code + 2 migrations + 5 test files. Suite green **3709/30**. Migrations `0026`+`0027` validated on PG16 (apply + idempotent + `validate_layer0` PASS). **Neon apply OWED** (`layer0-apply`, `0026`+`0027` in one run). **PR not yet opened — awaiting Andy's go.**
+**Status:** cascade extension + taxonomy normalization (Andy directed both land together). 4 code + 3 migrations + 5 test files. Suite green **3709/30**. Migrations `0026`+`0027`+`0028` validated on PG16 (apply + idempotent + `validate_layer0` PASS). **Neon apply OWED** (`layer0-apply`, `0026`+`0027`+`0028` in one run). **PR not yet opened — awaiting Andy's go.**
 
 ---
 
@@ -31,9 +31,13 @@ Grounding the cascade surfaced two load-bearing findings; both went to Andy befo
 
 ## 2b. Taxonomy normalization (Andy 2026-06-29, AskUserQuestion — folded into this PR)
 
-After the cascade landed, Andy directed **normalizing the taxonomy in live data** so any production changes land in the same apply. Finding presented: the two `group_kind` taxonomies aren't "the same thing spelled twice" — `modality_groups.group_kind` (discipline stimulus family; **now dead post-PR-2**, nothing reads it) vs `gear_discipline_aliases.group_kind`/`GEAR_REGISTRY` (gear family, live). The gear taxonomy is intentionally **finer** (the single modality `snow` splits into gear `ski`/`snow`/`alpine` so snowshoes never proxy for skis — kept). The **only true naming collision** is gear `climbing` vs modality `climb`. So the normalization = rename the gear kind **`climbing` → `climb`** (ski/snow/alpine keep their finer names — no modality equivalent without collapsing the kept granularity). This makes the gear `group_kind` vocab a clean superset of the modality vocab.
+After the cascade landed, Andy directed **normalizing the taxonomy** (the cumulative option — all three of: retire the dead modality kind, drop its column, and rename the live data) so the production changes land in the same apply. Finding presented: the two `group_kind` taxonomies aren't "the same thing spelled twice" — `modality_groups.group_kind` (discipline stimulus family; **dead post-PR-2**, nothing reads it) vs `gear_discipline_aliases.group_kind`/`GEAR_REGISTRY` (gear family, live). The gear taxonomy is intentionally **finer** (the single modality `snow` splits into gear `ski`/`snow`/`alpine` so snowshoes never proxy for skis — kept). The **only true naming collision** is gear `climbing` vs modality `climb`. The three pieces:
 
-**Apply coordination:** the layer0 rename (`0027`) **must land in the same `layer0-apply` run as `0026`** — the deployed code ships the `climb` value, so until `0027` applies, climbing disciplines briefly fall back to terrain-only (degraded, not a crash; single-user window). The live `athlete_gear` rename auto-applies on deploy (init_db).
+1. **Rename the gear kind `climbing` → `climb`** (ski/snow/alpine keep their finer names — no modality equivalent without collapsing the kept granularity), aligning the gear `group_kind` vocab as a clean superset of the modality vocab. Touches `GEAR_REGISTRY`/`_GEAR_TOGGLE_KINDS`/both cascade sets + layer0 `0027` (gear_discipline_aliases) + `init_db` live `athlete_gear`.
+2. **Retire the dead modality `group_kind` plumbing** — removed `_q_modality_group_kind` + the `_FeasibilityInputs.group_kind_by_group` field/computation/ctor-arg (write-only after PR-2's gear-side cutover). Now ONE `group_kind` source (the gear table).
+3. **Drop the unused `modality_groups.group_kind` column** — layer0 migration `0028` (`DROP COLUMN IF EXISTS`). Verified no remaining reader (2A pooling keys on group MEMBERSHIP, not kind; `validate_layer0` never read it).
+
+**Apply coordination:** the layer0 migrations (`0027`+`0028`) **must land in the same `layer0-apply` run as `0026`** — the deployed code ships the `climb` value + the dropped plumbing, so until `0027` applies, climbing disciplines briefly fall back to terrain-only (degraded, not a crash; single-user window). The live `athlete_gear` rename auto-applies on deploy (init_db).
 
 ## 3. File-by-file edits
 
@@ -56,6 +60,8 @@ Seeds 10 `craft_terrain_compatibility` rows (ids 29–38, `etl_version='0A-v1.9.
 - `session_feasibility.py` `_CRAFT_GROUP_KINDS` + `orchestrator.py` `_CRAFT_ALIAS_GROUP_KINDS`: `climbing`→`climb`.
 - **NEW `etl/migrations/layer0/0027_gear_climb_kind_rename.sql`:** idempotent `UPDATE gear_discipline_aliases SET group_kind='climb' WHERE group_kind='climbing'` (a new migration, NOT a 0024 edit — the apply loop runs each file once by ledger, so 0024 won't re-run). Verify DO-block (0 stale, 3 climbing_gear rows at `climb`).
 - **`init_db.py` `_PG_MIGRATIONS` tail:** `UPDATE athlete_gear SET group_kind='climb' WHERE group_kind='climbing'` (public-schema, auto-applies on deploy; keeps the denormalized live rows in lockstep with `GEAR_REGISTRY` so `replace_owned_gear_for_kinds`/`get_owned_gear_toggles` don't orphan a stale row).
+- **`orchestrator.py`:** removed `_q_modality_group_kind` + `_FeasibilityInputs.group_kind_by_group` (field/computation/ctor-arg) — the dead second taxonomy (write-only after the gear-side cutover).
+- **NEW `etl/migrations/layer0/0028_drop_modality_group_kind.sql`:** `ALTER TABLE layer0.modality_groups DROP COLUMN IF EXISTS group_kind` (idempotent). Verify DO-block (column absent).
 
 ### 3.5 Tests
 - `tests/test_layer4_craft_feasibility.py` (+~17): updated `_resolve` helper to the new signature (added the gear-toggle fixtures: aliases, kinds, ranks, terrain grid; `_DISC_GEAR_KIND` derived as the orchestrator does). New classes: `TestGearToggleSkiLadder` (rank walk classic>skate>rollerskis; rollerski-dryland PROXY incl. with snow present; ski-erg INDOOR below owned gear), `TestGearToggleGatesDiscipline` (no ski gear → not EXACT on snow; snowshoes EXACT / no-snowshoes gated to treadmill), `TestGearToggleClimbAlpine` (climbing gear EXACT on rock wall / indoor wall; mountaineering EXACT on alpine; skimo proxy tier-3; gearless-climber strength flags gear kind). The existing tier-1–7 bike/paddle classes are the **regression pin** (byte-identical).
@@ -77,14 +83,14 @@ Seeds 10 `craft_terrain_compatibility` rows (ids 29–38, `etl_version='0A-v1.9.
 ## 5. Code / tests / migration validation
 
 - Suite: `tests/ etl/tests/` **3709 passed / 30 skipped** (only the 3 pre-existing #217 Layer3B `evidence_basis` warnings). Ruff clean on all changed files.
-- Migrations `0026`+`0027` validated on **PG16** (pg_virtualenv): baseline v1.9.0 + 0023–0027 apply; `0026` DO-block OK (10 rows, rollerski carve-out, no dangling refs; 38 total active); `0027` OK (3 climbing_gear rows → `climb`, 0 stale `climbing`); both idempotent; **`validate_layer0` PASS** (all checks clean/waived).
+- Migrations `0026`+`0027`+`0028` validated on **PG16** (pg_virtualenv): baseline v1.9.0 + 0023–0028 apply; `0026` DO-block OK (10 rows, rollerski carve-out, no dangling refs; 38 total active); `0027` OK (3 climbing_gear rows → `climb`, 0 stale); `0028` OK (modality_groups.group_kind dropped); all idempotent; **`validate_layer0` PASS** (all checks clean/waived).
 
 ---
 
 ## 6. Next session pointers
 
 ### 6.1 OWED this PR
-- **Neon apply:** trigger `layer0-apply` for `0026` **and `0027` together** (one run; Andy one-taps the `production` gate) at/after merge. The live `athlete_gear` group_kind rename auto-applies on deploy (init_db). `0027` must not lag the deploy (else climbing briefly degrades to terrain-only — see §2b).
+- **Neon apply:** trigger `layer0-apply` for `0026`+`0027`+`0028` together (one run; Andy one-taps the `production` gate) at/after merge. The live `athlete_gear` group_kind rename auto-applies on deploy (init_db). `0027` must not lag the deploy (else climbing briefly degrades to terrain-only — see §2b).
 
 ### 6.2 Architect-recommended next forward move
 - **PR-3 — the 2C feed un-starve (#298 close-out).** Feed `cluster_gear_toggle_states` at `orchestrator.py:1119,1551` (currently `={}`) from `athlete_gear`. Needs a `gear_id → sport_specific_gear_toggles.toggle_name` bridge — the keyspaces differ (`classic_xc_ski` vs `'Classic XC ski setup'`; `mountaineering` vs `'Mountaineering'`). Define the bridge (design v3 §5.5 keyspace is the source), then map owned gear → toggle states. Self-contained, own PR.
@@ -126,6 +132,7 @@ Seeds 10 `craft_terrain_compatibility` rows (ids 29–38, `etl_version='0A-v1.9.
 | Migration 0026 | `etl/migrations/layer0/0026_gear_toggle_terrain_compatibility.sql` | grep `rollerskis` `TRN-001` + DO verify |
 | Taxonomy `climb` rename | `athlete_gear_repo.py` + 2 cascade sets | grep `"climbing_gear": "climb"`; `_CRAFT_GROUP_KINDS` → `climb` |
 | Rename migrations | `0027_gear_climb_kind_rename.sql` + `init_db.py` | grep `group_kind = 'climb'` (layer0 + athlete_gear) |
+| Dead plumbing retired + column dropped | `orchestrator.py` + `0028_drop_modality_group_kind.sql` | grep `_q_modality_group_kind` → 0 hits; `DROP COLUMN IF EXISTS group_kind` |
 | Suite green | (local) | `tests/ etl/tests/` 3709 passed / 30 skipped |
 | Migration valid | (PG16) | baseline+0023–0027 apply; 0 stale `climbing`; `validate_layer0` PASS |
 
@@ -138,10 +145,12 @@ Seeds 10 `craft_terrain_compatibility` rows (ids 29–38, `etl_version='0A-v1.9.
 2. `layer4/orchestrator.py` — rank reader + discipline_gear_kind derivation + wiring + log fix (+ taxonomy `climb`)
 3. `etl/migrations/layer0/0026_gear_toggle_terrain_compatibility.sql` — gear-toggle terrain rows
 
-**Substantive — taxonomy normalization (2 code + 1 migration):**
+**Substantive — taxonomy normalization (2 code + 2 migrations; + orchestrator plumbing removal in #2 above):**
 4. `athlete_gear_repo.py` — `GEAR_REGISTRY` + `_GEAR_TOGGLE_KINDS` `climbing`→`climb`
 5. `init_db.py` — `_PG_MIGRATIONS` live `athlete_gear` group_kind rename
 6. `etl/migrations/layer0/0027_gear_climb_kind_rename.sql` — `gear_discipline_aliases` rename
+7. `etl/migrations/layer0/0028_drop_modality_group_kind.sql` — drop the dead `modality_groups.group_kind` column
+   (`orchestrator.py` also loses `_q_modality_group_kind` + `group_kind_by_group` — the dead plumbing)
 
 **Tests (5):**
 7. `tests/test_layer4_craft_feasibility.py` (+~17 — ski ladder / gating / climb-alpine; bike/paddle regression pin; `climb` kind)

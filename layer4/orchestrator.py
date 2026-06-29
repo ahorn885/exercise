@@ -386,18 +386,6 @@ def _q_gear_fidelity_rank(db: Any) -> dict[str, int]:
     return {row["gear_id"]: int(row["rank"]) for row in cur.fetchall()}
 
 
-def _q_modality_group_kind(db: Any) -> dict[str, str]:
-    """#540 slice 2c.2c — `{group_id: group_kind}` from `layer0.modality_groups`
-    (active rows). The craft axis reads it to find a discipline's `group_kind`
-    (bike/paddle = craft-bearing). Empty dict → the craft axis is inert (every
-    discipline passes straight to the terrain axis)."""
-    cur = db.execute(
-        "SELECT group_id, group_kind FROM layer0.modality_groups "
-        "WHERE superseded_at IS NULL"
-    )
-    return {row["group_id"]: row["group_kind"] for row in cur.fetchall()}
-
-
 def _q_craft_group_kind(db: Any) -> dict[str, str]:
     """#540 slice 2c.2c — `{gear_id: group_kind}` from
     `layer0.gear_discipline_aliases` (active rows; `group_kind` is per-gear,
@@ -511,7 +499,6 @@ class _FeasibilityInputs:
     craft_kind: dict[str, str]
     craft_terrain: dict[str, set[str]]
     discipline_groups: dict[str, list[str]]
-    group_kind_by_group: dict[str, str]
     # #884 slice 4b — the gear axis maps read from `gear_discipline_aliases`:
     # `discipline_gear_kind` (discipline → gear group_kind, the gear-side kind the
     # cascade gates on) and `craft_fidelity_rank` (gear → rank, 0 = best, driving
@@ -564,7 +551,6 @@ def _gather_feasibility_inputs(
     craft_kind = _q_craft_group_kind(db)
     craft_terrain = _q_craft_terrain_compatibility(db)
     discipline_groups = _q_modality_groups(db)
-    group_kind_by_group = _q_modality_group_kind(db)
     # #884 slice 4b — the discipline's gear kind is the GEAR-side kind (read off
     # `gear_discipline_aliases` via craft_disciplines×craft_kind), NOT the modality
     # group kind: the two taxonomies diverge for ski/snow/climbing/alpine, so the
@@ -618,7 +604,6 @@ def _gather_feasibility_inputs(
         craft_kind=craft_kind,
         craft_terrain=craft_terrain,
         discipline_groups=discipline_groups,
-        group_kind_by_group=group_kind_by_group,
         discipline_gear_kind=discipline_gear_kind,
         craft_fidelity_rank=craft_fidelity_rank,
         pool_by_discipline=pool_by_discipline,

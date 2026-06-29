@@ -162,16 +162,14 @@ def _patch_cluster(monkeypatch, *, cluster, terrain, equipment, gaps):
 # 1–4 all miss (the terrain tests above don't patch it, and _FakeDb([]) also
 # yields empty maps), so non-craft disciplines fall back to the terrain cascade.
 _BIKE_GROUPS = {"D-008": ["bike_offroad"], "D-006": ["bike_pavement"]}
-_BIKE_GROUP_KIND = {"bike_offroad": "bike", "bike_pavement": "bike"}
 
 
 def _patch_craft(
-    monkeypatch, *, craft_disc, craft_kind, disc_groups, group_kind, craft_terrain=None
+    monkeypatch, *, craft_disc, craft_kind, disc_groups, craft_terrain=None
 ):
     monkeypatch.setattr(orchestrator, "_q_craft_discipline_aliases", lambda db: craft_disc)
     monkeypatch.setattr(orchestrator, "_q_craft_group_kind", lambda db: craft_kind)
     monkeypatch.setattr(orchestrator, "_q_modality_groups", lambda db: disc_groups)
-    monkeypatch.setattr(orchestrator, "_q_modality_group_kind", lambda db: group_kind)
     monkeypatch.setattr(
         orchestrator, "_q_craft_terrain_compatibility", lambda db: craft_terrain or {}
     )
@@ -206,7 +204,6 @@ def test_build_craft_swap_road_bike_for_mtb(monkeypatch):
         craft_disc={"road_bike": ["D-006"], "mountain_bike": ["D-008"]},
         craft_kind={"road_bike": "bike", "mountain_bike": "bike"},
         disc_groups=_BIKE_GROUPS,
-        group_kind=_BIKE_GROUP_KIND,
         craft_terrain={"road_bike": {"TRN-001", "TRN-004"}},  # no off-road terrain
     )
     feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
@@ -246,7 +243,6 @@ def test_build_craft_strength_when_no_bike_owned(monkeypatch):
         craft_disc={"road_bike": ["D-006"], "mountain_bike": ["D-008"]},
         craft_kind={"road_bike": "bike", "mountain_bike": "bike"},
         disc_groups=_BIKE_GROUPS,
-        group_kind=_BIKE_GROUP_KIND,
     )
     feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
     res = feas["D-008"]
