@@ -170,6 +170,22 @@ NUDGE_REGISTRY = {
         'category': 'info',
         'notification_type': 'race_week_plan_due',
     },
+    # Extreme weather (heat / freeze / rain) in the live 7-day forecast for an
+    # upcoming training day (the #289 `upcoming_conditions` signal). `warning` —
+    # a safety-relevant heads-up, unlike the passive `info` staleness nudges.
+    # Static copy (no per-row content column): generic, not "100°F on Saturday".
+    # The CTA deep-links to the plan, which renders normals not this live forecast
+    # — a live-conditions surface is the design's Open item §11.2, not a v1 blocker.
+    'conditions_advisory': {
+        'message': (
+            'Extreme weather is in the forecast for an upcoming training day — '
+            'check conditions and adjust your kit or timing.'
+        ),
+        'cta_label': 'View your plan',
+        'cta_endpoint': 'plans.list_plans',
+        'category': 'warning',
+        'notification_type': 'conditions_advisory',
+    },
     # ─── #964 recurring time-of-day sends ───────────────────────────────────
     # Fired on a per-user clock by `scan_scheduled_sends` (not a standing DB
     # condition), once per local day per `notification_schedules` row. Each
@@ -545,6 +561,17 @@ BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
 RACE_WEEK_DUE_DAYS = 14       # target race within this window + no brief ⇒ nudge
 
+# Conditions advisory (#964 × #289) — alert-worthy weather extremes in the live
+# `upcoming_conditions` forecast, NOT the Layer-5B clothing-band boundaries.
+# RATIFIED Andy 2026-06-29 (the "90°F recommendation set" — a heat-management
+# heads-up bar, not record-heat). `forecast_date` is a real DATE, so plain date
+# arithmetic (`CURRENT_DATE + N`) applies — no TO_CHAR ISO-text cutoff like the
+# TEXT-date staleness specs above.
+CONDITIONS_HORIZON_DAYS = 7   # only the next week of forecast is advised
+HEAT_TMAX_C = 32.2            # 90°F   forecast daily high at/above which heat matters
+FREEZE_TMIN_C = 0.0           # 32°F   freezing overnight/low
+RAIN_PROB_PCT = 60            # forecast precip probability ⇒ "likely to rain"
+
 # EXISTS-true iff the user (`re.user_id`) has an ACTIVE plan version with NO
 # race-week brief yet. "Active" mirrors `load_active_plan_version_id`
 # (generation_status='ready', not archived, not completed, most-recent wins) —
@@ -570,6 +597,18 @@ _ACTIVE_PLAN_NO_BRIEF = '''
                     WHERE rwb.plan_version_id = pv.id
                 )
             )'''
+
+# WHERE fragment: an `upcoming_conditions` forecast row inside the 7-day advisory
+# horizon whose LIVE forecast crosses a heat / freeze / rain extreme. Aliased
+# `uc` — the insert's `FROM upcoming_conditions uc` and the delete's correlated
+# `NOT EXISTS (... uc ...)` both bind that alias. Reused verbatim by both so the
+# arm and clear conditions can never drift apart.
+_CONDITIONS_CROSSES = f'''
+            uc.forecast_date >= CURRENT_DATE
+            AND uc.forecast_date <= CURRENT_DATE + {CONDITIONS_HORIZON_DAYS}
+            AND (uc.temp_max_c >= {HEAT_TMAX_C}
+                 OR uc.temp_min_c <= {FREEZE_TMIN_C}
+                 OR uc.precip_prob_pct >= {RAIN_PROB_PCT})'''
 # Escalating re-surface ladder for `plan_needs_review`, measured from when the
 # plan parked at the review gate (`plan_versions.created_at`). The nudge first
 # appears at rung 1 (1 day); if the athlete read or dismissed it, it RE-SURFACES
@@ -800,6 +839,42 @@ _STALENESS_RECONCILE = [
                     AND re.event_date >= CURRENT_DATE
                     AND re.event_date <= CURRENT_DATE + {RACE_WEEK_DUE_DAYS}
                     AND {_ACTIVE_PLAN_NO_BRIEF}
+              )
+            RETURNING id
+        ''',
+    },
+    {
+        'nudge_type': 'conditions_advisory',
+        # Fires while the athlete has ANY upcoming training day inside the 7-day
+        # horizon whose LIVE forecast (the #289 `upcoming_conditions` signal)
+        # crosses a heat / freeze / rain extreme. One-shot fire — no escalation
+        # ladder (a weather heads-up shouldn't nag); `UNIQUE (user_id,
+        # nudge_type)` plus the NOT EXISTS guard keep it to one standing advisory
+        # per athlete while any crossing day sits in the window.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT DISTINCT uc.user_id, 'conditions_advisory'
+            FROM upcoming_conditions uc
+            WHERE {_CONDITIONS_CROSSES}
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = uc.user_id
+                    AND an.nudge_type = 'conditions_advisory'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        # Clears once no crossing day remains in the window — the forecast
+        # updated away from the threshold (rain dropped out) or the extreme day
+        # passed. Re-fires on a later spell, so the advisory self-clears and
+        # self-re-arms without manual dismissal.
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'conditions_advisory'
+              AND NOT EXISTS (
+                  SELECT 1 FROM upcoming_conditions uc
+                  WHERE uc.user_id = an.user_id
+                    AND {_CONDITIONS_CROSSES}
               )
             RETURNING id
         ''',

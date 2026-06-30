@@ -219,12 +219,12 @@ _CONDITIONS_CROSSES = f'''
 
 After Slice 1 the live signal populates daily; **nothing fires yet** (no consumer).
 
-**Slice 2 — #964 consumer (the advisory).** ~2 substantive:
-1. `routes/nudges.py` — the `conditions_advisory` `_STALENESS_RECONCILE` entry + `NUDGE_REGISTRY` entry + threshold constants.
-2. `notification_prefs.py` — the new §22 type.
-3. `tests/test_notification_*.py` — reconcile insert/delete matrix (heat-only, freeze-only, rain-only, none → cleared, outside-horizon ignored), registry/pref shape.
+**Slice 2 — #964 consumer (the advisory). ✅ SHIPPED 2026-06-30** (branch `claude/notification-triggers-conditions-advisory-4ho2av`; full suite 3935 passed / 30 skipped; ruff clean on changed files; no Neon/layer0 apply owed — pure consumer, no schema). ~2 substantive:
+1. `routes/nudges.py` — the `conditions_advisory` `_STALENESS_RECONCILE` entry (insert-while-crossing / delete-when-clear) + `NUDGE_REGISTRY` entry (CTA `plans.list_plans`, `warning`) + threshold constants (`HEAT_TMAX_C 32.2` / `FREEZE_TMIN_C 0.0` / `RAIN_PROB_PCT 60` / `CONDITIONS_HORIZON_DAYS 7`) + shared `_CONDITIONS_CROSSES` fragment.
+2. `notification_prefs.py` — the new §22 type (`warning`, `['in_app','push']`, email non-applicable).
+3. `tests/test_nudges_staleness.py` — registry/pref wiring (`TestConditionsAdvisoryWiring`) + reconcile-spec crossing matrix (heat/freeze/rain OR'd, in-horizon, self-clear NOT EXISTS); the parametrized insert/delete + cron-route tests pick the new spec up automatically.
 
-Both land this arc → the full build Andy chose.
+Both landed → the full build Andy chose.
 
 ---
 
