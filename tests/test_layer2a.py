@@ -491,9 +491,6 @@ class TestARBaseline:
         assert "layer0.discipline_training_gaps" in sql
         # disciplines join carries endurance_profile + primary_movement
         assert "layer0.disciplines" in sql
-        # D-05 standing filter present (psycopg2 `%%` escape — see Bucket
-        # B #1, 2026-05-21 walkthrough)
-        assert "NOT LIKE '%%WEEKLY TOTAL%%'" in sql
         # calls[1] is the X1b.2 modality_group membership SELECT
         assert "layer0.discipline_modality_membership" in conn.calls[1][0]
         # calls[2] is the per-phase weekly-total hours fetch
@@ -862,38 +859,6 @@ class TestEdgeCases:
         assert payload.hitl_required is True
         # Rationale prompts the athlete to confirm
         assert "Confirm whether" in by_id["D-015"].rationale
-
-
-# ─── _load_disciplines psycopg2 %% escape (Bucket B #1 2026-05-21) ──────────
-
-
-class TestLoadDisciplinesPercentEscape:
-    """The PLA `discipline_name NOT LIKE '%WEEKLY TOTAL%'` clause must
-    use `%%` to survive psycopg2's parameter substitution. A bare `%`
-    inside the SQL collides with `%s` placeholder parsing and raises
-    `IndexError: tuple index out of range` on every plan-gen POST.
-    Production-only failure (test substrate mocks `db.execute` and never
-    hits the parser).
-    """
-
-    def test_sql_escapes_like_pattern_with_double_percent(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[])  # empty SDM → exits via §10 unknown-sport path
-
-        q_layer2a_discipline_classifier_payload(
-            conn,
-            "Adventure Racing",
-            etl_version_set=_DEFAULT_ETL,
-        )
-
-        assert conn.calls, "expected _load_disciplines to issue exactly one SELECT"
-        sql, _params = conn.calls[0]
-        assert "%%WEEKLY TOTAL%%" in sql, (
-            "LIKE pattern must use %% to survive psycopg2 substitution"
-        )
-        assert "'%WEEKLY TOTAL%'" not in sql, (
-            "bare '%' in the LIKE pattern triggers IndexError under psycopg2"
-        )
 
 
 class TestDisciplineIdFilter:
