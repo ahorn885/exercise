@@ -43,6 +43,7 @@ from layer4.context import (
     Layer3BHITLItem,
     Layer3BPayload,
     Layer3Observation,
+    PackLoadRecord,
     PeriodizationShape,
     RaceEventPayload,
 )
@@ -558,6 +559,36 @@ def _render_block_1_timeline(
     return "\n".join(lines)
 
 
+def _pack_load_readiness(
+    plh: list[PackLoadRecord], race_pack_weight_kg: float | None
+) -> tuple[str, float, float, int, bool]:
+    """Deterministic load-carriage readiness from the athlete's pack-load base
+    (#1067 / D1). A substantial prior long carry — time-under-load, the
+    race-experience proxy — outranks recent training frequency: ``longest_carry``
+    drives the tier, while recent session frequency only lifts a shallow base to
+    ``developing`` and never substitutes for a long carry. Weight coverage is
+    judged against the race's pack demand (within 10%; unknown demand → treated
+    as covered). Returns ``(tier, heaviest_kg, longest_carry_hrs,
+    recent_sessions_4wk, weight_covered)``.
+
+    Tier thresholds are coarse and tunable: a ``≥6 h`` carry reads as a real
+    multi-hour time-under-load, ``≥2 h`` as a developing base, and ``≥6``
+    sessions/4 wk (~1.5×/week) as enough recent frequency to reach developing
+    even without a long carry yet.
+    """
+    heaviest = max(p.pack_weight_kg for p in plh)
+    longest = max((p.longest_session_hrs or 0.0) for p in plh)
+    sessions = sum((p.session_count_4wk or 0) for p in plh)
+    covered = race_pack_weight_kg is None or heaviest >= 0.9 * race_pack_weight_kg
+    if longest >= 6.0 and covered:
+        tier = "established"          # deep prior carry at race-relevant load
+    elif longest >= 2.0 or sessions >= 6:
+        tier = "developing"          # some carrying base, experience still shallow
+    else:
+        tier = "limited"             # records exist but minimal carry experience
+    return tier, heaviest, longest, sessions, covered
+
+
 def _render_block_2_goal_context(
     *,
     mode: str,
@@ -609,16 +640,26 @@ def _render_block_2_goal_context(
         if race_pack_weight_kg is not None:
             lines.append(f"- race_pack_weight_kg: {race_pack_weight_kg:.1f}")
         # Athlete's load-carriage base vs the race's pack demand above —
-        # summarized (heaviest trained load + longest carry + record count) so
-        # the viability/periodization reasoning can gauge the gap. Advisory
-        # training context, suppress-on-empty (most athletes carry no pack).
+        # resolved into a deterministic readiness tier (#1067 / D1) so the
+        # viability/periodization reasoning gets the gap pre-weighted: a prior
+        # long carry outranks recent training frequency. Advisory training
+        # context, suppress-on-empty (most athletes carry no pack).
         plh = layer1_payload.training_history.pack_load_history
         if plh:
-            heaviest = max(p.pack_weight_kg for p in plh)
-            longest = max((p.longest_session_hrs or 0.0) for p in plh)
+            tier, heaviest, longest, sessions, covered = _pack_load_readiness(
+                plh, race_pack_weight_kg
+            )
+            print(
+                f"[layer3b pack-load-readiness] user_id={layer1_payload.user_id} "
+                f"heaviest_kg={heaviest:.1f} longest_carry_hrs={longest:.1f} "
+                f"recent_sessions_4wk={sessions} "
+                f"race_pack_weight_kg={race_pack_weight_kg} "
+                f"weight_covered={covered} records={len(plh)} -> tier={tier}"
+            )
             lines.append(
-                f"- pack_load_training: heaviest_kg={heaviest:.1f}, "
-                f"longest_session_hrs={longest:.1f}, records={len(plh)}"
+                f"- pack_load_readiness: {tier} (heaviest_kg={heaviest:.1f}, "
+                f"longest_carry_hrs={longest:.1f}, recent_sessions_4wk={sessions}, "
+                f"records={len(plh)})"
             )
         return "\n".join(lines)
 

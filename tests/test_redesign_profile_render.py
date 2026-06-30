@@ -43,10 +43,11 @@ class _Conn:
     misc-list shapes are served via keyword maps; everything else returns an
     empty cursor (the page tolerates empty schedule/skills/connection lists)."""
 
-    def __init__(self, profile=None, memory=(), user=None):
+    def __init__(self, profile=None, memory=(), user=None, pack_loads=()):
         self._profile = profile or {}
         self._memory = list(memory)
         self._user = user
+        self._pack_loads = list(pack_loads)
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
@@ -62,6 +63,8 @@ class _Conn:
             # default cursor's fetchone() hands back a stub user row even when
             # one=None, so return a genuinely-empty cursor here.
             return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+        if 'pack_load_history' in s:
+            return _Cursor([_FakeRow(r) for r in self._pack_loads])
         if 'athlete_profile' in s:
             return _Cursor([], one=_FakeRow(self._profile) if self._profile else None)
         if 'discipline_baseline_' in s:
@@ -142,6 +145,25 @@ def test_profile_gear_skills_tab(monkeypatch):
     assert 'Pack-load experience' in html
     assert '/profile/pack-load/add' in html  # pack-load add action
     assert 'style="' not in html
+    # #1067 — empty state shows the entry form directly (no disclosure to open).
+    assert 'pf-pack-add' not in html
+
+
+def test_profile_pack_load_form_collapses_once_filled(monkeypatch):
+    # #1067 — once a pack-load record exists, the section reads as a summary and
+    # the entry form is collapsed behind a disclosure; the row's Remove (delete)
+    # stays reachable.
+    rows = [{'id': 7, 'pack_weight_kg': 12.0, 'session_count_4wk': 3,
+             'longest_session_hrs': 30.0, 'terrain_type': 'trail', 'notes': None}]
+    client = _client(monkeypatch, _Conn(profile={}, pack_loads=rows))
+    resp = client.get('/profile/?tab=gear')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert '12.0 kg' in html                       # summary renders the record
+    assert 'pf-pack-add' in html                   # form collapsed behind details
+    assert 'Add another pack weight' in html
+    assert '/profile/pack-load/7/delete' in html   # per-row delete reachable
+    assert '/profile/pack-load/add' in html        # form still present, inside
 
 
 def test_profile_locations_tab_redirects_to_locales(monkeypatch):

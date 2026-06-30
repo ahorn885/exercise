@@ -441,6 +441,14 @@
   <p class="pf-hint">No pack-load records added yet.</p>
   {% endif %}
 
+  {# #1067 — once any record exists, collapse the entry form behind a disclosure
+     so the section reads as a summary; the athlete opens it to add another
+     weight, or uses Remove on a row to delete one. First-time entry (no records)
+     shows the form directly. #}
+  {% if pack_loads %}
+  <details class="pf-pack-add">
+    <summary>Add another pack weight</summary>
+  {% endif %}
   <form method="post" action="{{ url_for('profile.add_pack_load_route') }}" class="supp-add pf-grid">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label class="field"><span class="lbl">Pack weight (kg)</span>
@@ -455,6 +463,9 @@
       <input type="text" name="notes" class="form-control form-control-sm" placeholder="context…"></label>
     <div class="supp-add-actions"><button type="submit" class="btn btn-primary">Add pack-load</button></div>
   </form>
+  {% if pack_loads %}
+  </details>
+  {% endif %}
 </div>
 
 {% endif %}
