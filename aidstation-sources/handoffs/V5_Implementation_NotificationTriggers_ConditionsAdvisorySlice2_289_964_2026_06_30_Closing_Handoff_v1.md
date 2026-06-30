@@ -53,9 +53,9 @@ The conditions-advisory arc (Slice 1 producer + Slice 2 consumer) is **complete 
 
 **#289 should come off `icebox`** and its body point at the design — it's now a shipping Layer-5 surface, not a parked idea (carried over from the Slice 1 handoff; do it when touching the issues).
 
-**Remaining design open items (§11, non-blocking):**
-- §11.2 **Live-conditions surface for the CTA** — the advisory deep-links to the plan, which renders *normals*, not this live forecast. A surface rendering `upcoming_conditions` is the natural follow-up (not a v1 blocker).
-- §11.3 **Away-window locale resolution** — v1 keys the forecast off the session's own `locale_id`; fold in `resolve_weather_location` (away-destination coords win) only if real plan-session data shows away-days carry the home locale (Rule #14 — confirm, don't infer).
+**Remaining design open items (§11, non-blocking) — filed as issues + scoped in a kickoff** (`handoffs/V5_ConditionsAdvisory_FollowUps_LiveSurface_AwayLocale_1035_1036_2026_06_30_Kickoff_Handoff_v1.md`):
+- §11.2 → [#1035](https://github.com/ahorn885/exercise/issues/1035) **Live-conditions surface for the CTA** — the advisory deep-links to the plan, which renders *normals*, not this live forecast. A surface rendering `upcoming_conditions` is the natural follow-up (higher value, pure read/render). Not a v1 blocker.
+- §11.3 → [#1036](https://github.com/ahorn885/exercise/issues/1036) **Away-window locale resolution** — v1 keys the forecast off the session's own `locale_id`; fold in `resolve_weather_location` (away-destination coords win) only if real plan-session data shows away-days carry the home locale (Rule #14 — confirm, don't infer; may close `not_planned`).
 
 **Other live threads (unchanged):** the standing **#884** (slice 6c — onboarding parity + legacy retire) and **#971** slice 2 (photos / Vercel Blob); **#939-blocked** race-day-7d + share-with-crew.
 
