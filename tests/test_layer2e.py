@@ -818,6 +818,36 @@ class TestRaceDayFueling:
         # Base Na: 600-1000 → 480-800
         assert rdf.na_mg_per_hr_low == 480.0
         assert rdf.na_mg_per_hr_high == 800.0
+        # #257 V3-I-4 — salt no longer touches fluid; sweat rate unset → 1.0,
+        # so the fluid band stays at its tier_mid base (400-700).
+        assert rdf.sweat_rate_modifier_applied == 1.0
+        assert rdf.fluid_ml_per_hr_low == 400.0
+        assert rdf.fluid_ml_per_hr_high == 700.0
+
+    def test_sweat_rate_high_scales_fluid_not_sodium(self):
+        # #257 V3-I-4 — sweat rate drives the fluid band independently of the
+        # salt (sodium) modifier. Heavy sweater → fluid ×1.2; salt "moderate"
+        # leaves sodium at base.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+        event = Layer2ETargetEvent(
+            event_id="e1", event_name="E1",
+            event_date=date(2026, 8, 1),
+            framework_sport="Adventure Racing",
+            estimated_duration_hr=8.0,
+        )
+        ls = _andy_lifestyle().model_copy(update={"sweat_rate_level": "high"})
+        payload = _andy_baseline_call(db, target_events=[event], lifestyle=ls)
+        rdf = payload.race_day_fueling[0]
+        assert rdf.duration_tier == "tier_mid"
+        # Fluid scales on sweat: 400-700 → 480-840.
+        assert rdf.sweat_rate_modifier_applied == 1.2
+        assert rdf.fluid_ml_per_hr_low == 480.0
+        assert rdf.fluid_ml_per_hr_high == 840.0
+        # Sodium untouched (salt stays "moderate" → 1.0): base 600-1000.
+        assert rdf.salt_tolerance_modifier_applied == 1.0
+        assert rdf.na_mg_per_hr_low == 600.0
+        assert rdf.na_mg_per_hr_high == 1000.0
 
     def test_caffeine_loaded_strategy(self):
         db = _FakeConn()

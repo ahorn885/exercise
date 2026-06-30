@@ -432,6 +432,37 @@ class TestPerDateVolumeExpansion:
         assert segments[0].end_date == date(2026, 6, 12)
         assert segments[0].volume_pct == 0.5
 
+    def test_non_reduced_window_with_per_day_schedule_yields_volume_segments(
+        self, monkeypatch
+    ):
+        # Consolidated per-day editor — per-day % now layers onto ANY window type.
+        # An indoor_only window carrying a per-DATE schedule expands into one-day
+        # volume segments (mirrors the reduced_volume expansion), the volume
+        # carried on the non-reduced override now being picked up by vol_overrides.
+        fi = self._fi_home()
+        home = _resolve_included_feasibility(
+            fi, locale_order=fi.cluster,
+            terrain_by_locale=fi.terrain_by_locale, equip_by_locale=fi.equip_by_locale,
+        )
+        win = EventWindow(
+            id=1, user_id=7, start_date=date(2026, 6, 10), end_date=date(2026, 6, 12),
+            override_type="indoor_only", unavailable_locale=None, away_locale=None,
+            notes="", volume_pct=None,
+            volume_by_date={date(2026, 6, 10): 0.25, date(2026, 6, 11): 1.0,
+                            date(2026, 6, 12): 0.5},
+        )
+        self._patch(monkeypatch, fi, [win])
+        segments, overlapping = _build_event_window_overlay(
+            None, 7, None,
+            plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility=home,
+        )
+        assert len(overlapping) == 1
+        by_pct = {s.start_date: s.volume_pct for s in segments}
+        # 6/10 at 0.25, 6/12 at 0.5; 6/11 (full) emits no volume segment.
+        assert by_pct == {date(2026, 6, 10): 0.25, date(2026, 6, 12): 0.5}
+        assert all(s.start_date == s.end_date for s in segments)
+
 
 # ─── away windows (Slice 2): replacement env + counts-follow-away ────────────
 
@@ -1094,6 +1125,7 @@ class TestRepo:
     def test_locale_unavailable_inserts_when_resolvable(self):
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        conn.queue_response(rows=[{"id": 11}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="locale_unavailable", unavailable_locale="park", notes="x",
@@ -1121,6 +1153,7 @@ class TestRepo:
     def test_away_inserts_and_clears_unavailable_locale(self):
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        conn.queue_response(rows=[{"id": 12}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="away", away_locale="hotel",
@@ -1132,6 +1165,7 @@ class TestRepo:
 
     def test_indoor_only_clears_stray_locale(self):
         conn = _FakeConn()
+        conn.queue_response(rows=[{"id": 13}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="indoor_only", unavailable_locale="park",
@@ -1148,6 +1182,7 @@ class TestRepo:
     def test_away_stores_brought_gear_in_enum_order(self):
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        conn.queue_response(rows=[{"id": 14}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="away", away_locale="belfast",
@@ -1162,6 +1197,7 @@ class TestRepo:
         # (_GEAR_IDS) order — bikes precede the toggle kinds.
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        conn.queue_response(rows=[{"id": 15}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="away", away_locale="belfast",
@@ -1180,6 +1216,7 @@ class TestRepo:
 
     def test_non_away_window_clears_brought_gear(self):
         conn = _FakeConn()
+        conn.queue_response(rows=[{"id": 16}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="indoor_only", brought_gear=["packraft"],
@@ -1289,6 +1326,7 @@ class TestVolumeRepo:
 
     def test_reduced_volume_inserts_pct_and_clears_locale(self):
         conn = _FakeConn()
+        conn.queue_response(rows=[{"id": 21}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="reduced_volume", volume_pct=0.5,
@@ -1301,6 +1339,7 @@ class TestVolumeRepo:
 
     def test_no_training_inserts_with_null_pct(self):
         conn = _FakeConn()
+        conn.queue_response(rows=[{"id": 22}])  # INSERT ... RETURNING id
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 3),
             override_type="no_training",
@@ -1383,14 +1422,19 @@ class TestPerDateVolumeRepo:
                     conn, 7, 1, {date(2026, 6, 11): bad}
                 )
 
-    def test_writer_rejects_non_reduced_window(self):
+    def test_writer_accepts_non_reduced_window(self):
+        # Consolidated per-day editor — per-day % now layers onto ANY window type
+        # (the reduced_volume-only gate was removed). A no_training (or any) window
+        # accepts a per-day schedule, which the plan-gen overlay expands per day.
         conn = _FakeConn()
         conn.queue_response(rows=[self._row(override_type="no_training",
                                             volume_pct=None)])
-        with pytest.raises(EventWindowError):
-            update_event_window_volume_by_date(
-                conn, 7, 1, {date(2026, 6, 11): 0.5}
-            )
+        update_event_window_volume_by_date(
+            conn, 7, 1, {date(2026, 6, 11): 0.5}
+        )
+        sql, params = conn.calls[-1]
+        assert "UPDATE athlete_event_windows" in sql
+        assert params[0] == '{"2026-06-11": 0.5}'
 
     def test_writer_rejects_unknown_window(self):
         conn = _FakeConn()

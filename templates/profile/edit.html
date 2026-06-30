@@ -126,6 +126,14 @@
       <label class="field"><span class="lbl">Body weight ({{ wt_label }})</span>
         <input type="number" step="0.1" min="20" max="700" name="body_weight" class="form-control form-control-sm"
                value="{{ '%.1f' % profile.body_weight_display if profile.body_weight_display is not none else '' }}"></label>
+      {# #257 V3-I-10 — recent weight trend (significant = >5% / 3 mo). #}
+      <label class="field"><span class="lbl">Recent weight trend (3 mo)</span>
+        <select name="body_weight_trend" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in body_weight_trend_choices %}
+          <option value="{{ opt }}" {% if profile.body_weight_trend == opt %}selected{% endif %}>{{ opt|replace('_', ' ')|title }}</option>
+          {% endfor %}
+        </select></label>
       <label class="field"><span class="lbl">HRmax (bpm)</span>
         <input type="number" step="1" min="100" max="240" name="hrmax_bpm" class="form-control form-control-sm"
                value="{{ profile.hrmax_bpm if profile.hrmax_bpm is not none else '' }}"></label>
@@ -258,11 +266,35 @@
           <option value="{{ opt }}" {% if profile.caffeine_race_day_strategy == opt %}selected{% endif %}>{{ opt|replace('_', ' ')|title }}</option>
           {% endfor %}
         </select></label>
-      <label class="field"><span class="lbl">Salt / electrolyte tolerance</span>
+      <label class="field"><span class="lbl">Salt / electrolyte loss</span>
         <select name="salt_electrolyte_tolerance" class="form-select form-select-sm">
           <option value="">—</option>
           {% for opt in salt_electrolyte_tolerance_choices %}
           <option value="{{ opt }}" {% if profile.salt_electrolyte_tolerance == opt %}selected{% endif %}>{{ opt|title }}</option>
+          {% endfor %}
+        </select></label>
+      {# #257 V3-I-4 — sweat rate (fluid need), split from salt loss above. #}
+      <label class="field"><span class="lbl">Sweat rate</span>
+        <select name="sweat_rate_level" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in sweat_rate_level_choices %}
+          <option value="{{ opt }}" {% if profile.sweat_rate_level == opt %}selected{% endif %}>{{ opt|title }}</option>
+          {% endfor %}
+        </select></label>
+      {# #257 V3-I-9 — daily baseline hydration habit. #}
+      <label class="field"><span class="lbl">Daily hydration</span>
+        <select name="daily_hydration_baseline" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in daily_hydration_baseline_choices %}
+          <option value="{{ opt }}" {% if profile.daily_hydration_baseline == opt %}selected{% endif %}>{{ opt|title }}</option>
+          {% endfor %}
+        </select></label>
+      {# #257 V3-I-1 — sleep consistency (variability beyond mean hours). #}
+      <label class="field"><span class="lbl">Sleep consistency</span>
+        <select name="sleep_consistency" class="form-select form-select-sm">
+          <option value="">—</option>
+          {% for opt in sleep_consistency_choices %}
+          <option value="{{ opt }}" {% if profile.sleep_consistency == opt %}selected{% endif %}>{{ opt|replace('_', ' ')|title }}</option>
           {% endfor %}
         </select></label>
     </div>

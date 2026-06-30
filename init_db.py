@@ -1752,6 +1752,13 @@ _PG_MIGRATIONS = [
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS salt_electrolyte_tolerance TEXT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_max_hrs_continuous_awake SMALLINT",
     "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_deprivation_strategy_notes TEXT",
+    # #257 — v3 onboarding refinement (Section I audit). All self-report bands,
+    # nullable, no backfill. `sweat_rate_level` splits the v2 salt/electrolyte
+    # conflation (V3-I-4): salt drives sodium, sweat-rate drives fluid in 2E.
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sweat_rate_level TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS daily_hydration_baseline TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_consistency TEXT",
+    "ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS body_weight_trend TEXT",
     # 2E-6 §I.1 — structured supplement capture. Promotes the free-text
     # `athlete_profile.supplement_protocol_notes` to per-supplement records that
     # soft-reference `layer0.supplement_vocabulary.supplement_id` (no hard FK —

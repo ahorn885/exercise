@@ -189,6 +189,7 @@ _PROFILE_COLS = (
     "primary_sport",
     "weekly_hours_target",
     "body_weight_kg",
+    "body_weight_trend",  # #257 V3-I-10
     "hrmax_bpm",
     "lactate_threshold_hr_bpm",
     "vo2max",
@@ -224,8 +225,11 @@ _PROFILE_COLS = (
     "fueling_format_preference",
     "gi_triggers_known",
     "salt_electrolyte_tolerance",
+    "sweat_rate_level",  # #257 V3-I-4
+    "daily_hydration_baseline",  # #257 V3-I-9
     "sleep_deprivation_max_hrs_continuous_awake",
     "sleep_deprivation_strategy_notes",
+    "sleep_consistency",  # #257 V3-I-1
     # Layer-4 convenience fields, self-reported on the profile (#304).
     "experience_level",
 )
@@ -266,6 +270,7 @@ def _load_athlete_profile(db, user_id: int):
     )
     performance = Layer1Performance(
         body_weight_kg=row["body_weight_kg"],
+        body_weight_trend=row["body_weight_trend"],
         hrmax_bpm=row["hrmax_bpm"],
         hrmax_source=row["hrmax_source"],
         lactate_threshold_hr_bpm=row["lactate_threshold_hr_bpm"],
@@ -304,10 +309,13 @@ def _load_athlete_profile(db, user_id: int):
         "fueling_format_preference": _split_csv(row["fueling_format_preference"]),
         "gi_triggers_known": row["gi_triggers_known"],
         "salt_electrolyte_tolerance": row["salt_electrolyte_tolerance"],
+        "sweat_rate_level": row["sweat_rate_level"],
+        "daily_hydration_baseline": row["daily_hydration_baseline"],
         "sleep_deprivation_max_hrs_continuous_awake": row[
             "sleep_deprivation_max_hrs_continuous_awake"
         ],
         "sleep_deprivation_strategy_notes": row["sleep_deprivation_strategy_notes"],
+        "sleep_consistency": row["sleep_consistency"],
     }
     availability_scalars = {
         "doubles_feasible": row["doubles_feasible"],
@@ -353,8 +361,11 @@ def _empty_lifestyle() -> dict[str, Any]:
         "fueling_format_preference": [],
         "gi_triggers_known": None,
         "salt_electrolyte_tolerance": None,
+        "sweat_rate_level": None,
+        "daily_hydration_baseline": None,
         "sleep_deprivation_max_hrs_continuous_awake": None,
         "sleep_deprivation_strategy_notes": None,
+        "sleep_consistency": None,
     }
 
 

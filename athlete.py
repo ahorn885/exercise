@@ -34,6 +34,10 @@ PROFILE_FIELDS = (
     # Self-report at onboarding today; provider extractors land in PR7
     # (D2a) and write to athlete_profile_field_provenance.
     'body_weight_kg',
+    # #257 V3-I-10 — recent body-weight trend (>5% / 3 mo is the significance
+    # threshold). §A captures the current snapshot; this captures direction,
+    # which matters for fueling-target accuracy. Self-report band.
+    'body_weight_trend',
     'hrmax_bpm',
     'lactate_threshold_hr_bpm',
     'vo2max',
@@ -99,8 +103,17 @@ PROFILE_FIELDS = (
     'fueling_format_preference',
     'gi_triggers_known',
     'salt_electrolyte_tolerance',
+    # #257 V3-I-4 — split sweat *rate* (volume → fluid need) from salt *loss*
+    # (concentration → sodium need); the v2 `salt_electrolyte_tolerance` enum
+    # conflated them. `salt_electrolyte_tolerance` now drives sodium only;
+    # `sweat_rate_level` drives the Layer 2E fluid modifier.
+    'sweat_rate_level',
+    # #257 V3-I-9 — daily baseline hydration habit (low/moderate/high).
+    'daily_hydration_baseline',
     'sleep_deprivation_max_hrs_continuous_awake',
     'sleep_deprivation_strategy_notes',
+    # #257 V3-I-1 — sleep *consistency* (variability beyond the mean hours).
+    'sleep_consistency',
     # #304 — self-reported Layer-4 convenience field. `experience_level` is a
     # closed self-select band (EXPERIENCE_LEVEL_CHOICES). (Free-text coach-facing
     # context lives in Coach memory / `coaching_preferences` since #954.)
@@ -184,6 +197,11 @@ KNOWN_INJURY_SEVERITIES = (
 # Layer2E §I.2 format vocabulary (no enum was committed to a Layer 1 spec).
 DIETARY_PATTERN_CHOICES = (
     'omnivore', 'vegetarian', 'vegan', 'pescatarian', 'paleo', 'keto',
+    # #257 V3-I-2 — macro-preference axis distinct from keto (stricter
+    # ketosis) and paleo (a food-quality framework, not a carb level):
+    # `low_carb` is moderate carb restriction; `fat_adapted` is the trained
+    # fat-oxidation state. Both change carb-per-hour fueling prescription.
+    'low_carb', 'fat_adapted',
     'gluten_free', 'low_fodmap', 'other',
 )
 FUELING_FORMAT_CHOICES = (
@@ -194,6 +212,21 @@ CAFFEINE_RACE_DAY_STRATEGY_CHOICES = (
     'caffeine_loading', 'taper', 'maintain', 'avoid',
 )
 SALT_ELECTROLYTE_TOLERANCE_CHOICES = ('low', 'moderate', 'high')
+# #257 V3-I-4 — sweat *rate* (volume), independent of salt loss above. Drives
+# the Layer 2E fluid modifier (heavy sweater → more fluid).
+SWEAT_RATE_LEVEL_CHOICES = ('low', 'moderate', 'high')
+# #257 V3-I-9 — daily baseline hydration habit. Bands keep self-report honest
+# (no per-athlete exact-liter precision) and unit-neutral.
+DAILY_HYDRATION_BASELINE_CHOICES = ('low', 'moderate', 'high')
+# #257 V3-I-1 — sleep consistency (night-to-night variability beyond the mean).
+SLEEP_CONSISTENCY_CHOICES = (
+    'consistent', 'mostly_consistent', 'variable', 'highly_variable',
+)
+# #257 V3-I-10 — recent body-weight trend. `significant_*` = >5% over ~3 months
+# (the energy-availability / fueling-accuracy signal).
+BODY_WEIGHT_TREND_CHOICES = (
+    'stable', 'gaining', 'losing', 'significant_gain', 'significant_loss',
+)
 
 # D-73 Phase 2.2 (Athlete_Onboarding_Data_Spec_v5.md §B.3) — injury_log
 # movement_constraints multi-select. Maps to exercise DB col 9 keyword

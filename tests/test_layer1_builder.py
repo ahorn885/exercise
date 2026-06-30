@@ -205,6 +205,7 @@ class TestFullyPopulated:
             "primary_sport": "adventure_racing",
             "weekly_hours_target": 14.0,
             "body_weight_kg": 78.5,
+            "body_weight_trend": "stable",  # #257 V3-I-10
             "hrmax_bpm": 188,
             "lactate_threshold_hr_bpm": 168,
             "vo2max": 55.0,
@@ -240,8 +241,11 @@ class TestFullyPopulated:
             "fueling_format_preference": "gel,bar",
             "gi_triggers_known": "high-fat solids late in long sessions",
             "salt_electrolyte_tolerance": "high",
+            "sweat_rate_level": "high",  # #257 V3-I-4
+            "daily_hydration_baseline": "moderate",  # #257 V3-I-9
             "sleep_deprivation_max_hrs_continuous_awake": 36,
             "sleep_deprivation_strategy_notes": "30-min naps at PGE",
+            "sleep_consistency": "mostly_consistent",  # #257 V3-I-1
             "experience_level": "advanced",
         })
         # 2) body_metrics
@@ -536,6 +540,29 @@ class TestFullyPopulated:
         assert payload.lifestyle.fueling_format_preference == ["gel", "bar"]
         assert payload.lifestyle.caffeine_tolerance == "high"
 
+    def test_v3_profile_fields_thread_through(self):
+        # #257 — sleep consistency (V3-I-1), sweat rate (V3-I-4, split from
+        # salt loss), daily hydration (V3-I-9), and body-weight trend (V3-I-10)
+        # reach the Layer-1 payload; salt stays distinct from sweat.
+        conn = _FakeConn()
+        self._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.lifestyle.salt_electrolyte_tolerance == "high"
+        assert payload.lifestyle.sweat_rate_level == "high"
+        assert payload.lifestyle.daily_hydration_baseline == "moderate"
+        assert payload.lifestyle.sleep_consistency == "mostly_consistent"
+        assert payload.performance.body_weight_trend == "stable"
+
+    def test_v3_profile_fields_default_none_when_absent(self):
+        # Empty athlete → every new #257 field is None (no spurious default).
+        conn = _FakeConn()
+        _queue_empty_athlete(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.lifestyle.sweat_rate_level is None
+        assert payload.lifestyle.daily_hydration_baseline is None
+        assert payload.lifestyle.sleep_consistency is None
+        assert payload.performance.body_weight_trend is None
+
     def test_supplements_structured_records_thread_through(self):
         # 2E-6 §I.1 — athlete_supplements rows surface as structured
         # AthleteSupplementRecord on lifestyle.supplements (the shape Layer 2E
@@ -748,7 +775,7 @@ class TestWeightingSumInvariant:
 # Helper: full athlete_profile column list (mirrors layer1.builder._PROFILE_COLS).
 _PROFILE_COL_NAMES = (
     "date_of_birth", "sex", "height_cm", "primary_sport",
-    "weekly_hours_target", "body_weight_kg", "hrmax_bpm",
+    "weekly_hours_target", "body_weight_kg", "body_weight_trend", "hrmax_bpm",
     "lactate_threshold_hr_bpm", "vo2max", "cycling_ftp_w",
     "doubles_feasible", "two_a_day_preference", "peak_sessions_max",
     "years_structured_training",
@@ -765,7 +792,9 @@ _PROFILE_COL_NAMES = (
     "altitude_max_exposure_m", "altitude_exposure_count",
     "fueling_format_preference", "gi_triggers_known",
     "salt_electrolyte_tolerance",
+    "sweat_rate_level", "daily_hydration_baseline",
     "sleep_deprivation_max_hrs_continuous_awake",
     "sleep_deprivation_strategy_notes",
+    "sleep_consistency",
     "experience_level",
 )

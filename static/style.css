@@ -1716,6 +1716,16 @@ body.bulk-mode { padding-bottom: 80px; }
 .app .pf-craftset .form-check { margin: 0; }
 .app .pf-hint { font-size: 12px; color: var(--fg-3); margin: 5px 0 0; line-height: 1.5; }
 .app .pf-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+/* #237/#889 — the inline per-day editor's <details><summary> toggle. The old
+   "Per-day rules" affordance used btn-ghost (color: var(--fg)) on a table whose
+   --bs-table-color: var(--ink) collapsed it into the surface (white-on-white).
+   Drive contrast off var(--accent) — orange in both themes — so it's always
+   visible, and strip the default <summary> marker for a clean affordance. */
+.app .pf-perday-toggle { color: var(--accent); cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; list-style: none; padding: 6px 0; display: inline-flex; align-items: center; gap: 6px; }
+.app .pf-perday-toggle::-webkit-details-marker { display: none; }
+.app .pf-perday-toggle::before { content: "▸"; font-size: 9px; line-height: 1; }
+.app details[open] > .pf-perday-toggle::before { content: "▾"; }
+.app .pf-perday > form { padding-top: 10px; }
 .app .pf-saved { font-size: 10px; letter-spacing: 0.14em; color: var(--fg-3); text-transform: uppercase; }
 .app .pf-nutrition .nutri-phases { margin-top: 4px; }
 .app .pf-checkset { display: flex; flex-direction: column; gap: 8px; }

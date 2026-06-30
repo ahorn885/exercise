@@ -722,6 +722,10 @@ class RaceDayFueling(_Base):
     protein_g_per_hr_after_hr_n: tuple[int, float, float] | None = None
     sport_modifier_applied: float
     salt_tolerance_modifier_applied: float
+    # #257 V3-I-4 — fluid band now scales on sweat rate, independent of the
+    # salt (sodium) modifier above. Defaults to 1.0 (no-op) when sweat rate is
+    # unset or for callers that predate the split.
+    sweat_rate_modifier_applied: float = 1.0
     heat_acclim_modifier_applied: float
     recommended_formats: list[str]
     blocked_formats: list[str]
@@ -1811,6 +1815,10 @@ class Layer1StrengthBenchmarks(_Base):
 # §F — performance baselines
 class Layer1Performance(_Base):
     body_weight_kg: float | None = Field(default=None, ge=0)
+    # #257 V3-I-10 — recent body-weight trend; `significant_*` = >5% / ~3 mo.
+    body_weight_trend: Literal[
+        "stable", "gaining", "losing", "significant_gain", "significant_loss"
+    ] | None = None
     hrmax_bpm: int | None = Field(default=None, ge=0)
     hrmax_source: str | None = None
     lactate_threshold_hr_bpm: int | None = Field(default=None, ge=0)
@@ -1885,8 +1893,18 @@ class Layer1Lifestyle(_Base):
     fueling_format_preference: list[str] = Field(default_factory=list)
     gi_triggers_known: str | None = None
     salt_electrolyte_tolerance: Literal["low", "moderate", "high"] | None = None
+    # #257 V3-I-4 — sweat *rate* (volume), split from salt loss above. Layer 2E
+    # scales the race-day fluid band on this; sodium scales on
+    # `salt_electrolyte_tolerance`. The v2 enum conflated the two.
+    sweat_rate_level: Literal["low", "moderate", "high"] | None = None
+    # #257 V3-I-9 — daily baseline hydration habit.
+    daily_hydration_baseline: Literal["low", "moderate", "high"] | None = None
     sleep_deprivation_max_hrs_continuous_awake: int | None = Field(default=None, ge=0)
     sleep_deprivation_strategy_notes: str | None = None
+    # #257 V3-I-1 — sleep consistency (night-to-night variability beyond mean).
+    sleep_consistency: Literal[
+        "consistent", "mostly_consistent", "variable", "highly_variable"
+    ] | None = None
     # D-73 Phase 5.2 Bucket C sub-item (l) — athlete-acquired skill
     # capabilities (default-OFF opt-in pattern mirrors the gear-toggle
     # precedent). Keys are canonical toggle_name strings from

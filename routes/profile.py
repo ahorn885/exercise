@@ -35,6 +35,8 @@ from athlete import (
     DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
     CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
     SALT_ELECTROLYTE_TOLERANCE_CHOICES, EXPERIENCE_LEVEL_CHOICES,
+    SWEAT_RATE_LEVEL_CHOICES, DAILY_HYDRATION_BASELINE_CHOICES,
+    SLEEP_CONSISTENCY_CHOICES, BODY_WEIGHT_TREND_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -77,7 +79,6 @@ from athlete_event_windows_repo import (
     update_event_window_restrictions_by_date,
     update_event_window_volume_by_date,
 )
-from discipline_display_names import discipline_display_name
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -410,6 +411,10 @@ def edit():
         experience_level = _str('experience_level')
         if experience_level not in EXPERIENCE_LEVEL_CHOICES:
             experience_level = None
+        # #257 V3-I-10 — body-weight trend; reject a tampered value to the set.
+        body_weight_trend = _str('body_weight_trend')
+        if body_weight_trend not in BODY_WEIGHT_TREND_CHOICES:
+            body_weight_trend = None
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -418,6 +423,7 @@ def edit():
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             experience_level=experience_level,
+            body_weight_trend=body_weight_trend,
             unit_preference=submitted_unit_pref,
             # #894 — the nutrition / fueling / altitude protocol moved to its own
             # Fuel & health tab (profile.save_nutrition); supplements moved to
@@ -568,6 +574,10 @@ def edit():
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
         caffeine_race_day_strategy_choices=CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
         salt_electrolyte_tolerance_choices=SALT_ELECTROLYTE_TOLERANCE_CHOICES,
+        sweat_rate_level_choices=SWEAT_RATE_LEVEL_CHOICES,
+        daily_hydration_baseline_choices=DAILY_HYDRATION_BASELINE_CHOICES,
+        sleep_consistency_choices=SLEEP_CONSISTENCY_CHOICES,
+        body_weight_trend_choices=BODY_WEIGHT_TREND_CHOICES,
         experience_level_choices=EXPERIENCE_LEVEL_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
@@ -831,6 +841,12 @@ def save_nutrition():
         picked = [v for v in f.getlist(key) if v in allowed]
         return ','.join(picked) or None
 
+    def _enum(key, allowed):
+        # Single closed-vocab select; a tampered or blank POST stores NULL
+        # rather than a junk token (mirrors the supplement repo's clean_*).
+        v = (f.get(key) or '').strip()
+        return v if v in allowed else None
+
     # Altitude acclimatization is a tri-state select: yes / no / unset.
     # Map to BOOLEAN | None; anything outside the pair stays None.
     _alt_raw = _str('altitude_acclimatization_history')
@@ -847,6 +863,12 @@ def save_nutrition():
         caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
         caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
         salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
+        # #257 V3-I-4 / V3-I-9 / V3-I-1 — sweat rate (fluid signal, split from
+        # salt), daily hydration baseline, and sleep consistency.
+        sweat_rate_level=_enum('sweat_rate_level', SWEAT_RATE_LEVEL_CHOICES),
+        daily_hydration_baseline=_enum(
+            'daily_hydration_baseline', DAILY_HYDRATION_BASELINE_CHOICES),
+        sleep_consistency=_enum('sleep_consistency', SLEEP_CONSISTENCY_CHOICES),
         gi_triggers_known=_str('gi_triggers_known'),
         # §I altitude exposure — acclimatization history (tri-state), highest
         # sustained exposure, and how many distinct exposures.
@@ -968,12 +990,21 @@ def event_windows():
             draft['away_locale'] = new_locale
         if not draft.get('override_type'):
             draft['override_type'] = 'away'
+    # #237/#889 consolidated — per-window per-day control state so the list can
+    # render the inline per-day editor (multi-day windows expand in place). Keyed
+    # by window id; the same `days` structure the standalone editor GET builds.
+    windows_days = {
+        w.id: _window_per_day_rows(w)
+        for w in (upcoming_windows + past_windows)
+        if w.start_date != w.end_date
+    }
     return render_template(
         'profile/event_windows.html',
         windows=upcoming_windows,
         past_windows=past_windows,
         locales=locales,
         locale_names=locale_names,
+        windows_days=windows_days,
         override_types=OVERRIDE_TYPES,
         # Slice 4 (#581 WS-H) — away-gear capture: the brought-gear (c) picker
         # catalog. (The standing gear↔locale (b) capture moved to the per-locale
@@ -1023,7 +1054,7 @@ def add_event_window_route():
             flash('Enter a valid reduced-volume percentage.', 'error')
             return _event_windows_redirect(return_to)
     try:
-        add_event_window(
+        new_id = add_event_window(
             db,
             uid,
             start_date=start,
@@ -1041,6 +1072,14 @@ def add_event_window_route():
     db.commit()
     evict_plan_caches_on_event_windows_change(db, uid)
     flash('Event window saved.', 'success')
+    # Guided create-flow (#237/#889 consolidated) — a multi-day window lands the
+    # athlete straight in the per-day editor so they can dial each covered date;
+    # a single-day window has nothing per-day to set, so keep the list redirect.
+    if end != start:
+        return redirect(
+            url_for('profile.event_window_per_day', window_id=new_id,
+                    return_to=_safe_local_path(return_to))
+        )
     return _event_windows_redirect(return_to)
 
 
@@ -1056,12 +1095,14 @@ def delete_event_window_route(window_id):
     return _event_windows_redirect(request.form.get('return_to'))
 
 
-# Per-day volume levels (#889) — a reduced_volume window applies its % to EVERY
-# covered day, which over-reduces a longer trip where only one day is light. This
-# editor lets the athlete dial each covered DATE independently (100% = a normal,
-# unreduced day). Strict CSP forbids a JS-generated in-form grid, so it's a
-# server-rendered page reached from the windows list after the window exists.
-_VOLUME_DAY_CHOICES = (25, 50, 75, 100)
+# Consolidated per-day editor (#237 + #889 merged) — per covered DATE of an event
+# window, set the % of a normal day (writes volume_by_date), a lock-to-location,
+# and an indoor-only flag (write restrictions_by_date). Replaces the two prior
+# editors (per-day VOLUME % and per-date MINUTES/disciplines). The minutes cap and
+# excluded-disciplines controls are dropped (disciplines are governed by equipment
+# availability). Strict CSP forbids a JS-built grid, so the per-day rows are
+# server-rendered, reached as a standalone page from the guided create-flow and
+# expanded inline per multi-day window in the list.
 
 
 def _window_dates(win):
@@ -1073,138 +1114,66 @@ def _window_dates(win):
     return out
 
 
-@bp.route('/event-windows/<int:window_id>/volume-days')
-def event_window_volume_days(window_id):
-    """Render the per-day volume editor (#889) for one reduced_volume window: a
-    percent select per covered date, pre-filled from the saved schedule or the
-    window-wide default."""
-    db = get_db()
-    uid = current_user_id()
-    win = load_event_window(db, uid, window_id)
-    if win is None or win.override_type != 'reduced_volume':
-        flash('Per-day levels apply only to a reduced-volume window.', 'error')
-        return _event_windows_redirect(request.args.get('return_to'))
-    default_pct = int(round((win.volume_pct or 0.5) * 100))
-    days = [
-        {
-            'iso': d.isoformat(),
-            'pct': int(round(win.volume_by_date.get(d, win.volume_pct or 0.5) * 100)),
-        }
-        for d in _window_dates(win)
-    ]
-    return render_template(
-        'profile/event_window_volume_days.html',
-        window=win,
-        days=days,
-        default_pct=default_pct,
-        choices=_VOLUME_DAY_CHOICES,
-        return_to=_safe_local_path(request.args.get('return_to')),
-    )
-
-
-@bp.route('/event-windows/<int:window_id>/volume-days', methods=['POST'])
-def save_event_window_volume_days(window_id):
-    """Persist the per-day volume schedule (#889): one `vol_<iso>` percent per
-    covered date → a {date: fraction} map. The repo validates dates/range; saving
-    evicts the overlapping plan-gen synthesis."""
-    db = get_db()
-    uid = current_user_id()
-    return_to = request.form.get('return_to')
-    win = load_event_window(db, uid, window_id)
-    if win is None or win.override_type != 'reduced_volume':
-        flash('Per-day levels apply only to a reduced-volume window.', 'error')
-        return _event_windows_redirect(return_to)
-    by_date: dict[date, float] = {}
+def _window_per_day_rows(win):
+    """The per-covered-DATE control state for the consolidated per-day editor
+    (#889 + #237 merged): each day's `pct` (int %, from `volume_by_date` * 100,
+    defaulting to 100 = a normal day), `lock` (the `restrictions_by_date`
+    locale_lock), and `indoor` flag. Shared by the standalone editor GET and the
+    inline expander in the windows list, so both render identical controls."""
+    rows = []
     for d in _window_dates(win):
-        raw = (request.form.get(f'vol_{d.isoformat()}') or '').strip()
-        if not raw:
-            continue
-        try:
-            by_date[d] = float(raw) / 100.0
-        except ValueError:
-            flash('Enter a valid per-day percentage.', 'error')
-            return redirect(
-                url_for('profile.event_window_volume_days',
-                        window_id=window_id, return_to=return_to)
-            )
-    try:
-        update_event_window_volume_by_date(db, uid, window_id, by_date)
-    except EventWindowError as exc:
-        flash(str(exc), 'error')
-        return redirect(
-            url_for('profile.event_window_volume_days',
-                    window_id=window_id, return_to=return_to)
-        )
-    db.commit()
-    evict_plan_caches_on_event_windows_change(db, uid)
-    print(  # Rule #15 — which days the athlete dialed + the resulting schedule.
-        f"event_window_volume_days: user={uid} window={window_id} "
-        f"schedule={ {k.isoformat(): v for k, v in sorted(by_date.items())} }"
-    )
-    flash('Per-day volume levels saved.', 'success')
-    return _event_windows_redirect(return_to)
+        frac = win.volume_by_date.get(d)
+        restr = win.restrictions_by_date.get(d, {})
+        rows.append({
+            'iso': d.isoformat(),
+            'pct': int(round(frac * 100)) if frac is not None else 100,
+            'lock': restr.get('locale_lock'),
+            'indoor': bool(restr.get('indoor_only')),
+        })
+    return rows
 
 
-# Per-date restrictions (#237) — locale-lock / excluded disciplines / indoor-only
-# / time cap, set per covered DATE on any window. The Layer 4 validator's
-# D-67-aware branches enforce them; this editor is the capture surface (mirrors
-# the per-day volume editor — strict CSP forbids a JS-built grid).
-def _all_disciplines(db):
-    """`[{id, label}]` for every active layer0 discipline, for the excluded-
-    disciplines picker. Guarded — an unreadable/absent table yields [] so the rest
-    of the editor still renders (mirrors locations.load_category_baselines)."""
-    try:
-        rows = db.execute(
-            "SELECT discipline_id, discipline_name FROM layer0.disciplines "
-            "WHERE superseded_at IS NULL ORDER BY discipline_id"
-        ).fetchall()
-        return [
-            {'id': r['discipline_id'],
-             'label': discipline_display_name(r['discipline_id'], r['discipline_name'])}
-            for r in rows
-        ]
-    except Exception:
-        return []
-
-
-@bp.route('/event-windows/<int:window_id>/restrictions')
-def event_window_restrictions(window_id):
-    """Render the per-date restrictions editor (#237) for one window: per covered
-    date, a locale lock, excluded disciplines, an indoor-only flag, and a minutes
-    cap, pre-filled from the saved schedule."""
-    db = get_db()
-    uid = current_user_id()
-    win = load_event_window(db, uid, window_id)
-    if win is None:
-        flash('That event window no longer exists.', 'error')
-        return _event_windows_redirect(request.args.get('return_to'))
+def _event_window_locales(db, uid):
+    """The athlete's saved locales as `[{slug, label}]` for the per-day editor's
+    lock-to-location dropdown (display name, slug as the value — #1049)."""
     loc_rows = db.execute(
         "SELECT locale, locale_name FROM locale_profiles WHERE user_id = ? "
         "ORDER BY locale",
         (uid,),
     ).fetchall()
-    locales = [
+    return [
         {'slug': r['locale'], 'label': (r['locale_name'] or r['locale'])}
         for r in loc_rows
     ]
-    days = [
-        {'iso': d.isoformat(), 'r': win.restrictions_by_date.get(d, {})}
-        for d in _window_dates(win)
-    ]
+
+
+@bp.route('/event-windows/<int:window_id>/restrictions')
+def event_window_per_day(window_id):
+    """Render the consolidated per-day editor (#237 + #889) for one window: per
+    covered date a % of a normal day, a lock-to-location, and an indoor-only flag,
+    pre-filled from the saved schedule. (Route path kept for URL stability.)"""
+    db = get_db()
+    uid = current_user_id()
+    win = load_event_window(db, uid, window_id)
+    if win is None:
+        flash('That event window no longer exists.', 'error')
+        return _event_windows_redirect(request.args.get('return_to'))
     return render_template(
-        'profile/event_window_restrictions.html',
-        window=win, days=days, locales=locales,
-        disciplines=_all_disciplines(db),
+        'profile/event_window_per_day.html',
+        window=win,
+        days=_window_per_day_rows(win),
+        locales=_event_window_locales(db, uid),
         return_to=_safe_local_path(request.args.get('return_to')),
     )
 
 
 @bp.route('/event-windows/<int:window_id>/restrictions', methods=['POST'])
-def save_event_window_restrictions(window_id):
-    """Persist the per-date restrictions (#237): per covered date a locale lock
-    (`lock_<iso>`), excluded disciplines (`excl_<iso>` multi), indoor-only
-    (`indoor_<iso>`), and a minutes cap (`mins_<iso>`). The repo validates +
-    normalizes (dropping empty days); saving evicts the overlapping synthesis."""
+def save_event_window_per_day(window_id):
+    """Persist the consolidated per-day editor (#237 + #889): per covered date a
+    `pct_<iso>` (% of a normal day → `volume_by_date` fraction), a `lock_<iso>`
+    (locale lock) and an `indoor_<iso>` flag (→ `restrictions_by_date`). Writes
+    BOTH stores; the repos validate + normalize; saving evicts the overlapping
+    synthesis. (Route path kept for URL stability.)"""
     db = get_db()
     uid = current_user_id()
     return_to = request.form.get('return_to')
@@ -1212,31 +1181,35 @@ def save_event_window_restrictions(window_id):
     if win is None:
         flash('That event window no longer exists.', 'error')
         return _event_windows_redirect(return_to)
-    by_date: dict = {}
-    for d in _window_dates(win):
-        iso = d.isoformat()
-        by_date[d] = {
-            'locale_lock': (request.form.get(f'lock_{iso}') or '').strip() or None,
-            'discipline_exclusions': request.form.getlist(f'excl_{iso}'),
-            'indoor_only': request.form.get(f'indoor_{iso}') == '1',
-            # Passed as the raw string; the repo coerces + range-checks it.
-            'max_total_minutes': (request.form.get(f'mins_{iso}') or '').strip() or None,
-        }
+    vol_by_date: dict[date, float] = {}
+    restr_by_date: dict = {}
     try:
-        update_event_window_restrictions_by_date(db, uid, window_id, by_date)
-    except EventWindowError as exc:
+        for d in _window_dates(win):
+            iso = d.isoformat()
+            # 100% (1.0) is included — the overlay no-ops on a >= 1.0 day, so a
+            # normal day round-trips without scaling. Blank → default 100.
+            pct = int(request.form.get(f'pct_{iso}') or 100)
+            vol_by_date[d] = pct / 100.0
+            restr_by_date[d] = {
+                'locale_lock': (request.form.get(f'lock_{iso}') or '').strip() or None,
+                'indoor_only': request.form.get(f'indoor_{iso}') == '1',
+            }
+        update_event_window_volume_by_date(db, uid, window_id, vol_by_date)
+        update_event_window_restrictions_by_date(db, uid, window_id, restr_by_date)
+    except (EventWindowError, ValueError) as exc:
         flash(str(exc), 'error')
         return redirect(
-            url_for('profile.event_window_restrictions',
+            url_for('profile.event_window_per_day',
                     window_id=window_id, return_to=return_to)
         )
     db.commit()
     evict_plan_caches_on_event_windows_change(db, uid)
-    print(  # Rule #15 — which days carry which restrictions after the save.
-        f"event_window_restrictions: user={uid} window={window_id} "
-        f"days={sorted(iso for iso, r in ((d.isoformat(), by_date[d]) for d in by_date))}"
+    print(  # Rule #15 — the per-day settings the athlete saved for this window.
+        f"event_window_per_day: user={uid} window={window_id} "
+        f"pct={ {k.isoformat(): v for k, v in sorted(vol_by_date.items())} } "
+        f"restr={ {k.isoformat(): v for k, v in sorted(restr_by_date.items())} }"
     )
-    flash('Per-day restrictions saved.', 'success')
+    flash('Per-day settings saved.', 'success')
     return _event_windows_redirect(return_to)
 
 
