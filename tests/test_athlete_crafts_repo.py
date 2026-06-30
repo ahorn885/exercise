@@ -108,6 +108,30 @@ class TestReplace:
         }
         assert inserted == {"road_bike", "gravel_bike", "packraft"}
 
+    def test_access_by_slug_syncs_per_craft_access_default_own(self):
+        # #884 slice 6a — the unified "Your gear" surface passes per-craft access;
+        # the baseline CSVs still carry the full available set (own ∪ access),
+        # athlete_gear carries the refinement. An unmapped slug defaults to 'own'.
+        conn = _FakeConn()
+        replace_athlete_crafts(
+            conn, 1,
+            bike_types=["road_bike", "gravel_bike"],
+            paddle_crafts=["packraft"],
+            access_by_slug={"road_bike": "access", "packraft": "own"},
+        )
+        # Baselines unchanged — the full available set regardless of access.
+        assert conn.calls[0][1] == (1, "road_bike,gravel_bike")
+        assert conn.calls[1][1] == (1, "packraft")
+        # athlete_gear INSERTs carry the per-craft access (param index 3);
+        # gravel_bike was unmapped → 'own'.
+        gear_inserts = {
+            c[1][1]: c[1][3]
+            for c in conn.calls if "INSERT INTO athlete_gear" in c[0]
+        }
+        assert gear_inserts == {
+            "road_bike": "access", "gravel_bike": "own", "packraft": "own",
+        }
+
     def test_empty_lists_clear_each_family(self):
         conn = _FakeConn()
         replace_athlete_crafts(conn, 1, bike_types=[], paddle_crafts=[])

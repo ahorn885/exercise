@@ -125,14 +125,18 @@
                     formaction="{{ url_for('profile.event_window_new_locale_route') }}"
                     class="btn btn-sm btn-link p-0">Add a new location</button>
             — you'll return here to finish the window, with what you've entered preserved.</span></label>
-        <fieldset class="field field-wide pf-craftset"><span class="lbl">Craft brought <span class="dim">(if training away — only craft you bring counts at the destination)</span></span>
+        <fieldset class="field field-wide pf-craftset"><span class="lbl">Gear brought <span class="dim">(if training away — only gear you bring counts at the destination)</span></span>
+          {# #884 slice 6b — the brought picker is generalized from craft-only to
+             the full unified gear registry (all kinds), so skis/climbing gear can
+             be brought to a race. The form field stays `brought_craft` (the column
+             rename rides 6c); values are gear_ids of any kind. #}
           {% set bc = d.get('brought_craft', []) %}
-          {% for group, items in craft_catalog.items() %}
-            {% for c in items %}
+          {% for grp in gear_registry %}
+            {% for c in grp.rows %}
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" id="brought_{{ c.slug }}"
-                     name="brought_craft" value="{{ c.slug }}"{{ ' checked' if c.slug in bc else '' }}>
-              <label class="form-check-label" for="brought_{{ c.slug }}">{{ c.label }}</label>
+              <input class="form-check-input" type="checkbox" id="brought_{{ c.gear_id }}"
+                     name="brought_craft" value="{{ c.gear_id }}"{{ ' checked' if c.gear_id in bc else '' }}>
+              <label class="form-check-label" for="brought_{{ c.gear_id }}">{{ c.label }}</label>
             </div>
             {% endfor %}
           {% endfor %}

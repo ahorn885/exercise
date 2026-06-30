@@ -115,6 +115,13 @@ _USER_ID = 42
 # overrides these to assert the real wiring + the `no_active_plan` gate.
 _ACTIVE_PLAN_VERSION_ID = 7
 
+# #1024 — the shared cone resolves the running plan's origin (the `plan_create`
+# row's scope start) via `load_current_plan_start` for the refresh / race-week
+# paths, feeding `derive_current_phase`. Default it module-wide so the existing
+# pipeline tests don't need to queue a `plan_versions` row on `_FakeConn`; the
+# `TestCurrentPhaseDerivation` class overrides it to assert the §5.1 wiring.
+_PLAN_START = date(2026, 4, 1)
+
 
 # The orchestrator lazy-imports these from `plan_sessions_repo` (avoids a
 # circular import), so patches must target the repo module, not
@@ -128,6 +135,10 @@ def _default_active_plan(monkeypatch):
     monkeypatch.setattr(
         "plan_sessions_repo.load_scheduled_sessions_for_window",
         lambda db, user_id, *, start, end: [],
+    )
+    monkeypatch.setattr(
+        "plan_sessions_repo.load_current_plan_start",
+        lambda db, user_id, on_or_before: _PLAN_START,
     )
 
 
@@ -186,6 +197,7 @@ def _queue_target_race_event(
     time_goal: str | None = None,
     race_pack_weight_kg=None,
     previous_attempts: list | None = None,
+    sport_sub_format: str | None = None,
 ) -> None:
     """Queue responses for `load_target_race_event_payload` (3 SELECTs when
     route_locales empty: target_id lookup + main row + route_locales).
@@ -224,6 +236,10 @@ def _queue_target_race_event(
             # framework_sport override. None exercises the fallback to
             # athlete-profile primary_sport.
             "framework_sport": framework_sport,
+            # #254 / D-17 slice B — chosen sport sub-format. Default None
+            # exercises the parent-default / bare-parent compose paths; tests
+            # asserting override precedence pass it through explicitly.
+            "sport_sub_format": sport_sub_format,
             # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race
             # discipline filter override. None = use full bridge defaults
             # (pre-B2 behavior).
@@ -521,6 +537,7 @@ def _fake_layer3b_payload(
     *,
     event_date: date = _EVENT_DATE,
     start_phase: str = "Taper",
+    time_to_event_weeks: int = 1,
 ) -> Layer3BPayload:
     return Layer3BPayload(
         user_id=_USER_ID,
@@ -551,7 +568,7 @@ def _fake_layer3b_payload(
         event_date=event_date,
         event_locale_id="home",
         race_format="single_day",
-        time_to_event_weeks=1,
+        time_to_event_weeks=time_to_event_weeks,
     )
 
 
@@ -718,10 +735,14 @@ class TestHappyPath:
         for m in mocks:
             assert m.call_count == 1
 
-        # Layer 2E receives `current_phase` from 3B's `start_phase` — verifies
-        # the 2A/2B/2D/2C → 3A → 3B → 2E ordering decision.
+        # Layer 2E receives `current_phase` (inside the §3 PlanManagementState
+        # contract) — now the §5.1 phase active today (#1024), derived from the
+        # resolved plan origin (`_PLAN_START`) + today via `derive_current_phase`.
+        # Here the 3B shape is a 1-week Taper-start plan, so today resolves to
+        # Taper either way (the wiring is exercised end-to-end; the behaviour
+        # change vs `start_phase` is asserted in `TestCurrentPhaseDerivation`).
         l2e_kwargs = m_l2e.call_args.kwargs
-        assert l2e_kwargs["current_phase"] == "Taper"
+        assert l2e_kwargs["plan_management_state"].current_phase == "Taper"
         assert l2e_kwargs["framework_sport"] == "AR"
         # target_events derives from RaceEventPayload (single Layer2ETargetEvent)
         assert len(l2e_kwargs["target_events"]) == 1
@@ -746,6 +767,94 @@ class TestHappyPath:
         assert isinstance(l4_kwargs["layer1_payload"], dict)
         # Per-locale dict keyed by primary locale slug
         assert set(l4_kwargs["layer2c_payloads"].keys()) == {"home"}
+
+
+# ─── #254 / D-17 slice B: sport sub-format compose at the Layer 2A boundary ──
+
+
+class TestSportSubFormatCompose:
+    """#254 — the orchestrator composes the Layer 2A `framework_sport` input
+    from the two-column model (D1′): the athlete's chosen `sport_sub_format`
+    wins; else a sub-format parent resolves to its Layer-0 curated default;
+    else the bare name passes through unchanged. Only the Layer 2A call sees
+    the sub-format — `framework_sport` stays top-level everywhere else (2E
+    still gets the parent, asserted via `l2e_kwargs`)."""
+
+    def _run(self, conn, cache):
+        race_event_for_l4 = RaceEventPayload(
+            race_event_id=1,
+            user_id=_USER_ID,
+            name="Test Race 2026",
+            event_date=_EVENT_DATE,
+            race_format="single_day",
+            event_locale_id="home",
+            event_locale_mapbox_id="poi.test_anchor",
+            is_target_event=True,
+        )
+        stack = _patches(
+            layer4_return=_fake_layer4_payload(race_event_payload=race_event_for_l4)
+        )
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_race_week_brief(conn, _USER_ID, cache=cache, today=_TODAY)
+        finally:
+            _exit_all(stack)
+        # mocks[1] is q_layer2a; mocks[5] is q_layer2e.
+        return mocks[1].call_args.kwargs, mocks[5].call_args.kwargs
+
+    def test_parent_resolves_to_layer0_default(self):
+        # Bare sub-format parent + no athlete pick → the Layer-0 default is
+        # composed into the 2A input (the silent-NULL-bands fix). The default
+        # read fires (parent ∈ _SUB_FORMAT_SPORTS), queued between etl + locale.
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Triathlon")
+        _queue_etl_version_set(conn)
+        conn.queue(row={"sub_format_sport": "Triathlon (Standard / Olympic)"})
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, l2e_kwargs = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon (Standard / Olympic)"
+        # D1′ — the top-level name still flows to the rest of the cone.
+        assert l2e_kwargs["framework_sport"] == "Triathlon"
+
+    def test_athlete_chosen_sub_format_wins(self):
+        # An explicit `sport_sub_format` overrides the default — and skips the
+        # Layer-0 read entirely (no default-lookup response queued).
+        conn = _FakeConn()
+        _queue_target_race_event(
+            conn,
+            framework_sport="Triathlon",
+            sport_sub_format="Triathlon (Full / Ironman 140.6)",
+        )
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, l2e_kwargs = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon (Full / Ironman 140.6)"
+        assert l2e_kwargs["framework_sport"] == "Triathlon"
+
+    def test_parent_with_no_default_falls_back_to_bare_name(self):
+        # Parent is in the whitelist but the map returns no default row → the
+        # bare parent passes through (Layer 2A's own guard then HITL-gates it).
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Triathlon")
+        _queue_etl_version_set(conn)
+        conn.queue(row=None)  # default lookup miss
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, _ = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Triathlon"
+
+    def test_non_parent_sport_is_inert(self):
+        # A single-format sport never triggers the Layer-0 read (not in the
+        # whitelist) → no extra queued response, name unchanged.
+        conn = _FakeConn()
+        _queue_target_race_event(conn, framework_sport="Trail Running")
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        l2a_kwargs, _ = self._run(conn, Layer4Cache(InMemoryCacheBackend()))
+        assert l2a_kwargs["framework_sport"] == "Trail Running"
 
 
 # ─── #732 slice 1: prior Taper window + plan version resolution ──────────────
@@ -2235,6 +2344,12 @@ class TestLayer0TableFamilyMap:
         # discipline_technique_foci is 0B-versioned but has no reader anywhere in
         # app code (dead serving data) — no cache for its edits to invalidate.
         "discipline_technique_foci",
+        # sport_sub_format_map (#254 / D-17) supplies the race-event form's
+        # sub-format options + the default applied at capture/compose time. The
+        # athlete's chosen sport_sub_format (on race_events) is the cached plan
+        # input; this table is a lookup, not a versioned serving axis — see the
+        # note on _LAYER0_TABLE_FAMILY. Folded into the v1.10.1 baseline.
+        "sport_sub_format_map",
     })
 
     def _baseline_versioned_tables(self) -> set[str]:
@@ -3123,6 +3238,129 @@ def _fake_plan_create_layer4_payload(
         ],
         notable_observations=[],
     )
+
+
+class TestCurrentPhaseDerivation:
+    """#1024 — the shared cone wires `derive_current_phase` (§5.1) so 2E's
+    `current_phase` is the periodization phase active TODAY, not always the
+    plan's first block (`start_phase`).
+
+    Anchoring numbers (all tests share one Base-start, 16-week standard 3B
+    shape): the §6.1 standard split over 16 weeks is Base 8 / Build 4 / Peak 2
+    / Taper 2. From the plan origin `_PLAN_START` (2026-04-01) that is
+    Base 04-01..05-26, Build 05-27..06-23, Peak 06-24..07-07, Taper 07-08..07-21.
+    `_TODAY` (2026-06-01) falls in Build."""
+
+    def _l3b_override(self, *, start_phase: str):
+        return patch(
+            "layer4.orchestrator.llm_layer3b_goal_timeline_viability_cached",
+            return_value=_fake_layer3b_payload(
+                start_phase=start_phase, time_to_event_weeks=16
+            ),
+        )
+
+    def test_refresh_derives_phase_active_today_not_start_phase(self):
+        """plan_refresh: a Base-start plan begun weeks ago resolves to Build
+        today (the plan origin is read from `plan_versions` → `_PLAN_START`)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload(plan_version_id=2)
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Build"
+
+    def test_create_anchors_at_first_block(self):
+        """plan_create is a no-op for the change: the plan starts today, so
+        today is week 0 → the first block. The SAME Base-start 16-week shape
+        that resolves to Build on refresh stays Base here (origin = plan_start,
+        handed in directly because the plan isn't on disk yet)."""
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_create_layer4_payload(plan_version_id=3)
+        stack = _plan_create_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_create(
+                conn,
+                _USER_ID,
+                plan_start_date=_TODAY,
+                plan_version_id=3,
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Base"
+
+    def test_falls_back_to_start_phase_when_no_origin(self, monkeypatch):
+        """No `plan_create` row on disk → conservative fallback to the 3B
+        `start_phase` (derivation skipped). Proven by contrast: with the origin
+        present this same shape would resolve to Build (see the refresh test),
+        but here it stays Base."""
+        monkeypatch.setattr(
+            "plan_sessions_repo.load_current_plan_start",
+            lambda db, user_id, on_or_before: None,
+        )
+        conn = _FakeConn()
+        _queue_target_race_event(conn)
+        _queue_etl_version_set(conn)
+        _queue_primary_locale(conn)
+        _queue_locale_equipment_pool(conn)
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        sentinel = _fake_plan_refresh_layer4_payload(plan_version_id=2)
+        stack = _plan_refresh_patches(layer4_return=sentinel)
+        stack[8] = self._l3b_override(start_phase="Base")
+        mocks = _enter_all(stack)
+        try:
+            orchestrate_plan_refresh(
+                conn,
+                _USER_ID,
+                tier="T2",
+                refresh_scope_start=_TODAY,
+                refresh_scope_end=date(2026, 6, 7),
+                plan_version_id=2,
+                plan_version_id_parent=1,
+                prior_plan_session_window=_default_prior_plan_session_window(),
+                cache=cache,
+                today=_TODAY,
+            )
+        finally:
+            _exit_all(stack)
+
+        l2e_kwargs = mocks[5].call_args.kwargs
+        assert l2e_kwargs["plan_management_state"].current_phase == "Base"
 
 
 class TestOrchestratePlanCreateHappyPath:

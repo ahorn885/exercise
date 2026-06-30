@@ -1,8 +1,30 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import (
+    Blueprint, render_template, request, redirect, url_for, flash, jsonify, abort,
+)
 from database import get_db
-from routes.auth import current_user_id
+from routes.auth import current_user_id, cron_authorized
 
 bp = Blueprint('conditions', __name__)
+
+
+@bp.route('/cron/conditions/refresh', methods=['GET'])
+def cron_refresh_conditions():
+    """Daily producer for the #964 conditions advisory (#289 Layer-5 surface).
+
+    Refreshes `upcoming_conditions` — the live near-term forecast for each
+    athlete's upcoming training-day locales — which the conditions-advisory
+    reconcile (`nudges.scan_reconcile_staleness`) reads. Scheduled (`vercel.json`)
+    before the reconcile cron so the signal is fresh. Token-gated like the other
+    cron drains; `app.py` auth-exempt (cron carries the Bearer header, no
+    session). Returns `{refreshed: {users, rows}}`.
+    """
+    if not cron_authorized():
+        abort(401)
+    from layer5.upcoming_conditions import refresh_all_upcoming_conditions
+    db = get_db()
+    result = refresh_all_upcoming_conditions(db)
+    db.commit()
+    return jsonify(refreshed=result), 200
 
 WIND_DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'Calm', 'Variable']
 CONDITION_ACTIVITIES = [

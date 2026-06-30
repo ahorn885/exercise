@@ -536,17 +536,18 @@ def _seed_edit_layer0_equipment(conn, names=('Barbell',)):
 
 def _patch_craft_save(monkeypatch, locales_mod, *, prior=None, calls=None):
     """Neutralise the #953 inline craft save in equipment-path tests that don't
-    seed its repo queries: `load_craft_locales` returns `prior` (default: none
-    kept here), `replace_craft_locale` records `(uid, locale, crafts)` into
-    `calls`, and the craft cache eviction is a no-op."""
-    monkeypatch.setattr(locales_mod, 'load_craft_locales',
+    seed its repo queries. #884 slice 5 cut the standing capture over to the
+    unified gear store, so this patches `load_gear_locales` (returns `prior`,
+    default none), `replace_gear_locale` (records `(uid, locale, crafts)` into
+    `calls`), and `evict_plan_caches_on_gear_locale_change` (no-op)."""
+    monkeypatch.setattr(locales_mod, 'load_gear_locales',
                         lambda *_a, **_k: dict(prior or {}))
 
     def _replace(_db, uid, locale, crafts):
         if calls is not None:
             calls.append((uid, locale, list(crafts)))
-    monkeypatch.setattr(locales_mod, 'replace_craft_locale', _replace)
-    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+    monkeypatch.setattr(locales_mod, 'replace_gear_locale', _replace)
+    monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_gear_locale_change',
                         lambda *_a, **_k: None)
 
 
@@ -735,7 +736,7 @@ class TestEditLocaleSavesCraftInline:
         _patch_craft_save(monkeypatch, locales_mod,
                           prior={'cabin': prior_crafts}, calls=craft_calls)
         evicted: list = []
-        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_craft_locale_change',
+        monkeypatch.setattr(locales_mod, 'evict_plan_caches_on_gear_locale_change',
                             lambda *_a, **_k: evicted.append(True))
 
         profile = _FakeRow({'locale_terrain_ids': []})
@@ -761,6 +762,20 @@ class TestEditLocaleSavesCraftInline:
         # Still replace-all'd (idempotent), but no cache churn on a no-op change.
         assert craft_calls == [(1, 'cabin', ['kayak'])]
         assert not evicted, 'unchanged craft set must not evict the plan caches'
+
+    def test_post_replaces_full_cross_kind_set(self, monkeypatch):
+        # #884 slice 6b — the generalized standing picker is ONE form that posts
+        # the full owned-here set across ALL kinds, so a mixed craft+ski save
+        # forwards the whole cross-kind set to the replace-all. This is what keeps
+        # the slice-5 §6.1 replace-all trap shut: because the form never submits a
+        # partial (craft-only) set, `replace_gear_locale`'s DELETE-then-INSERT
+        # can't silently wipe other-kind gear stationed here.
+        craft_calls, evicted = self._post(
+            monkeypatch,
+            craft_slugs=['classic_xc_ski', 'mountain_bike'],
+            prior_crafts=['kayak'])
+        assert craft_calls == [(1, 'cabin', ['classic_xc_ski', 'mountain_bike'])]
+        assert evicted, 'plan caches must evict when the kept set changes'
 
 
 # ─── #446 — explicit privacy override (private/shared) ──────────────────────

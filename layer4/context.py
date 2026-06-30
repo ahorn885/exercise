@@ -805,6 +805,25 @@ class HeatAcclimState(_Base):
     last_assessment: date  # read-time derivation date
 
 
+class PlanManagementState(_Base):
+    # `Plan_Management_Spec_v1.md` §3 — the typed value Layer 2E imports
+    # verbatim (`Layer2E_Spec.md` §3). The three fields are the locked
+    # cross-layer surface: `current_phase` (§5.1) drives 2E phase scaling;
+    # `heat_acclim_state` (§5.2) + `expected_race_temp_c` (§5.3) feed the §5.8
+    # heat-acclim overlay. Extend (2E ignores extras); do not rename/retype.
+    # Assembled at read time by the orchestrator from the `plan_management`
+    # derivations — never stored. The `heat_acclim_data_sparse` advisory rides
+    # alongside as a builder param, not in this locked struct.
+    #
+    # `current_phase` is a plain `str` per the spec §3 dataclass — membership in
+    # {Base, Build, Peak, Taper} is enforced by the 2E builder's `_validate_inputs`
+    # (the established validation gate; keeps a bad phase a `Layer2EInputError`,
+    # not a pydantic error one layer up).
+    current_phase: str
+    heat_acclim_state: HeatAcclimState
+    expected_race_temp_c: dict[str, float | None]
+
+
 class HeatAcclimEventAdjustment(_Base):
     event_id: str
     temp_signal: Literal["unknown", "cool", "temperate", "warm", "hot"]
@@ -1345,6 +1364,16 @@ class RaceEventPayload(_Base):
     # `framework_sport_missing` / `unknown_sport` errors still apply if the
     # value doesn't resolve against `layer0.sport_discipline_bridge`.
     framework_sport: str | None = Field(default=None, max_length=100)
+    # #254 / D-17 slice B (2026-06-29) — the athlete's chosen sport SUB-format
+    # for the five sub-format-parent sports (Triathlon, Skimo, LDC, Canoe /
+    # Kayak Marathon, OWMS). `framework_sport` stays the TOP-LEVEL name (all
+    # bridge/terrain consumers untouched — D1′ two-column model); this holds
+    # the full `phase_load_allocation.sport_name` sub-format the athlete picked
+    # (or NULL → the orchestrator composes the parent's curated default from
+    # `layer0.sport_sub_format_map` at the Layer 2A boundary). NULL for the
+    # single-format sports + legacy rows. Max length covers the longest PLA
+    # sub-format name with comfortable headroom.
+    sport_sub_format: str | None = Field(default=None, max_length=120)
     # D-73 Phase 5.2 Bucket E.(b)-B2 (2026-05-24) — per-race discipline
     # filter override. When non-None, Layer 2A's classifier post-filters
     # the bridge-derived discipline list to just these canonical IDs

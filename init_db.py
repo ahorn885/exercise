@@ -3254,6 +3254,78 @@ _PG_MIGRATIONS = [
     "UPDATE injury_log SET body_part = regexp_replace(body_part, '^(Left|Right) ', '') WHERE body_part ~ '^(Left|Right) '",
     "UPDATE injury_log SET body_part = 'Lower back' WHERE body_part = 'Lower Back'",
     "UPDATE injury_log SET body_part = 'Upper back' WHERE body_part = 'Upper Back'",
+    # ── Recurring time-of-day notification schedules (#964) ───────────────
+    # The *when* for the recurring-send notification family (supplement AM/PM,
+    # next-day-workouts preview, daily log ping) — orthogonal to the
+    # notification_preferences *whether* matrix. One row per (user, schedule_type)
+    # holding the local send hour; the hourly cron (scan_scheduled_sends) fires a
+    # feed nudge when the user's local hour matches and re-stamps last_sent_on for
+    # once-per-day dedup. `schedule_type` == the account_nudges `nudge_type` it
+    # fires, so the cron's fire action is an identity mapping. PG-only (mirrors
+    # notification_preferences); SQLite dev has no such table and the repo's reads
+    # fail open. Composite PK is the upsert conflict target.
+    """CREATE TABLE IF NOT EXISTS notification_schedules (
+        user_id       INTEGER  NOT NULL REFERENCES users(id),
+        schedule_type TEXT     NOT NULL,
+        send_hour     SMALLINT NOT NULL,
+        enabled       BOOLEAN  NOT NULL DEFAULT TRUE,
+        last_sent_on  DATE,
+        updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, schedule_type)
+    )""",
+    # Per-user IANA timezone (e.g. 'America/Chicago'), captured on the schedule
+    # settings page. Localizes the send hour (NOW() AT TIME ZONE timezone in the
+    # cron). NULL ⇒ schedules never fire (fail-safe — can't localize the clock
+    # without it). Nullable so existing users need no backfill.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
+    # ── upcoming_conditions (#289 Layer-5 producer / #964 conditions advisory) ──
+    # Live near-term forecast for each upcoming TRAINING day, per user. Refreshed
+    # daily by the producer cron (/cron/conditions/refresh) and pruned as days
+    # pass. Distinct from plan_conditions (climate normals baked per plan_version
+    # as opaque JSONB) — this is the plain, (user, date)-queryable signal the
+    # conditions-advisory reconcile fires on. temp_*_c are DOUBLE PRECISION (avoid
+    # the REAL round-trip drift fixed in #196 Slice 2.3); precip_prob_pct is
+    # 0–100. Canonical °C (Open-Meteo native); any rendering uses the units
+    # toggle. Public-schema, so it auto-applies on each Vercel deploy (no
+    # layer0-apply). PG-only; SQLite dev never reaches the cron that writes it.
+    """CREATE TABLE IF NOT EXISTS upcoming_conditions (
+        user_id         INTEGER  NOT NULL REFERENCES users(id),
+        forecast_date   DATE     NOT NULL,
+        locale_id       TEXT,
+        temp_max_c      DOUBLE PRECISION,
+        temp_min_c      DOUBLE PRECISION,
+        precip_prob_pct SMALLINT,
+        refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, forecast_date)
+    )""",
+    # #254 / D-17 slice B — sport SUB-format capture (two-column model, D1′).
+    # `framework_sport` stays the top-level bridge key; this new column holds the
+    # athlete's chosen full PLA sub-format name for the five sub-format-parent
+    # sports (NULL = the orchestrator composes the parent's curated default from
+    # layer0.sport_sub_format_map at the Layer 2A boundary). Public-schema, so it
+    # auto-applies on each Vercel deploy. IF NOT EXISTS keeps it re-run safe.
+    "ALTER TABLE race_events ADD COLUMN IF NOT EXISTS sport_sub_format TEXT NULL",
+    # D5 one-time backfill — set the parent's is_default sub-format on existing
+    # rows whose framework_sport is one of the five parents and whose
+    # sport_sub_format is still NULL, so legacy/pre-capture target events compose
+    # to a real PLA sport_name (no silent NULL bands) before the capture UI
+    # (slice B2) ships. Guarded on the Layer-0 table existing (it lands via the
+    # gated layer0-apply, not this public migration list) so a DB without it is a
+    # clean no-op; idempotent (the NULL predicate excludes already-backfilled
+    # rows). Athlete intent wins — rows that already carry a sport_sub_format are
+    # never overwritten, even if the Layer-0 default later moves.
+    """DO $$
+    BEGIN
+        IF to_regclass('layer0.sport_sub_format_map') IS NOT NULL THEN
+            UPDATE race_events re
+               SET sport_sub_format = m.sub_format_sport
+              FROM layer0.sport_sub_format_map m
+             WHERE re.sport_sub_format IS NULL
+               AND m.parent_sport = re.framework_sport
+               AND m.is_default = TRUE
+               AND m.superseded_at IS NULL;
+        END IF;
+    END $$;""",
 ]
 
 _CLOTHING_SEEDS = [

@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover
     requests = None  # type: ignore[assignment]
 
 _ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 _NORMALS_YEARS = 5  # recent complete years to average
 _WINDOW_DAYS = 3  # +/- days around the event's month/day
 _TIMEOUT_S = 6
@@ -151,3 +152,114 @@ def get_expected_conditions(
         sample_days=precip_days,
         sample_years=_NORMALS_YEARS,
     )
+
+
+def get_forecast_high(
+    latitude: float | None,
+    longitude: float | None,
+    target_date: date,
+    *,
+    fetcher: Fetcher | None = None,
+) -> float | None:
+    """Forecast daily-high °C for ``target_date`` at ``(latitude, longitude)``.
+
+    The forecast leg of `Plan_Management_Spec_v1.md` §5.3.2 — the sibling to
+    `get_expected_conditions` for events inside Open-Meteo's ~14-day forecast
+    horizon. Hits the forecast endpoint (no key required, same `Fetcher`
+    injection) and returns the `temperature_2m_max` for the target day, or
+    ``None`` on missing coordinates / network error / malformed-or-empty
+    response. Best-effort by design: a ``None`` lets §5.3 fall back to the
+    climate normal (`_blend`).
+    """
+    if latitude is None or longitude is None:
+        return None
+
+    fetch = fetcher or _default_fetch
+    data = fetch(
+        _FORECAST_URL,
+        {
+            "latitude": round(float(latitude), 3),
+            "longitude": round(float(longitude), 3),
+            "start_date": target_date.isoformat(),
+            "end_date": target_date.isoformat(),
+            "daily": "temperature_2m_max",
+            "timezone": "auto",
+        },
+    )
+    if not data:
+        return None
+    highs = (data.get("daily") or {}).get("temperature_2m_max") or []
+    if not highs or highs[0] is None:
+        return None
+    return round(float(highs[0]), 1)
+
+
+@dataclass(frozen=True)
+class DayForecast:
+    """One day's live forecast — the per-day signal the conditions advisory fires on."""
+
+    temp_max_c: float
+    temp_min_c: float
+    precip_prob_pct: int
+
+
+def get_upcoming_forecast(
+    latitude: float | None,
+    longitude: float | None,
+    start_date: date,
+    end_date: date,
+    *,
+    fetcher: Fetcher | None = None,
+) -> dict[date, DayForecast]:
+    """Per-day live forecast for ``[start_date, end_date]`` at ``(lat, lng)``.
+
+    The producer leg of the #964 conditions advisory (#289 Layer-5 surface): one
+    Open-Meteo forecast call yielding, per day, the daily high/low (°C) and the
+    max precipitation probability (%). Returns an **empty dict** on missing
+    coordinates, a network error, a malformed response, or a range with no usable
+    days — best-effort by design, the same degrade contract as the functions
+    above (the caller writes nothing and the advisory rides the last good rows).
+
+    Only days carrying all three values are included; a day with a null in any
+    series is skipped (an incomplete row can't be thresholded reliably).
+    """
+    if latitude is None or longitude is None:
+        return {}
+
+    fetch = fetcher or _default_fetch
+    data = fetch(
+        _FORECAST_URL,
+        {
+            "latitude": round(float(latitude), 3),
+            "longitude": round(float(longitude), 3),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+            "timezone": "auto",
+        },
+    )
+    if not data:
+        return {}
+    daily = data.get("daily") or {}
+    times = daily.get("time") or []
+    highs = daily.get("temperature_2m_max") or []
+    lows = daily.get("temperature_2m_min") or []
+    probs = daily.get("precipitation_probability_max") or []
+
+    out: dict[date, DayForecast] = {}
+    for i, day_iso in enumerate(times):
+        if i >= len(highs) or i >= len(lows) or i >= len(probs):
+            break
+        hi, lo, pp = highs[i], lows[i], probs[i]
+        if hi is None or lo is None or pp is None:
+            continue
+        try:
+            d = date.fromisoformat(day_iso)
+        except (ValueError, TypeError):
+            continue
+        out[d] = DayForecast(
+            temp_max_c=round(float(hi), 1),
+            temp_min_c=round(float(lo), 1),
+            precip_prob_pct=int(round(float(pp))),
+        )
+    return out

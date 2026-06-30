@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from datetime import date
 
-from weather_client import ExpectedConditions, get_expected_conditions
+from weather_client import (
+    ExpectedConditions,
+    get_expected_conditions,
+    get_forecast_high,
+)
 
 _LAT = 44.32
 _LNG = -93.20
@@ -144,3 +148,48 @@ class TestSummaryLine:
         assert "~86°F" in line
         assert "~50°F" in line
         assert "°C" not in line
+
+
+class TestForecastHigh:
+    # `get_forecast_high` — the §5.3.2 forecast leg for events inside the horizon.
+
+    def test_returns_target_day_high(self):
+        captured: dict = {}
+
+        def fetch(url, params):
+            captured["url"] = url
+            captured["params"] = params
+            return {"daily": {"temperature_2m_max": [33.4]}}
+
+        assert get_forecast_high(_LAT, _LNG, _EVENT, fetcher=fetch) == 33.4
+        # Single-day window on the forecast endpoint.
+        assert captured["url"].endswith("/forecast")
+        assert captured["params"]["start_date"] == _EVENT.isoformat()
+        assert captured["params"]["end_date"] == _EVENT.isoformat()
+        assert captured["params"]["daily"] == "temperature_2m_max"
+
+    def test_missing_coords_returns_none_without_fetching(self):
+        def fetch(url, params):  # pragma: no cover - must not be called
+            raise AssertionError("should not fetch without coords")
+
+        assert get_forecast_high(None, _LNG, _EVENT, fetcher=fetch) is None
+        assert get_forecast_high(_LAT, None, _EVENT, fetcher=fetch) is None
+
+    def test_fetch_failure_returns_none(self):
+        assert get_forecast_high(_LAT, _LNG, _EVENT, fetcher=lambda u, p: None) is None
+
+    def test_empty_or_null_high_returns_none(self):
+        assert (
+            get_forecast_high(
+                _LAT, _LNG, _EVENT,
+                fetcher=lambda u, p: {"daily": {"temperature_2m_max": []}},
+            )
+            is None
+        )
+        assert (
+            get_forecast_high(
+                _LAT, _LNG, _EVENT,
+                fetcher=lambda u, p: {"daily": {"temperature_2m_max": [None]}},
+            )
+            is None
+        )
