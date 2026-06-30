@@ -2626,11 +2626,6 @@ _PG_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_aew_user ON athlete_event_windows(user_id)",
     # Event Windows Slice 2 (#581 WS-H) — away_locale on the pre-existing table.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS away_locale TEXT",
-    # Event Windows Slice 4 (#581 WS-H) — away craft. (c) brought_craft: the
-    # comma-separated craft slugs the athlete brings to an 'away' window (CSV per
-    # the discipline_baseline_*.{bike_types_available,paddle_craft_types}
-    # convention; closed-enum re-asserted in athlete_event_windows_repo.py).
-    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS brought_craft TEXT",
     # Event Windows Slice 6 (#593) — VOLUME windows. override_type gains
     # 'reduced_volume' (retained capacity fraction = volume_pct, 0<pct<1) and
     # 'no_training' (zeroed day, no column); volume_pct is NULL on every other
@@ -3130,10 +3125,6 @@ _PG_MIGRATIONS = [
     f"SELECT user_id, craft_slug, locale FROM athlete_craft_locale "
     f"WHERE craft_slug IN ({_GEAR_BACKFILL_CRAFT_IN}) "
     f"ON CONFLICT (user_id, gear_id, locale) DO NOTHING",
-    # brought_craft → brought_gear is a verbatim CSV copy (same slug format);
-    # NULL-guarded so a re-deploy never clobbers a later away-capture edit.
-    "UPDATE athlete_event_windows SET brought_gear = brought_craft "
-    "WHERE brought_gear IS NULL AND brought_craft IS NOT NULL AND btrim(brought_craft) <> ''",
     # ── #196 Phase 2 — the canonical daily-wellness layer ─────────────────────
     # The daily-metrics analog of Phase 3's canonical_activity: one best-of row
     # per (user, date), materialized on ingest by canonical_wellness.py:
@@ -3326,6 +3317,14 @@ _PG_MIGRATIONS = [
                AND m.superseded_at IS NULL;
         END IF;
     END $$;""",
+    # #884 slice 6c — brought_craft column DROP (the tail of the 6c-1 brought-
+    # gear read+write cutover). The EventWindow attribute, repo read, and write
+    # path all moved to brought_gear in 6c-1; that deploy ran the
+    # brought_craft→brought_gear backfill (now removed above) one final time, so
+    # brought_gear is authoritative and the legacy column can be retired. Public-
+    # schema → auto-applies on each Vercel deploy. IF EXISTS keeps it re-run safe
+    # and a clean no-op on a fresh DB that never created brought_craft.
+    "ALTER TABLE athlete_event_windows DROP COLUMN IF EXISTS brought_craft",
 ]
 
 _CLOTHING_SEEDS = [
