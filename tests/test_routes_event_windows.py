@@ -50,6 +50,7 @@ def _post(monkeypatch, data):
 
     def _fake_add(db, uid, **kwargs):
         captured.update(kwargs)
+        return 99  # the new window id (add_event_window now RETURNs it)
 
     monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
@@ -103,7 +104,7 @@ def test_blank_start_date_still_rejected(monkeypatch):
     assert response.status_code == 302
 
 
-# ─── per-day volume editor (#889) ────────────────────────────────────────────
+# ─── consolidated per-day editor (#237 + #889) ───────────────────────────────
 
 
 def _reduced_window(start='2026-07-03', end='2026-07-05', **kw):
@@ -113,15 +114,30 @@ def _reduced_window(start='2026-07-03', end='2026-07-05', **kw):
         id=5, user_id=7,
         start_date=_date.fromisoformat(start), end_date=_date.fromisoformat(end),
         override_type='reduced_volume', unavailable_locale=None, away_locale=None,
-        brought_gear=(), volume_pct=0.5, volume_by_date={}, notes='',
+        brought_gear=(), volume_pct=0.5, volume_by_date={}, restrictions_by_date={},
+        notes='',
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
 
 
-def test_volume_days_editor_renders_one_select_per_covered_date(monkeypatch):
-    """GET builds a row per covered date, pre-filled from the saved schedule /
-    window default. Rendered through the real app so base.html's shell resolves."""
+class _FakeLocaleConnForPerDay:
+    """A conn whose `execute` answers the per-day editor's locale SELECT."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, sql, params=()):
+        return _FakeLocaleCur(self._rows)
+
+    def commit(self):
+        pass
+
+
+def test_per_day_editor_renders_pct_lock_indoor_per_date(monkeypatch):
+    """GET builds a row per covered date with the % / lock / indoor controls,
+    pre-filled from the saved volume + restriction schedule (no minutes, no
+    disciplines). Rendered through the real app so base.html resolves."""
     import os
     os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
     os.environ.setdefault('DATABASE_URL', '')
@@ -129,63 +145,84 @@ def test_volume_days_editor_renders_one_select_per_covered_date(monkeypatch):
     import flask
     import app as _appmod
     import routes.profile as pf_mod
-    win = _reduced_window(volume_by_date={date(2026, 7, 4): 0.25})
-    monkeypatch.setattr(pf_mod, 'get_db', lambda: object())
+    win = _reduced_window(
+        volume_by_date={date(2026, 7, 4): 0.25},
+        restrictions_by_date={date(2026, 7, 4): {'locale_lock': 'home',
+                                                 'indoor_only': True}},
+    )
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    monkeypatch.setattr(pf_mod, 'get_db',
+                        lambda: _FakeLocaleConnForPerDay(rows))
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
     monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
-    with _appmod.app.test_request_context('/profile/event-windows/5/volume-days'):
+    with _appmod.app.test_request_context('/profile/event-windows/5/restrictions'):
         flask.g.current_user_row = {'id': 7, 'username': 'o', 'display_name': 'O'}
-        html = pf_mod.event_window_volume_days(5)
-    assert 'name="vol_2026-07-03"' in html  # window default 50
-    assert 'name="vol_2026-07-04"' in html  # dialed 25
-    assert 'name="vol_2026-07-05"' in html
-    assert '<option value="25" selected>25%</option>' in html  # the dialed day
+        html = pf_mod.event_window_per_day(5)
+    assert 'name="pct_2026-07-03"' in html   # one control set per covered day
+    assert 'name="pct_2026-07-04"' in html
+    assert 'name="lock_2026-07-04"' in html
+    assert 'name="indoor_2026-07-04"' in html
+    assert '<option value="25" selected>25% — very light</option>' not in html  # no minutes copy
+    assert 'name="mins_' not in html          # minutes cap dropped
+    assert 'name="excl_' not in html          # excluded disciplines dropped
+    # the dialed day is pre-selected at 25%, lock=home, indoor checked
+    assert '<option value="25" selected>25%</option>' in html
+    assert '<option value="home" selected>Home</option>' in html
 
 
-def test_volume_days_post_builds_map_and_writes(monkeypatch):
-    """POST collects the per-date selects into a {date: fraction} map, writes via
-    the repo, and evicts the overlapping synthesis."""
+def test_per_day_post_writes_both_volume_and_restrictions(monkeypatch):
+    """POST collects pct_/lock_/indoor_ per covered date and writes BOTH
+    volume_by_date and restrictions_by_date, then evicts the synthesis."""
     from datetime import date
     app = _make_profile_app()
     conn = _FakeConn()
     import routes.profile as pf_mod
-    win = _reduced_window()
-    captured = {}
-    evicted = []
+    win = _reduced_window(start='2026-07-03', end='2026-07-04')
+    vol, restr, evicted = {}, {}, []
     monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
     monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
     monkeypatch.setattr(
         pf_mod, 'update_event_window_volume_by_date',
-        lambda db, uid, wid, by_date: captured.update({'by_date': by_date}),
-    )
+        lambda db, uid, wid, by_date: vol.update(by_date))
+    monkeypatch.setattr(
+        pf_mod, 'update_event_window_restrictions_by_date',
+        lambda db, uid, wid, by_date: restr.update(by_date))
     monkeypatch.setattr(
         pf_mod, 'evict_plan_caches_on_event_windows_change',
-        lambda db, uid: evicted.append(uid),
-    )
+        lambda db, uid: evicted.append(uid))
     with app.test_request_context(
-        '/event-windows/5/volume-days', method='POST',
-        data={'vol_2026-07-03': '25', 'vol_2026-07-04': '100', 'vol_2026-07-05': '50'},
+        '/event-windows/5/restrictions', method='POST',
+        data={'pct_2026-07-03': '25', 'lock_2026-07-03': 'home',
+              'pct_2026-07-04': '100', 'indoor_2026-07-04': '1'},
     ):
-        response = pf_mod.save_event_window_volume_days(5)
-    assert captured['by_date'] == {
-        date(2026, 7, 3): 0.25, date(2026, 7, 4): 1.0, date(2026, 7, 5): 0.5,
-    }
+        response = pf_mod.save_event_window_per_day(5)
+    assert vol == {date(2026, 7, 3): 0.25, date(2026, 7, 4): 1.0}
+    assert restr[date(2026, 7, 3)] == {'locale_lock': 'home', 'indoor_only': False}
+    assert restr[date(2026, 7, 4)] == {'locale_lock': None, 'indoor_only': True}
     assert conn.commits == 1 and evicted == [7]
     assert response.status_code == 302
 
 
-def test_volume_days_rejects_non_reduced_window(monkeypatch):
-    """The editor is reduced_volume-only — a no_training window is bounced."""
-    app = _make_profile_app()
+def test_per_day_editor_accepts_any_window_type(monkeypatch):
+    """The consolidated editor applies to ANY window type — a no_training window
+    renders (no longer bounced as reduced_volume-only)."""
+    import os
+    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
+    os.environ.setdefault('DATABASE_URL', '')
+    import flask
+    import app as _appmod
     import routes.profile as pf_mod
     win = _reduced_window(override_type='no_training', volume_pct=None)
-    monkeypatch.setattr(pf_mod, 'get_db', lambda: object())
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    monkeypatch.setattr(pf_mod, 'get_db',
+                        lambda: _FakeLocaleConnForPerDay(rows))
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
     monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
-    with app.test_request_context('/event-windows/5/volume-days'):
-        response = pf_mod.event_window_volume_days(5)
-    assert response.status_code == 302  # redirected, not rendered
+    with _appmod.app.test_request_context('/profile/event-windows/5/restrictions'):
+        flask.g.current_user_row = {'id': 7, 'username': 'o', 'display_name': 'O'}
+        html = pf_mod.event_window_per_day(5)
+    assert 'name="pct_2026-07-03"' in html  # rendered, not redirected
 
 
 # ─── location picker display names (#1049) + pre-select new locale (#1058) ────
@@ -289,80 +326,80 @@ def test_event_windows_collapses_past_windows(monkeypatch):
     assert '2020-01-01' in past_section  # elapsed window collapsed away
 
 
-def test_add_form_hint_promotes_per_day_levels(monkeypatch):
-    """#889 — the reduced-volume hint points at the per-day editor instead of the
-    old "add a separate one-day window" misdirection."""
+def test_add_form_hint_promotes_per_day_settings(monkeypatch):
+    """#237/#889 — the reduced-volume hint points at the consolidated per-day
+    editor instead of the old "add a separate one-day window" misdirection."""
     rows = [{'locale': 'home', 'locale_name': 'Home'}]
     html = _render_event_windows(monkeypatch, rows=rows, url='/profile/event-windows')
-    assert 'Set per-day levels' in html
+    assert 'per-day settings' in html
     assert 'add it as its own one-day window' not in html
 
 
-def test_multiday_reduced_window_shows_per_day_cta(monkeypatch):
-    """#889 — a multi-day reduced-volume window surfaces a prominent link to the
-    per-day editor so the per-day schedule is actually discoverable."""
+def test_multiday_window_shows_inline_per_day_expander(monkeypatch):
+    """#237/#889 — a multi-day window expands IN PLACE to the consolidated per-day
+    editor (a visibly-styled <details> toggle), not a buried invisible link."""
     multiday = _reduced_window(start='2030-01-01', end='2030-01-05')
     rows = [{'locale': 'home', 'locale_name': 'Home'}]
     html = _render_event_windows(
         monkeypatch, rows=rows, url='/profile/event-windows', windows=[multiday])
-    assert 'Set per-day levels' in html
-    assert 'volume-days' in html  # links to event_window_volume_days
+    assert 'pf-perday-toggle' in html               # the high-contrast toggle
+    assert 'Per-day settings' in html
+    assert 'name="pct_2030-01-01"' in html          # inline per-day controls
+    assert 'name="lock_2030-01-01"' in html
+    assert 'name="indoor_2030-01-01"' in html
+    assert '/restrictions' in html                  # posts to the per-day save
+    assert 'Per-day rules' not in html              # old invisible link gone
+    assert 'volume-days' not in html                # old volume editor gone
 
 
-# ─── per-date restrictions editor (#237) ─────────────────────────────────────
-
-
-def test_event_window_restrictions_editor_renders(monkeypatch):
-    """#237 — the per-date restrictions editor renders a locale-lock, minutes cap,
-    and indoor-only control per covered date."""
-    import os
-    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
-    os.environ.setdefault('DATABASE_URL', '')
-    import flask
-    import app as _appmod
-    import routes.profile as pf_mod
-    win = _reduced_window(start='2026-07-03', end='2026-07-04',
-                          restrictions_by_date={})
+def test_singleday_window_has_no_per_day_expander(monkeypatch):
+    """A single-day window has nothing per-day to set — no inline expander."""
+    single = _reduced_window(start='2030-01-01', end='2030-01-01')
     rows = [{'locale': 'home', 'locale_name': 'Home'}]
-    monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
-    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
-    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
-    with _appmod.app.test_request_context('/profile/event-windows/5/restrictions'):
-        flask.g.current_user_row = {'id': 7, 'username': 'o', 'display_name': 'O'}
-        html = pf_mod.event_window_restrictions(5)
-    assert 'name="lock_2026-07-03"' in html
-    assert 'name="mins_2026-07-03"' in html
-    assert 'name="indoor_2026-07-03"' in html
-    assert 'name="lock_2026-07-04"' in html  # one control set per covered day
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows', windows=[single])
+    assert 'pf-perday-toggle' not in html
 
 
-def test_event_window_restrictions_post_builds_map(monkeypatch):
-    """#237 — the POST collects per-date locale-lock / minutes / indoor into the
-    {date: spec} map and writes via the repo, then evicts the synthesis."""
-    from datetime import date
+# ─── add-route guided create-flow redirect (#237/#889) ───────────────────────
+
+
+def test_add_multiday_window_redirects_to_per_day_editor(monkeypatch):
+    """A successful MULTI-day add lands the athlete in the per-day editor for the
+    new window id (the guided create-flow)."""
     app = _make_profile_app()
     conn = _FakeConn()
     import routes.profile as pf_mod
-    win = _reduced_window(start='2026-07-03', end='2026-07-04',
-                          restrictions_by_date={})
-    captured, evicted = {}, []
     monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
-    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
+    monkeypatch.setattr(pf_mod, 'add_event_window', lambda db, uid, **kw: 42)
     monkeypatch.setattr(
-        pf_mod, 'update_event_window_restrictions_by_date',
-        lambda db, uid, wid, by_date: captured.update({'by_date': by_date}))
-    monkeypatch.setattr(
-        pf_mod, 'evict_plan_caches_on_event_windows_change',
-        lambda db, uid: evicted.append(uid))
+        pf_mod, 'evict_plan_caches_on_event_windows_change', lambda db, uid: None)
     with app.test_request_context(
-        '/event-windows/5/restrictions', method='POST',
-        data={'lock_2026-07-03': 'home', 'mins_2026-07-03': '60',
-              'indoor_2026-07-04': '1'},
+        '/event-windows/add', method='POST',
+        data={'start_date': '2026-07-03', 'end_date': '2026-07-07',
+              'override_type': 'no_training'},
     ):
-        resp = pf_mod.save_event_window_restrictions(5)
-    bd = captured['by_date']
-    assert bd[date(2026, 7, 3)]['locale_lock'] == 'home'
-    assert bd[date(2026, 7, 3)]['max_total_minutes'] == '60'
-    assert bd[date(2026, 7, 4)]['indoor_only'] is True
-    assert evicted == [7] and resp.status_code == 302
+        resp = pf_mod.add_event_window_route()
+    assert resp.status_code == 302
+    assert '/event-windows/42/restrictions' in resp.headers['Location']
+
+
+def test_add_singleday_window_does_not_redirect_to_per_day_editor(monkeypatch):
+    """A single-day add keeps the plain windows-list redirect (nothing per-day)."""
+    app = _make_profile_app()
+    conn = _FakeConn()
+    import routes.profile as pf_mod
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'add_event_window', lambda db, uid, **kw: 43)
+    monkeypatch.setattr(
+        pf_mod, 'evict_plan_caches_on_event_windows_change', lambda db, uid: None)
+    with app.test_request_context(
+        '/event-windows/add', method='POST',
+        data={'start_date': '2026-07-03', 'end_date': '',
+              'override_type': 'no_training'},
+    ):
+        resp = pf_mod.add_event_window_route()
+    assert resp.status_code == 302
+    assert '/restrictions' not in resp.headers['Location']
