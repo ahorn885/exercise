@@ -127,13 +127,14 @@ def _mk_inputs(
     )
 
 
-def _fake_l2c(pool_by_discipline=None):
-    """A minimal stand-in for a `Layer2CPayload` that `_extract_pool_by_discipline`
-    can read (it only touches `.exercises_resolved[*].{tier,discipline_ids,
-    exercise_id,priority_per_discipline}`): one tier-1 High exercise per
-    (discipline, exercise_id) in `pool_by_discipline`. Empty → no exercises → the
-    away cascade gets an empty destination pool. Used to stub the per-segment 2C
-    re-resolve build (#884 slice 6) in away-overlay tests."""
+def _fake_l2c(pool_by_discipline=None, toggle_flags=None):
+    """A minimal stand-in for a `Layer2CPayload` for the away-overlay tests. The
+    away 2C re-resolve reads `.exercises_resolved[*].{tier,discipline_ids,
+    exercise_id,priority_per_discipline}` (the strength pool, #884 slice 6 PR-1)
+    and `.coaching_flags[*].{flag_type,discipline_name,discipline_id,metadata}`
+    (the away toggle-off flags, PR-2). `pool_by_discipline` → one tier-1 High
+    exercise per (discipline, exercise_id); `toggle_flags` → a list of
+    (discipline_name, gear_label) rendered as `toggle_off_for_discipline` flags."""
     exs = [
         SimpleNamespace(
             tier=1, discipline_ids=[d_id], exercise_id=ex_id,
@@ -142,7 +143,14 @@ def _fake_l2c(pool_by_discipline=None):
         for d_id, ex_ids in (pool_by_discipline or {}).items()
         for ex_id in ex_ids
     ]
-    return SimpleNamespace(exercises_resolved=exs)
+    flags = [
+        SimpleNamespace(
+            flag_type="toggle_off_for_discipline", discipline_name=disc,
+            discipline_id=disc, metadata={"toggle_name": gear},
+        )
+        for disc, gear in (toggle_flags or [])
+    ]
+    return SimpleNamespace(exercises_resolved=exs, coaching_flags=flags)
 
 
 def _fake_cone():
@@ -433,7 +441,7 @@ class TestAwayWindows:
     away feasibility for the grid (counts-follow-away, §4.1)."""
 
     def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip,
-               gear_locales=None, away_pool=None):
+               gear_locales=None, away_pool=None, away_flags=None):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
         monkeypatch.setattr(
@@ -441,14 +449,15 @@ class TestAwayWindows:
         )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
         # #884 slice 6 — the away branch builds a destination 2C payload; stub it
-        # (and the locale-equipment read it needs) so the cascade gets `away_pool`.
+        # (and the locale-equipment read it needs) so the cascade gets `away_pool`
+        # and the overlay gets `away_flags` (PR-2 toggle-off flags).
         # Defaults to the home pool (a real destination 2C is never empty —
         # bodyweight strength always resolves), so away strength substitution keeps
         # working unless a test overrides to assert home-vs-destination divergence.
         pool = fi.pool_by_discipline if away_pool is None else away_pool
         monkeypatch.setattr(
             orch, "q_layer2c_equipment_mapper_payload",
-            lambda *a, **k: _fake_l2c(pool),
+            lambda *a, **k: _fake_l2c(pool, away_flags),
         )
         monkeypatch.setattr(
             orch.locations, "locale_effective_tags",
@@ -586,6 +595,26 @@ class TestAwayWindows:
             home_feasibility={},
         )
         assert recorded["pool"] == {"D-001": ["EX-AWAY"]}
+
+    def test_away_toggle_flags_populated_from_destination_2c(self, monkeypatch):
+        # #884 slice 6 PR-2 — the destination's toggle_off_for_discipline 2C flags
+        # land on the away segment as (discipline_name, gear_label) pairs.
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": set()},
+            equip_by_locale={"home": set()}, disciplines=["D-001"],
+            pool_by_discipline={"D-001": ["EX-1"]},
+        )
+        self._patch(
+            monkeypatch, fi, [self._away_win("hotel")],
+            cluster=["hotel"], terrain={"hotel": set()}, equip={"hotel": set()},
+            away_flags=[("Sport Climbing", "Climbing gear")],
+        )
+        segments, _ = _build_event_window_overlay(
+            None, 7, _fake_cone(),
+            plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility={},
+        )
+        assert segments[0].away_toggle_flags == (("Sport Climbing", "Climbing gear"),)
 
 
 class TestExtractPoolByDiscipline:
@@ -928,6 +957,24 @@ class TestOverlayRender:
             [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
         ))
         assert "baseline" not in text
+
+    def test_away_toggle_off_flags_render_in_overlay(self):
+        # #884 slice 6 PR-2 — the away toggle-off flags render the approved copy so
+        # the synthesizer doesn't program a destination-unavailable discipline.
+        res = TerrainResolution(
+            discipline_id="D-008", tier="strength", locale_id=None, note="x",
+        )
+        seg = EventWindowSegment(
+            date(2026, 6, 10), date(2026, 6, 12),
+            (EventWindowOverride("away", away_locale="hotel"),),
+            {"D-008": res}, away_feasibility={"D-008": res},
+            away_toggle_flags=(("Sport Climbing", "Climbing gear"),),
+        )
+        text = "\n".join(_format_event_window_overlay(
+            [seg], date(2026, 6, 1), date(2026, 6, 14), None, {},
+        ))
+        assert "At this destination you won't have: Sport Climbing (no Climbing gear on hand)" in text
+        assert "don't program these disciplines for these dates" in text
 
 
 # ─── hashing + cache-key regression ──────────────────────────────────────────

@@ -883,6 +883,13 @@ class EventWindowSegment:
     resolutions: dict[str, TerrainResolution]
     away_feasibility: dict[str, TerrainResolution] | None = None
     assumed_baseline_category: str | None = None
+    # #884 slice 6 (per-segment 2C re-resolve, PR-2) — the destination's
+    # `toggle_off_for_discipline` 2C flags as `(discipline_name, gear_label)`
+    # pairs: disciplines the athlete can't do at this away destination because the
+    # gear that unlocks them is neither brought nor kept there. Set only on `away`
+    # segments (None elsewhere); the overlay renders them so the synthesizer
+    # doesn't program those disciplines for these dates.
+    away_toggle_flags: tuple[tuple[str, str], ...] | None = None
     # Slice 6 (#593) — the segment's net VOLUME effect, computed from its active
     # volume overrides: 0.0 when any `no_training` covers it (day zeroed + dropped
     # from the placement pool), else the smallest `reduced_volume` fraction, else

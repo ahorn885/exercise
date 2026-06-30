@@ -947,6 +947,7 @@ def _build_event_window_overlay(
         away_ov = next((ov for ov in active if ov.override_type == "away"), None)
         away_feasibility: dict[str, TerrainResolution] | None = None
         assumed_baseline: str | None = None
+        away_toggle_flags: tuple[tuple[str, str], ...] | None = None
         _away_dbg = ""
         if away_ov is not None and away_ov.away_locale:
             # REPLACEMENT env (Slice 2): `away` wins over any co-active subtractive
@@ -1017,6 +1018,15 @@ def _build_event_window_overlay(
                 pool_override=away_pool,
             )
             away_feasibility = reduced
+            # #884 slice 6 PR-2 — the destination's toggle-off 2C flags as
+            # (discipline_name, gear_label) pairs: disciplines whose unlocking gear
+            # the athlete neither brought nor keeps at the destination. The overlay
+            # renders these so the synthesizer doesn't program them for these dates.
+            away_toggle_flags = tuple(
+                (f.discipline_name or f.discipline_id or "", f.metadata.get("toggle_name", ""))
+                for f in away_l2c.coaching_flags
+                if f.flag_type == "toggle_off_for_discipline"
+            ) or None
             # Rule #15 — the destination 2C inputs that drove the away strength
             # pool: away gear-toggle states + the per-discipline pool sizes. An
             # away day landing on an unexpected strength substitute is then
@@ -1093,6 +1103,7 @@ def _build_event_window_overlay(
                     seg_start, seg_end, active, changed,
                     away_feasibility=away_feasibility,
                     assumed_baseline_category=assumed_baseline,
+                    away_toggle_flags=away_toggle_flags,
                     volume_pct=seg_volume_pct,
                 )
             )

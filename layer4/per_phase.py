@@ -1655,6 +1655,18 @@ def _event_window_label(segment: "EventWindowSegment") -> str:
             f"{segment.assumed_baseline_category} baseline — log the gym's actual "
             f"equipment on arrival to refine the plan for this window.]"
         )
+    # #884 slice 6 PR-2: disciplines the athlete can't do at this away destination
+    # because the gear that unlocks them is neither brought nor kept there — tell
+    # the synthesizer not to program them for these dates (copy approved Andy
+    # 2026-06-30).
+    if segment.away_toggle_flags:
+        missing = ", ".join(
+            f"{disc} (no {gear} on hand)" for disc, gear in segment.away_toggle_flags
+        )
+        label += (
+            f" [At this destination you won't have: {missing}. Substitute per the "
+            f"feasibility lines below; don't program these disciplines for these dates.]"
+        )
     return label
 
 
