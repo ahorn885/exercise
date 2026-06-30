@@ -907,8 +907,8 @@ def _summarize_travel_constraint(db, user_id: int) -> str | None:
             what = f"{w.unavailable_locale or 'a locale'} unavailable"
         elif w.override_type == "away":
             what = f"training at {w.away_locale or 'an away location'}"
-            if w.brought_craft:
-                what += f" (brings {', '.join(w.brought_craft)})"
+            if w.brought_gear:
+                what += f" (brings {', '.join(w.brought_gear)})"
         else:
             what = w.override_type
         if w.notes:

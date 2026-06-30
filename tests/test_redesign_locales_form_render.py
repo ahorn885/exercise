@@ -240,9 +240,10 @@ def test_event_windows_capture_renders_away_create_link():
     # No draft on a fresh visit → date/notes fields render an empty value.
     assert 'value=""' in html
     # Slice 4 (WS-H #581): brought-gear (c) on the away window, fed from the
-    # unified gear registry. The form field stays `brought_craft` (the column
-    # rename rides 6c); #884 slice 6b generalized the catalog to all kinds.
-    assert 'name="brought_craft"' in html
+    # unified gear registry. #884 slice 6c-1 — the form field is now
+    # `brought_gear` (legacy-craft naming retired); 6b generalized the catalog to
+    # all kinds.
+    assert 'name="brought_gear"' in html
     assert 'Packraft' in html and 'Mountain bike' in html
     assert 'Climbing gear' in html and 'value="climbing_gear"' in html
     # Slice 5: the standing craft↔locale (b) capture moved to the per-locale edit
@@ -293,7 +294,7 @@ def test_event_windows_form_repopulates_from_draft():
                        'override_type': 'away',
                        'unavailable_locale': '',
                        'away_locale': 'belfast-hotel',
-                       'brought_craft': ['packraft'],
+                       'brought_gear': ['packraft'],
                        'notes': 'work travel',
                    })
     assert 'value="2026-07-03"' in html and 'value="2026-07-05"' in html
@@ -301,7 +302,7 @@ def test_event_windows_form_repopulates_from_draft():
     # The away constraint + destination come back selected.
     assert '<option value="away" selected>' in html
     assert '<option value="belfast-hotel" selected>belfast-hotel</option>' in html
-    # The brought-craft checkbox comes back checked.
+    # The brought-gear checkbox comes back checked.
     assert 'value="packraft" checked>' in html
     assert 'style="' not in html and 'onclick=' not in html
 
@@ -319,7 +320,7 @@ def _ew(start, end, override_type, **kw):
         override_type=override_type,
         unavailable_locale=kw.get('unavailable_locale'),
         away_locale=kw.get('away_locale'),
-        brought_craft=kw.get('brought_craft', ()),
+        brought_gear=kw.get('brought_gear', ()),
         volume_pct=kw.get('volume_pct'),
         volume_by_date=kw.get('volume_by_date', {}),
         notes=kw.get('notes', ''),
@@ -334,7 +335,7 @@ def test_plan_create_form_lists_event_windows_for_review():
                    today_iso='2026-06-14',
                    event_windows=[
                        _ew('2026-07-03', '2026-07-05', 'away',
-                           away_locale='belfast-hotel', brought_craft=('packraft',)),
+                           away_locale='belfast-hotel', brought_gear=('packraft',)),
                        _ew('2026-08-12', '2026-08-12', 'indoor_only'),
                    ])
     assert 'app-shell' in html
@@ -390,7 +391,7 @@ def test_event_windows_back_link_label_reflects_origin():
 
 def test_event_window_draft_stash_is_consumed_once():
     """#608 item 2: the in-progress add-window form is stashed in the session
-    (preserving the multi-valued brought-craft list) and popped exactly once on
+    (preserving the multi-valued brought-gear list) and popped exactly once on
     the next render, so a stale draft can't leak onto a later unrelated visit —
     same single-consume contract as the locale flow's return_to stash."""
     from werkzeug.datastructures import MultiDict
@@ -398,7 +399,7 @@ def test_event_window_draft_stash_is_consumed_once():
     form = MultiDict([
         ('start_date', '2026-07-03'), ('end_date', '2026-07-05'),
         ('override_type', 'away'), ('away_locale', 'belfast-hotel'),
-        ('brought_craft', 'packraft'), ('brought_craft', 'kayak'),
+        ('brought_gear', 'packraft'), ('brought_gear', 'kayak'),
         ('notes', '  work travel  '),
     ])
     with _appmod.app.test_request_context('/'):
@@ -407,7 +408,7 @@ def test_event_window_draft_stash_is_consumed_once():
         assert draft['start_date'] == '2026-07-03'
         assert draft['override_type'] == 'away'
         assert draft['away_locale'] == 'belfast-hotel'
-        assert draft['brought_craft'] == ['packraft', 'kayak']
+        assert draft['brought_gear'] == ['packraft', 'kayak']
         assert draft['notes'] == 'work travel'      # stripped
         # Consumed once — a second pop in the same session returns nothing.
         assert _pop_event_window_draft() is None
