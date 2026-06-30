@@ -249,9 +249,10 @@ def add_event_window(
     brought_gear: list[str] | None = None,
     volume_pct: float | None = None,
     notes: str = "",
-) -> None:
-    """Validate + insert one event window. Raises `EventWindowError` (writing
-    nothing) on any constraint failure. Caller commits."""
+) -> int:
+    """Validate + insert one event window, returning the new window's id. Raises
+    `EventWindowError` (writing nothing) on any constraint failure. Caller
+    commits."""
     if override_type not in OVERRIDE_TYPES:
         raise EventWindowError(
             f"unknown override_type {override_type!r}; expected one of "
@@ -309,16 +310,17 @@ def add_event_window(
         # stray value so the stored row can't imply something it doesn't mean.
         unavail = None
         away = None
-    db.execute(
+    row = db.execute(
         "INSERT INTO athlete_event_windows "
         "  (user_id, start_date, end_date, override_type, unavailable_locale, "
         "   away_locale, brought_gear, volume_pct, notes) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         (
             user_id, start_date, end_date, override_type, unavail, away,
             (",".join(crafts) or None), vol_pct, notes,
         ),
-    )
+    ).fetchone()
+    return row["id"]
 
 
 def delete_event_window(db, user_id: int, window_id: int) -> None:
@@ -333,22 +335,19 @@ def delete_event_window(db, user_id: int, window_id: int) -> None:
 def update_event_window_volume_by_date(
     db, user_id: int, window_id: int, by_date: dict[date, float] | None
 ) -> None:
-    """Set (or clear) the per-DATE volume schedule on a `reduced_volume` window
-    (#889). `by_date` maps a covered date → retained fraction (0 < pct <= 1.0;
-    1.0 = a normal, unreduced day — how 'only this one day is reduced' inside a
-    longer window is expressed). An empty/None map clears the schedule, so the
-    window-wide `volume_pct` again applies to every covered day.
+    """Set (or clear) the per-DATE volume schedule on ANY window type (#889;
+    consolidated per-day editor). `by_date` maps a covered date → retained
+    fraction (0 < pct <= 1.0; 1.0 = a normal, unreduced day — how 'only this one
+    day is reduced' inside a longer window is expressed). An empty/None map clears
+    the schedule. Per-day % now layers onto any window type (the plan-gen overlay
+    expands a sub-1.0 day into a one-day volume override regardless of
+    override_type), so the prior reduced_volume-only gate is removed.
 
     Raises `EventWindowError` (writing nothing) when the window isn't the
-    athlete's, isn't a `reduced_volume` window, or a date/level is out of range.
-    Caller commits."""
+    athlete's or a date/level is out of range. Caller commits."""
     win = load_event_window(db, user_id, window_id)
     if win is None:
         raise EventWindowError("event window not found")
-    if win.override_type != "reduced_volume":
-        raise EventWindowError(
-            "per-day volume levels apply only to a reduced_volume window"
-        )
     clean: dict[str, float] = {}
     for d, pct in (by_date or {}).items():
         dd = d if isinstance(d, date) else _as_date(d)

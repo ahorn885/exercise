@@ -1,0 +1,33 @@
+{# Shared per-day controls for the consolidated event-window per-day editor.
+   Rendered both by the standalone page (event_window_per_day.html, used by the
+   guided create-flow) and by the inline expander in the windows list, so the two
+   surfaces stay byte-identical. Per covered DATE: a % select (25/50/75/100, 100 =
+   a normal, unreduced day) writing volume_by_date, a lock-to-location dropdown
+   and an indoor-only checkbox writing restrictions_by_date. No minutes cap, no
+   excluded disciplines (disciplines are governed by equipment availability). The
+   input names are pct_<iso> / lock_<iso> / indoor_<iso>. #}
+{% macro per_day_grid(days, locales, window_id) %}
+<div class="pf-grid pf-windows">
+  {% for day in days %}
+  <fieldset class="field field-wide pf-dayrule">
+    <span class="lbl mono">{{ day.iso }}</span>
+    <div class="pf-grid pf-windows">
+      <label class="field"><span class="lbl">% of a normal day</span>
+        <select name="pct_{{ day.iso }}" class="form-control form-control-sm">
+          {% for c in (25, 50, 75, 100) %}
+          <option value="{{ c }}"{{ ' selected' if c == day.pct else '' }}>{{ c }}%{% if c == 100 %} — normal{% endif %}</option>
+          {% endfor %}
+        </select></label>
+      <label class="field"><span class="lbl">Lock to location</span>
+        <select name="lock_{{ day.iso }}" class="form-control form-control-sm">
+          <option value="">— any —</option>
+          {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == day.lock else '' }}>{{ loc.label }}</option>{% endfor %}
+        </select></label>
+      <label class="form-check field">
+        <input class="form-check-input" type="checkbox" name="indoor_{{ day.iso }}" value="1"{{ ' checked' if day.indoor else '' }}>
+        <span class="form-check-label">Indoor only (no outdoor terrain)</span></label>
+    </div>
+  </fieldset>
+  {% endfor %}
+</div>
+{% endmacro %}

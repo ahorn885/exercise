@@ -390,6 +390,7 @@ def _ew(start, end, override_type, **kw):
         brought_gear=kw.get('brought_gear', ()),
         volume_pct=kw.get('volume_pct'),
         volume_by_date=kw.get('volume_by_date', {}),
+        restrictions_by_date=kw.get('restrictions_by_date', {}),
         notes=kw.get('notes', ''),
     )
 
@@ -541,17 +542,17 @@ def test_event_windows_form_makes_single_day_ergonomic(monkeypatch):
     end_input_end = end_field.index('>')
     assert 'required' not in end_field[:end_input_end]
     assert 'leave blank for a single day' in html
-    # #889 — the hint promotes the per-day editor; the old "add a one-day window"
-    # misdirection (which masked per-day levels) is gone.
-    assert 'Set per-day levels' in html
+    # #237/#889 — the hint promotes the consolidated per-day editor; the old "add a
+    # one-day window" misdirection (which masked per-day levels) is gone.
+    assert 'per-day settings' in html
     assert 'one-day window' not in html
     assert 'style="' not in html and 'onclick=' not in html  # strict CSP
 
 
-def test_event_windows_list_links_to_per_day_editor_for_multiday_reduced():
-    """#889 — a MULTI-day reduced_volume window offers a prominent 'Set per-day
-    levels' action to the per-date editor; a single-day one doesn't (nothing to
-    spread)."""
+def test_event_windows_list_expands_per_day_editor_for_multiday():
+    """#237/#889 — a MULTI-day window expands IN PLACE to the consolidated per-day
+    editor via a visibly-styled <details> toggle (posting to the per-day save
+    route); a single-day one has no expander (nothing to spread)."""
     html = _render('profile/event_windows.html',
                    windows=[
                        _ew('2026-07-03', '2026-07-07', 'reduced_volume',
@@ -559,34 +560,47 @@ def test_event_windows_list_links_to_per_day_editor_for_multiday_reduced():
                        _ew('2026-07-10', '2026-07-10', 'reduced_volume',
                            id=2, volume_pct=0.5),
                    ],
+                   windows_days={1: [{'iso': '2026-07-03', 'pct': 50,
+                                      'lock': None, 'indoor': False}]},
                    locales=[{'slug': 'home', 'label': 'home'}],
                    locale_names={'home': 'home'},
                    override_types=('reduced_volume', 'no_training'),
                    craft_catalog={}, return_to=None, return_to_label=None,
                    draft=None)
-    assert 'Set per-day levels' in html
-    assert '/event-windows/1/volume-days' in html
-    assert '/event-windows/2/volume-days' not in html  # single day → no link
+    assert 'pf-perday-toggle' in html               # high-contrast toggle
+    assert 'Per-day settings' in html
+    assert '/event-windows/1/restrictions' in html  # posts to the per-day save
+    assert 'name="pct_2026-07-03"' in html          # inline per-day controls
+    assert '/event-windows/2/restrictions' not in html  # single day → no expander
+    assert 'volume-days' not in html                # old volume editor gone
+    assert 'Per-day rules' not in html              # old invisible link gone
+    assert 'style="' not in html and 'onclick=' not in html  # strict CSP
 
 
-def test_event_window_volume_days_editor_renders_per_day_selects():
-    """#889 — the per-day editor renders one percent select per covered date,
-    pre-selected from the schedule, offering 100% as a normal (unreduced) day."""
+def test_event_window_per_day_editor_renders_pct_lock_indoor():
+    """#237/#889 — the consolidated per-day editor renders, per covered date, a %
+    select (100 = a normal day), a lock-to-location dropdown, and an indoor-only
+    checkbox — pre-selected from the schedule. No minutes, no disciplines."""
     win = _ew('2026-07-03', '2026-07-05', 'reduced_volume', id=3, volume_pct=0.5)
     days = [
-        {'iso': '2026-07-03', 'pct': 25},
-        {'iso': '2026-07-04', 'pct': 100},
-        {'iso': '2026-07-05', 'pct': 50},
+        {'iso': '2026-07-03', 'pct': 25, 'lock': 'home', 'indoor': False},
+        {'iso': '2026-07-04', 'pct': 100, 'lock': None, 'indoor': True},
+        {'iso': '2026-07-05', 'pct': 50, 'lock': None, 'indoor': False},
     ]
-    html = _render('profile/event_window_volume_days.html',
-                   window=win, days=days, default_pct=50,
-                   choices=(25, 50, 75, 100), return_to=None)
+    html = _render('profile/event_window_per_day.html',
+                   window=win, days=days,
+                   locales=[{'slug': 'home', 'label': 'Home'}], return_to=None)
     assert 'app-shell' in html
-    assert 'name="vol_2026-07-03"' in html
-    assert 'name="vol_2026-07-04"' in html
-    assert 'name="vol_2026-07-05"' in html
-    # Saved levels round-trip; 100% is labelled the normal day.
+    assert 'name="pct_2026-07-03"' in html
+    assert 'name="lock_2026-07-03"' in html
+    assert 'name="indoor_2026-07-03"' in html
+    assert 'name="pct_2026-07-05"' in html
+    # Saved levels round-trip; 100% is labelled the normal day; lock pre-selected.
     assert '<option value="25" selected>25%</option>' in html
     assert '<option value="100" selected>100% — normal</option>' in html
-    assert 'action="/profile/event-windows/3/volume-days"' in html
+    assert '<option value="home" selected>Home</option>' in html
+    # Dropped controls are absent.
+    assert 'name="mins_' not in html
+    assert 'name="excl_' not in html
+    assert 'action="/profile/event-windows/3/restrictions"' in html
     assert 'style="' not in html and 'onclick=' not in html  # strict CSP

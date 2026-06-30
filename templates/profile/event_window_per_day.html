@@ -1,0 +1,46 @@
+{# Consolidated per-day editor (merges the #889 per-day-volume + #237 per-date
+   restrictions editors). Per covered DATE of an event window: a % of a normal day
+   (writes volume_by_date), a lock-to-location dropdown + an indoor-only flag
+   (write restrictions_by_date). No minutes cap, no excluded disciplines.
+   Reached as the standalone page from the guided create-flow (after adding a
+   multi-day window); the windows list expands the same controls inline. Strict
+   CSP forbids a JS-built grid, so the per-day rows are server-rendered. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% from 'profile/_event_window_per_day_grid.html' import per_day_grid %}
+{% block title %}Per-day settings — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> ·
+  <a href="{{ url_for('profile.event_windows') }}">Event windows</a> ·
+  <b>Per-day settings</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Training · event windows</p>
+    <h1 class="page-title">Per-day settings.</h1>
+    <p class="page-sub">This window runs
+      <b class="mono">{{ window.start_date.isoformat() }} → {{ window.end_date.isoformat() }}</b>.
+      For <b>each</b> day set how light it is (<b>100%</b> = a normal, unreduced day),
+      lock training to one of your locations, and/or force indoor-only — the plan
+      honors them on that day.</p>
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card card-pad">
+    <p class="eyebrow">● Day-by-day settings</p>
+    <form method="post"
+          action="{{ url_for('profile.save_event_window_per_day', window_id=window.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      {{ per_day_grid(days, locales, window.id) }}
+      <div class="pf-save">
+        <span class="pf-saved mono">100% = a normal day (no reduction) · each setting applies only to its own day</span>
+        <button type="submit" class="btn btn-primary">Save per-day settings</button>
+      </div>
+    </form>
+  </div>
+
+  <p class="acct-hint"><a href="{{ url_for('profile.event_windows', return_to=return_to or none) }}">← Back to event windows</a></p>
+</div>
+{% endblock %}
