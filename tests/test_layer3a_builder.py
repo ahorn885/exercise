@@ -43,7 +43,6 @@ from layer4.context import (
     DailyWellnessRecord,
     DisciplineWeightRecord,
     InjuryRecord,
-    Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
     Layer1HealthStatus,
@@ -138,7 +137,6 @@ def _make_layer1(
             work_stress_level="moderate",
         ),
         network=Layer1Network(),
-        disclosures=Layer1Disclosures(),
     )
 
 

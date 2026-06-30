@@ -76,12 +76,13 @@ class _FakeConn:
 
 
 def _queue_empty_athlete(conn: _FakeConn) -> None:
-    """Queue 26 empty responses — every SELECT returns no rows.
+    """Queue empty responses — every SELECT returns no rows.
     (D-73 Phase 5.2 Bucket C (l) added the `_load_skill_toggle_states`
     query; the dead `food_allergies` load was later removed; 2E-6 §I.1 added
     the `_load_supplements` query; #690 added the `_load_coaching_preferences`
-    query; #884 slice 3b added the `_load_owned_gear` query.)"""
-    for _ in range(27):
+    query; #884 slice 3b added the `_load_owned_gear` query; #304 Part B
+    removed the `_load_disclosures` query from the payload build.)"""
+    for _ in range(26):
         conn.queue_response()
 
 
@@ -169,7 +170,6 @@ class TestEmptyUser:
         assert payload.event_goal.plan_duration_weeks_no_event is None
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
-        assert payload.disclosures.acknowledgments == []
 
     def test_26_selects_issued(self):
         conn = _FakeConn()
@@ -181,8 +181,10 @@ class TestEmptyUser:
         # the retired `_load_target_race_event_id` SELECT for the event-windows
         # `travel_constraint` SELECT — net-zero, 25. #690 added the
         # `_load_coaching_preferences` SELECT — 26. #884 slice 3b added the
-        # `_load_owned_gear` SELECT — 27.
-        assert len(conn.calls) == 27
+        # `_load_owned_gear` SELECT — 27. #304 Part B dropped the
+        # `_load_disclosures` SELECT (disclosures removed from the payload;
+        # the `disclosure_acknowledgments` table is retained) — 26.
+        assert len(conn.calls) == 26
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -367,13 +369,7 @@ class TestFullyPopulated:
             {"id": 600, "link_id": 500, "consent_scope": "activity_summaries",
              "granted_at": datetime(2026, 5, 1, 10, 0, 0), "revoked_at": None},
         ])
-        # 22) disclosure_acknowledgments
-        conn.queue_response(rows=[
-            {"disclosure_id": "account_creation_ack", "version_id": "v1",
-             "scopes_granted": None, "delivery_method": "in_app",
-             "acknowledged_at": datetime(2026, 4, 1, 9, 0, 0)},
-        ])
-        # 23) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
+        # 22) athlete_skill_toggles — D-73 Phase 5.2 Bucket C (l). Andy
         # has the climbing_roped + whitewater_handling toggles enabled
         # (PGE 2026 athlete with real AR experience), the rest implicit
         # OFF since they're not in the athlete_skill_toggles table.
@@ -577,13 +573,17 @@ class TestFullyPopulated:
         assert len(payload.network.linked_partner_consents) == 1
         assert payload.network.linked_partner_consents[0].consent_scope == "activity_summaries"
 
-    def test_disclosures(self):
+    def test_disclosures_dropped_from_payload(self):
+        # #304 Part B — `disclosures` was loaded-but-unused; removed from the
+        # Layer-1 payload (the `disclosure_acknowledgments` table is retained as
+        # the legal consent record, still written by the route handlers). The
+        # payload model no longer carries the field and the build issues no
+        # disclosures SELECT.
         conn = _FakeConn()
         self._queue_andy(conn)
         payload = build_layer1_payload(conn, user_id=1)
-        assert len(payload.disclosures.acknowledgments) == 1
-        assert payload.disclosures.acknowledgments[0].disclosure_id == "account_creation_ack"
-        assert payload.disclosures.acknowledgments[0].delivery_method == "in_app"
+        assert not hasattr(payload, "disclosures")
+        assert "disclosures" not in payload.model_dump()
 
     def test_layer4_dict_compatibility(self):
         """`.model_dump()` produces a dict where Layer 4's `.get(...)`
@@ -672,10 +672,11 @@ class TestOwnedGear:
         (absent from dict) at the consumer if it cares. Layer 2B/2C
         currently treat both as OFF so the semantics collapse."""
         conn = _FakeConn()
-        # Queue 22 empty + 1 populated for the toggle SELECT (#23 of 25 after
-        # #304 retired the target-race SELECT); supplements + event-windows
-        # SELECTs trail it and read empty.
-        for _ in range(22):
+        # Queue 21 empty + 1 populated for the toggle SELECT (#22 of 26 after
+        # #304 Part B removed the disclosure_acknowledgments SELECT from the
+        # payload build); gear + supplements + event-windows SELECTs trail it
+        # and read empty.
+        for _ in range(21):
             conn.queue_response()
         conn.queue_response(rows=[
             {"toggle_name": "climbing_roped", "enabled": False},

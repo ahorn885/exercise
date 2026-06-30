@@ -41,7 +41,6 @@ from layer4.context import (
     CurrentState,
     DataDensity,
     DisciplineWeightRecord,
-    Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
     Layer1HealthStatus,
@@ -98,7 +97,6 @@ def _make_layer1(primary_sport: str = "Adventure Racing") -> Layer1Payload:
         event_goal=Layer1EventGoal(),
         lifestyle=Layer1Lifestyle(sleep_baseline_hours=7.5),
         network=Layer1Network(),
-        disclosures=Layer1Disclosures(),
     )
 
 

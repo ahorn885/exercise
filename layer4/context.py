@@ -7,7 +7,7 @@ See:
   Phase 1.2A/B/C). Section-keyed sub-models (`Layer1Identity`,
   `Layer1HealthStatus`, `Layer1TrainingHistory`, `Layer1DisciplineBaselines`,
   `Layer1StrengthBenchmarks`, `Layer1Performance`,
-  `Layer1EventGoal`, `Layer1Lifestyle`, `Layer1Network`, `Layer1Disclosures`)
+  `Layer1EventGoal`, `Layer1Lifestyle`, `Layer1Network`)
   carry the full §A-§L view. Layer 4 entry points keep `dict[str, Any]`
   per `Upstream_Implementation_Plan_v1.md` §6 item 3 + §8 mitigation
   ("keep dict[str, Any] for v1; promote in v2"). The orchestrator
@@ -1929,19 +1929,6 @@ class Layer1Network(_Base):
     linked_partner_consents: list[LinkedPartnerConsent] = Field(default_factory=list)
 
 
-# §A.1 — disclosures (latest-ack per disclosure_id)
-class DisclosureAck(_Base):
-    disclosure_id: str
-    version_id: str | None = None
-    scopes_granted: str | None = None
-    delivery_method: Literal["in_app", "email"]
-    acknowledged_at: datetime
-
-
-class Layer1Disclosures(_Base):
-    acknowledgments: list[DisclosureAck] = Field(default_factory=list)
-
-
 # ─── Layer1Payload (top-level) ───────────────────────────────────────────────
 
 
@@ -2009,4 +1996,3 @@ class Layer1Payload(_Base):
     event_goal: Layer1EventGoal
     lifestyle: Layer1Lifestyle
     network: Layer1Network
-    disclosures: Layer1Disclosures
