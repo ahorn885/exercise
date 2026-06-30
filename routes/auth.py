@@ -396,30 +396,20 @@ def register():
             (username, email, _hash_password(password), display_name)
         )
         new_user_id = cur.lastrowid
-        # Commit the new user NOW, before any best-effort follow-up work. The
-        # current_rx seed below used to share this transaction: when it raised,
-        # Postgres aborted the whole transaction, so the later commit() silently
-        # rolled the user row back — registration "succeeded" (redirect +
-        # session set) yet no account existed, and the next login failed. A
-        # standalone commit makes the account durable regardless of what the
-        # seed does.
+        # Commit the new user NOW, before any best-effort follow-up work, so the
+        # account is durable regardless of what follows.
+        #
+        # The current_rx placeholder seed used to live here, sharing this
+        # transaction: when it raised (e.g. the layer0 strength catalog not yet
+        # built on this DB) Postgres aborted the transaction and the commit
+        # silently rolled the user back — signup "succeeded" yet no account
+        # existed. The seed is now done lazily on first /rx view
+        # (routes.rx._ensure_current_rx_seeded), off the signup critical path
+        # entirely: it only pre-fills "needs setup" rows, real rows are created
+        # on demand when a session is logged, and deferring it means it runs
+        # whenever the catalog is actually available rather than at the one
+        # moment an account is being created.
         db.commit()
-        # Seed the new user's current_rx so /rx isn't blank on their first
-        # session, from the canonical layer0 strength catalog (Slice C). De-duped
-        # by EX-id + idempotent via UNIQUE(user_id, exercise) — safe to re-run
-        # from the next cold-start init pass too. Runs in its OWN transaction:
-        # on failure we roll back just the seed (leaving the committed user
-        # intact and the connection clean for the statements below) rather than
-        # poisoning the account write.
-        try:
-            from init_db import (_seed_current_rx_for_user,
-                                 _layer0_strength_seed_rows)
-            _seed_current_rx_for_user(db, new_user_id,
-                                      _layer0_strength_seed_rows(db))
-            db.commit()
-        except Exception:
-            # Don't block registration on a seed failure — init will retry.
-            db.rollback()
 
         if invite:
             # Invite acceptance proves control of the email (the link was
