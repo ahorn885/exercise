@@ -28,6 +28,36 @@ def _unit_pref(db, uid):
     return normalize_unit_preference(profile.get('unit_preference'))
 
 
+def _ensure_current_rx_seeded(db, uid):
+    """Lazily seed the athlete's `current_rx` placeholder rows on first /rx view.
+
+    Moved off the signup path (auth.register / provider sign-in) so account
+    creation never depends on the layer0 strength catalog being present on this
+    DB. The seed only pre-fills "Needs initial setup" rows so the list isn't
+    blank — real capacity rows are created on demand when a session is logged
+    (rx_engine.apply_session_outcome), so this is a pure display convenience.
+
+    Best-effort and idempotent:
+    - skips entirely once the athlete has any current_rx row (the common case),
+      so it costs one indexed existence check per /rx load after the first;
+    - runs in its own transaction and rolls back (never 500s the page) if the
+      layer0 catalog isn't available yet — and because it only fires while the
+      athlete still has zero rows, the next /rx visit simply retries until the
+      catalog is there.
+    """
+    try:
+        if db.execute(
+            'SELECT 1 FROM current_rx WHERE user_id = ? LIMIT 1', (uid,)
+        ).fetchone():
+            return
+        from init_db import _seed_current_rx_for_user, _layer0_strength_seed_rows
+        _seed_current_rx_for_user(db, uid, _layer0_strength_seed_rows(db))
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — seed is best-effort, must not break /rx
+        db.rollback()
+        print(f'rx: lazy current_rx seed skipped for user_id={uid}: {e}')
+
+
 def _decorate_entry(entry, unit_pref):
     row = dict(entry)
     for col in ('current_weight', 'next_weight', 'weight_increment'):
@@ -49,6 +79,10 @@ def _decorate_entry(entry, unit_pref):
 def list_entries():
     db = get_db()
     uid = current_user_id()
+    # Pre-fill the placeholder exercise list on first view (best-effort; see
+    # _ensure_current_rx_seeded). Seeding lazily here keeps it off the signup
+    # path and lets it run once the layer0 catalog is available.
+    _ensure_current_rx_seeded(db, uid)
     pattern = request.args.get('pattern', '')
     status = request.args.get('status', '')
     locale_filter = request.args.get('locale', '')

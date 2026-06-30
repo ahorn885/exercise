@@ -216,15 +216,6 @@ def create_signin_user(
          email_verified if account_email else False),
     ).fetchone()['id']
 
-    # Seed current_rx so /rx isn't blank (mirrors auth.register). Don't block
-    # account creation on a seed failure — init_db retries.
-    try:
-        from init_db import _seed_current_rx_for_user
-        is_pg = bool(os.environ.get('DATABASE_URL'))
-        _seed_current_rx_for_user(db, user_id, is_postgres=is_pg)
-    except Exception:
-        pass
-
     db.execute(
         'INSERT INTO provider_identity '
         '(user_id, provider, provider_user_id, email_at_link, last_login_at) '
@@ -232,4 +223,9 @@ def create_signin_user(
         (user_id, provider, str(provider_user_id), email),
     )
     db.commit()
+    # current_rx is seeded lazily on first /rx view
+    # (routes.rx._ensure_current_rx_seeded), not here — the same deferral
+    # auth.register uses. Keeps account creation off any dependency on the
+    # layer0 catalog being present; the placeholder rows are a display
+    # convenience anyway (real rows are created when a session is logged).
     return user_id, username
