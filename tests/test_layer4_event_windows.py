@@ -587,6 +587,18 @@ class TestAwayCraft:
         )
         assert got == ["mountain_bike"]
 
+    def test_brought_toggle_gear_passed_as_owned_crafts(self, monkeypatch):
+        # #884 slice 6b / design §17 — climbing gear brought to an away window
+        # flows into the away segment's owned_crafts (group_kind 'climb' is in
+        # _CRAFT_ALIAS_GROUP_KINDS), so the climbing discipline resolves feasible
+        # at the destination for that segment only. The brought-picker
+        # generalization is what makes this capturable.
+        got = self._captured_owned_crafts(
+            monkeypatch, [self._away_win("belfast", ("climbing_gear",))],
+            cluster=["belfast"],
+        )
+        assert got == ["climbing_gear"]
+
     def test_brought_and_standing_union_deduped_and_sorted(self, monkeypatch):
         got = self._captured_owned_crafts(
             monkeypatch, [self._away_win("cabin", ("packraft",))], cluster=["cabin"],
@@ -996,6 +1008,19 @@ class TestRepo:
         )
         # index 6 = brought_craft CSV, emitted in BIKE+PADDLE enum order.
         assert conn.calls[-1][1][6] == "road_bike,packraft"
+
+    def test_away_stores_brought_toggle_gear_in_registry_order(self):
+        # #884 slice 6b — brought gear generalized from craft-only to all kinds;
+        # a mixed bike + climbing brought set is accepted and emitted in registry
+        # (_GEAR_IDS) order — bikes precede the toggle kinds.
+        conn = _FakeConn()
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
+        add_event_window(
+            conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            override_type="away", away_locale="belfast",
+            brought_craft=["climbing_gear", "mountain_bike"],
+        )
+        assert conn.calls[-1][1][6] == "mountain_bike,climbing_gear"
 
     def test_away_rejects_unknown_brought_craft(self):
         conn = _FakeConn()

@@ -757,6 +757,20 @@ class TestEditLocaleSavesCraftInline:
         assert craft_calls == [(1, 'cabin', ['kayak'])]
         assert not evicted, 'unchanged craft set must not evict the plan caches'
 
+    def test_post_replaces_full_cross_kind_set(self, monkeypatch):
+        # #884 slice 6b — the generalized standing picker is ONE form that posts
+        # the full owned-here set across ALL kinds, so a mixed craft+ski save
+        # forwards the whole cross-kind set to the replace-all. This is what keeps
+        # the slice-5 §6.1 replace-all trap shut: because the form never submits a
+        # partial (craft-only) set, `replace_gear_locale`'s DELETE-then-INSERT
+        # can't silently wipe other-kind gear stationed here.
+        craft_calls, evicted = self._post(
+            monkeypatch,
+            craft_slugs=['classic_xc_ski', 'mountain_bike'],
+            prior_crafts=['kayak'])
+        assert craft_calls == [(1, 'cabin', ['classic_xc_ski', 'mountain_bike'])]
+        assert evicted, 'plan caches must evict when the kept set changes'
+
 
 # ─── #446 — explicit privacy override (private/shared) ──────────────────────
 

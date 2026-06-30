@@ -45,9 +45,16 @@ def _form_ctx(**kw):
         is_deletable=False, display_address='',
         privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
         terrain_choices=_TERRAIN, active_terrain_ids={'trail'},
-        # WS-H Slice 5 — the relocated (b) craft↔locale capture.
-        craft_catalog={'cycling': [{'slug': 'mountain_bike', 'label': 'Mountain bike'}],
-                       'paddling': [{'slug': 'kayak', 'label': 'Kayak'}]},
+        # WS-H Slice 5 / #884 slice 6b — the relocated (b) gear↔locale capture,
+        # generalized from craft-only to the full unified registry (all kinds).
+        gear_registry=[
+            {'group_kind': 'bike', 'label': 'Bikes',
+             'rows': [{'gear_id': 'mountain_bike', 'label': 'Mountain bike'}]},
+            {'group_kind': 'paddle', 'label': 'Paddle craft',
+             'rows': [{'gear_id': 'kayak', 'label': 'Kayak'}]},
+            {'group_kind': 'ski', 'label': 'Skis & rollerskis',
+             'rows': [{'gear_id': 'classic_xc_ski', 'label': 'Classic XC skis'}]},
+        ],
         crafts_here=['kayak'],
     )
     base.update(kw)
@@ -98,25 +105,30 @@ def test_form_deletable_shows_delete():
     assert 'style="' not in html
 
 
-def test_form_renders_craft_kept_here():
-    """#953 — the (b) standing craft↔locale capture (WS-H #581 Slice 5) is now
+def test_form_renders_gear_kept_here():
+    """#953 — the (b) standing gear↔locale capture (WS-H #581 Slice 5) is now
     folded into the single equipment editor form: one Save covers equipment +
-    craft, no separate `save_locale_crafts` round-trip that bounced out. The
-    craft checkboxes render inside the main form, not a second one."""
+    gear, no separate `save_locale_crafts` round-trip that bounced out. The
+    gear checkboxes render inside the main form, not a second one. #884 slice 6b
+    generalizes the picker from craft-only to the full unified registry, so
+    ski/snow/climbing/alpine gear renders alongside bikes + paddle craft."""
     html = _render('locales/form.html', **_form_ctx())
-    assert 'Craft you keep here' in html
+    assert 'Gear you keep here' in html
     assert 'name="craft_slug"' in html
     assert 'Mountain bike' in html and 'Kayak' in html
+    # #884 slice 6b — non-craft kinds now render (the observable picker change).
+    assert 'Skis &amp; rollerskis' in html and 'Classic XC skis' in html
+    assert 'id="kept_classic_xc_ski"' in html
     assert 'id="kept_kayak"' in html               # crafts_here drives checked state
-    # The craft surface no longer posts to its own route — it shares the
+    # The gear surface no longer posts to its own route — it shares the
     # unified location save (#953).
     assert '/locales/home/crafts' not in html
     # Exactly one form carries the toggles + save (plus the separate delete
-    # form when deletable); there is no second craft-only save button.
-    assert 'Save craft kept here' not in html
-    # Hidden when no catalog (e.g. pre-Slice-5 callers) — guarded render.
-    bare = _render('locales/form.html', **_form_ctx(craft_catalog=None))
-    assert 'Craft you keep here' not in bare
+    # form when deletable); there is no second gear-only save button.
+    assert 'Save gear kept here' not in html
+    # Hidden when no registry (e.g. pre-Slice-5 callers) — guarded render.
+    bare = _render('locales/form.html', **_form_ctx(gear_registry=None))
+    assert 'Gear you keep here' not in bare
     assert 'style="' not in html and 'onclick=' not in html
 
 
@@ -193,15 +205,19 @@ def test_refresh_confirm_renders_diff():
 
 
 def test_event_windows_capture_renders_away_create_link():
-    catalog = {
-        'cycling': [{'slug': 'mountain_bike', 'label': 'Mountain bike'}],
-        'paddling': [{'slug': 'packraft', 'label': 'Packraft'}],
-    }
+    registry = [
+        {'group_kind': 'bike', 'label': 'Bikes',
+         'rows': [{'gear_id': 'mountain_bike', 'label': 'Mountain bike'}]},
+        {'group_kind': 'paddle', 'label': 'Paddle craft',
+         'rows': [{'gear_id': 'packraft', 'label': 'Packraft'}]},
+        {'group_kind': 'climb', 'label': 'Climbing',
+         'rows': [{'gear_id': 'climbing_gear', 'label': 'Climbing gear'}]},
+    ]
     html = _render('profile/event_windows.html',
                    windows=[],
                    locales=['home', 'belfast-hotel'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog=catalog)
+                   gear_registry=registry)
     assert 'app-shell' in html
     # 2a — pick-existing destination dropdown.
     assert 'name="away_locale"' in html
@@ -223,10 +239,12 @@ def test_event_windows_capture_renders_away_create_link():
     assert hidden_default < new_loc_submit
     # No draft on a fresh visit → date/notes fields render an empty value.
     assert 'value=""' in html
-    # Slice 4 (WS-H #581): brought-craft (c) on the away window, fed from the
-    # closed craft catalog.
+    # Slice 4 (WS-H #581): brought-gear (c) on the away window, fed from the
+    # unified gear registry. The form field stays `brought_craft` (the column
+    # rename rides 6c); #884 slice 6b generalized the catalog to all kinds.
     assert 'name="brought_craft"' in html
     assert 'Packraft' in html and 'Mountain bike' in html
+    assert 'Climbing gear' in html and 'value="climbing_gear"' in html
     # Slice 5: the standing craft↔locale (b) capture moved to the per-locale edit
     # page — this page now only links there, no in-page craft_slug form.
     assert 'name="craft_slug"' not in html
@@ -246,7 +264,7 @@ def test_event_windows_renders_plan_gen_round_trip_when_return_to_set():
                    windows=[],
                    locales=['home'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog={'cycling': [], 'paddling': []},
+                   gear_registry=[],
                    return_to='/plans/v2/new')
     assert 'Back to plan generation' in html
     assert 'href="/plans/v2/new"' in html
@@ -267,7 +285,8 @@ def test_event_windows_form_repopulates_from_draft():
                    windows=[],
                    locales=['home', 'belfast-hotel'],
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
-                   craft_catalog={'paddling': [{'slug': 'packraft', 'label': 'Packraft'}]},
+                   gear_registry=[{'group_kind': 'paddle', 'label': 'Paddle craft',
+                                   'rows': [{'gear_id': 'packraft', 'label': 'Packraft'}]}],
                    draft={
                        'start_date': '2026-07-03',
                        'end_date': '2026-07-05',
