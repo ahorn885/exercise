@@ -69,6 +69,16 @@ def _map_sport(sport_type: str) -> Sport:
     return _SPORT_MAP.get((sport_type or '').lower(), Sport.GENERIC)
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    """Best-effort numeric coercion. Bad/unparseable data (e.g. a stray
+    string from a manual edit or import) falls back to `default` instead of
+    aborting FIT generation for the whole workout."""
+    try:
+        return float(value) if value not in (None, '') else default
+    except (TypeError, ValueError):
+        return default
+
+
 def _zone_from_text(text: str, default: int = 3) -> int:
     """Return HR zone 1-5 inferred from description text."""
     for zone, pat in _ZONE_PATTERNS:
@@ -253,8 +263,8 @@ def generate_workout_fit(item: dict) -> bytes:
     """
     sport = _map_sport(item.get('sport_type', ''))
     name = (item.get('workout_name') or 'Workout')[:50]
-    duration_min = float(item.get('target_duration_min') or 0)
-    distance_mi = float(item.get('target_distance_mi') or 0)
+    duration_min = _to_float(item.get('target_duration_min'))
+    distance_mi = _to_float(item.get('target_distance_mi'))
     intensity = item.get('intensity') or 'moderate'
     description = item.get('description') or ''
 
@@ -298,14 +308,14 @@ def generate_activity_fit(entry: dict) -> bytes:
     Returns raw bytes — no side effects.
     """
     sport = _map_sport(entry.get('activity', ''))
-    duration_min = float(entry.get('duration_min') or 0)
+    duration_min = _to_float(entry.get('duration_min'))
     duration_s = int(duration_min * 60)   # total_elapsed_time / total_timer_time use seconds
-    distance_mi = float(entry.get('distance_mi') or 0)
+    distance_mi = _to_float(entry.get('distance_mi'))
     distance_m = distance_mi * 1609.344 if distance_mi else 0
 
     avg_speed_mph = entry.get('avg_speed')
     if avg_speed_mph:
-        avg_speed_ms = float(avg_speed_mph) * 0.44704  # m/s
+        avg_speed_ms = _to_float(avg_speed_mph) * 0.44704  # m/s
     elif duration_min and distance_mi:
         avg_speed_ms = distance_m / (duration_min * 60)
     else:
@@ -315,7 +325,7 @@ def generate_activity_fit(entry: dict) -> bytes:
     avg_power = entry.get('avg_power')
     calories = entry.get('calories')
     elev_gain_ft = entry.get('elev_gain_ft')
-    total_ascent_m = int(float(elev_gain_ft) * 0.3048) if elev_gain_ft else None
+    total_ascent_m = int(_to_float(elev_gain_ft) * 0.3048) if elev_gain_ft else None
 
     # start_time / timestamp fields use Unix milliseconds
     date_str = entry.get('date') or date.today().isoformat()
@@ -354,13 +364,13 @@ def generate_activity_fit(entry: dict) -> bytes:
     if distance_m:
         sess.total_distance = distance_m
     if avg_hr:
-        sess.avg_heart_rate = int(float(avg_hr))
+        sess.avg_heart_rate = int(_to_float(avg_hr))
     if avg_speed_ms:
         sess.avg_speed = avg_speed_ms
     if avg_power:
-        sess.avg_power = int(float(avg_power))
+        sess.avg_power = int(_to_float(avg_power))
     if calories:
-        sess.total_calories = int(float(calories))
+        sess.total_calories = int(_to_float(calories))
     if total_ascent_m:
         sess.total_ascent = total_ascent_m
     sess.event = Event.SESSION
@@ -375,13 +385,13 @@ def generate_activity_fit(entry: dict) -> bytes:
     if distance_m:
         lap.total_distance = distance_m
     if avg_hr:
-        lap.avg_heart_rate = int(float(avg_hr))
+        lap.avg_heart_rate = int(_to_float(avg_hr))
     if avg_speed_ms:
         lap.avg_speed = avg_speed_ms
     if avg_power:
-        lap.avg_power = int(float(avg_power))
+        lap.avg_power = int(_to_float(avg_power))
     if calories:
-        lap.total_calories = int(float(calories))
+        lap.total_calories = int(_to_float(calories))
     if total_ascent_m:
         lap.total_ascent = total_ascent_m
     lap.event = Event.LAP

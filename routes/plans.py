@@ -8,7 +8,7 @@ import io
 import re
 import zipfile
 
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, current_app
 from database import get_db
 from routes.auth import current_user_id
 from plan_naming import target_race_name, generated_plan_name
@@ -890,15 +890,32 @@ def download_plan_fits(plan_id):
     ).fetchall()
 
     buf = io.BytesIO()
+    skipped = []
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for item in items:
             try:
                 fit_bytes = generate_workout_fit(dict(item))
-            except Exception:
+            except Exception as e:
+                current_app.logger.error(
+                    'FIT generation failed for plan_item %s (%s): %s',
+                    item['id'], item['workout_name'], e,
+                )
+                skipped.append(f"{item['item_date']} {item['workout_name']}: {e}")
                 continue
             name = f"{item['item_date']}_{_safe_filename(item['workout_name'])}.fit"
             zf.writestr(name, fit_bytes)
+        if skipped:
+            zf.writestr(
+                '_errors.txt',
+                'The following workouts could not be converted to FIT files:\n\n'
+                + '\n'.join(skipped) + '\n',
+            )
 
+    if skipped:
+        flash(
+            f'{len(skipped)} workout(s) could not be converted and were skipped '
+            f'(see _errors.txt in the ZIP).', 'warning'
+        )
     zip_filename = f"{_safe_filename(plan['name'], 30)}_workouts.zip"
     return Response(
         buf.getvalue(),
