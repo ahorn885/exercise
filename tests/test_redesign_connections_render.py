@@ -27,6 +27,8 @@ _NO_ROW = object()  # explicit "fetchone() → None" (vs the default owner-row s
 
 
 class _Cursor:
+    lastrowid = 1
+
     def __init__(self, rows, one=None):
         self._rows = rows
         self._one = one
@@ -49,14 +51,20 @@ class _Conn:
         self._providers = providers
         self._activities = activities
         self._strength = list(strength)
+        self.calls = []
 
     def execute(self, sql, *a, **k):
+        self.calls.append((sql, a[0] if a else ()))
         s = ' '.join(sql.split())
         # Slice 2.2: ingesting a WHOOP CSV here now re-materializes canonical
         # wellness, which reads daily_wellness_metrics. No Garmin row in this
         # context → return an explicit None so materialize takes its no-data path
         # (the default fetchone stub is an owner row, which it would misread).
         if 'FROM daily_wellness_metrics' in s:
+            return _Cursor([], one=_NO_ROW)
+        # The bulk-import dedup check (_already_imported) — no prior import in
+        # this fixture, so it must read as a miss (not the default owner stub).
+        if 'SELECT id FROM cardio_log WHERE' in s or 'SELECT id FROM training_log WHERE' in s:
             return _Cursor([], one=_NO_ROW)
         # The Files list reads the deduped canonical_cardio_feed (#196 Slice 4b),
         # not raw cardio_log — match either so the fake tracks the live surface.
@@ -113,6 +121,7 @@ def _client(monkeypatch, providers=(), activities=(), strength=()):
     c = _appmod.app.test_client()
     with c.session_transaction() as sess:
         sess['user_id'] = 1
+    c._test_conn = conn  # exposed so a test can inspect the SQL it issued
     return c
 
 
@@ -165,8 +174,10 @@ def test_sources_tab_unified_uploader_accepts_csv(monkeypatch):
     # The single drop zone advertises .csv alongside the activity formats.
     assert 'data-accept=".fit,.tcx,.gpx,.csv,.zip"' in html
     assert 'accept=".fit,.tcx,.gpx,.csv,.zip"' in html
-    # Copy names the WHOOP wellness export it now auto-routes.
-    assert 'physiological_cycles.csv' in html
+    # Copy is plain-language (#1055) — no raw filenames/provider internals,
+    # just the plain-English promise that detection is automatic.
+    assert 'physiological_cycles.csv' not in html
+    assert 'we figure out the rest' in html
     # The standalone whoop form/route is gone (folded into the one uploader).
     assert '/whoop/import' not in html
     assert 'name="csv_file"' not in html
@@ -201,6 +212,34 @@ def test_bulk_import_auto_routes_whoop_csv(monkeypatch):
     assert body['summary']['files'] == 1
     row = body['results'][0]
     assert row['status'] == 'imported' and 'WHOOP wellness' in row['detail']
+
+
+def test_bulk_import_auto_detects_source_per_file(monkeypatch):
+    # #1055 — there's no manual "Source" field any more; a GPX's own creator
+    # metadata is read to pick the provider-id column, with no form input.
+    client = _client(monkeypatch)
+    gpx = (
+        b'<?xml version="1.0" encoding="UTF-8"?>\n'
+        b'<gpx version="1.1" creator="StravaGPX" '
+        b'xmlns="http://www.topografix.com/GPX/1/1">\n'
+        b'<trk><name>Run</name><type>running</type><trkseg>\n'
+        b'<trkpt lat="44.90" lon="-93.00"><ele>250</ele>'
+        b'<time>2026-06-16T12:00:00Z</time></trkpt>\n'
+        b'<trkpt lat="44.91" lon="-93.00"><ele>255</ele>'
+        b'<time>2026-06-16T12:05:00Z</time></trkpt>\n'
+        b'</trkseg></trk></gpx>'
+    )
+    resp = client.post(
+        '/garmin/import/bulk',
+        data={'files': (io.BytesIO(gpx), 'run.gpx')},
+        content_type='multipart/form-data',
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body['ok'] is True
+    assert body['results'][0]['status'] == 'imported'
+    insert = next(s for s, _p in client._test_conn.calls if 'INTO cardio_log' in s)
+    assert 'strava_activity_id' in insert
 
 
 def test_bulk_import_rejects_non_whoop_csv(monkeypatch):

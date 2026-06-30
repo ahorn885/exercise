@@ -138,6 +138,45 @@ def _haversine_m(lat1, lon1, lat2, lon2) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+# ── provider auto-detection (#1055) ────────────────────────────────────────
+
+# Substring tokens checked against a TCX `<Author><Name>` / GPX `creator=`
+# string (lowercased) to guess which service exported the file, so the
+# athlete never has to pick a "Source" manually. Order doesn't matter — the
+# tokens don't overlap. Falls back to 'garmin' (matches the prior manual
+# default) when nothing recognizable is present.
+_PROVIDER_NAME_TOKENS = (
+    ('strava', 'strava'),
+    ('coros',  'coros'),
+    ('wahoo',  'wahoo'),
+    ('polar',  'polar'),
+    ('garmin', 'garmin'),
+)
+
+
+def detect_source(raw: bytes, fmt: str) -> str:
+    """Best-effort upload-source guess from a TCX/GPX file's own metadata.
+
+    TCX carries the exporting application's name in `<Author><Name>`; GPX
+    carries it in the root `creator=` attribute. Both are read by real
+    exporters (Garmin Connect, Polar Flow, COROS app, Wahoo Fitness, Strava),
+    so a substring match against known service names resolves the upload
+    `source` automatically (see routes.garmin._SOURCE_MAP)."""
+    try:
+        root = _parse_xml(raw)
+    except ValueError:
+        return 'garmin'
+    if fmt == 'gpx':
+        hint = root.get('creator') or ''
+    else:
+        hint = _text(root, 'Name') or ''
+    hint = hint.lower()
+    for token, source in _PROVIDER_NAME_TOKENS:
+        if token in hint:
+            return source
+    return 'garmin'
+
+
 # ── public entry points ──────────────────────────────────────────────────────
 
 def parse_tcx(raw: bytes) -> dict:

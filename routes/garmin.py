@@ -1091,12 +1091,13 @@ def import_bulk():
     emits the same normalized cardio dict, so the writer is shared. Activity
     files (cardio / strength) are logged and optionally auto-matched to a
     scheduled plan workout (pass match_plan=0 to log raw); FIT wellness /
-    daily-metric files (`_WELLNESS`, `_METRICS`, `_SLEEP_DATA`, `_HRV_STATUS`)
-    merge into wellness_log / daily_wellness_metrics; and a WHOOP
-    `physiological_cycles.csv` (#767 slice 5) is auto-detected by extension and
-    ingested into provider_raw_record (provider='whoop'). Idempotent
-    (content-hash dedup for activities, per-row dedup for wellness). Returns JSON
-    for the drag-and-drop UI."""
+    daily-metric files merge into wellness_log / daily_wellness_metrics; and a
+    WHOOP wellness export is auto-detected by extension and ingested into
+    provider_raw_record (provider='whoop'). The upload `source` (#1055) is
+    auto-detected per file too — a TCX/GPX's own exporter metadata names the
+    service it came from, so the athlete never has to say which app/device
+    a file is from. Idempotent (content-hash dedup for activities, per-row
+    dedup for wellness). Returns JSON for the drag-and-drop UI."""
     db = get_db()
     uid = current_user_id()
     files = request.files.getlist('files')
@@ -1104,21 +1105,10 @@ def import_bulk():
         return jsonify({'ok': False, 'error': 'No files in request.'}), 400
 
     from garmin_fit_parser import parse_fit, fit_file_meta
-    from tcx_gpx_parser import parse_tcx, parse_gpx
+    from tcx_gpx_parser import parse_tcx, parse_gpx, detect_source
     _ACTIVITY_PARSERS = {'fit': parse_fit, 'tcx': parse_tcx, 'gpx': parse_gpx}
 
     match_plan = request.form.get('match_plan', '1') not in ('0', 'false', 'no', 'off', '')
-
-    # #767 slice 1 — which service these files came from. Selects the provider-id
-    # column + dedup prefix; an unknown value falls back to Garmin (the default).
-    source = request.form.get('source', 'garmin').strip().lower()
-    if source not in _SOURCE_MAP:
-        source = 'garmin'
-    prefix = _source_prefix(source)
-    print(  # Rule #15 — chosen source + id-column for this import batch
-        f"[bulk-import] source={source} id_column={_source_column(source)} "
-        f"files={len(files)}"
-    )
 
     results = []
     summary = {'imported': 0, 'matched': 0, 'duplicates': 0, 'skipped': 0,
@@ -1134,7 +1124,7 @@ def import_bulk():
     _WELLNESS_KINDS = {'wellness', 'metrics', 'sleep_data', 'hrv_status'}
     wellness_pending = []      # (time_ms, name, raw, kind)
     wellness_csv_pending = []  # (name, raw) — WHOOP physiological_cycles.csv
-    activity_blobs = []        # (name, raw, ext)
+    activity_blobs = []        # (name, raw, ext, source)
     for name, raw, ext, err in _iter_activity_blobs(files):
         if err:
             results.append({'name': name, 'status': 'skipped', 'detail': err})
@@ -1151,7 +1141,10 @@ def import_bulk():
             if kind in _WELLNESS_KINDS:
                 wellness_pending.append((time_ms, name, raw, kind))
                 continue
-        activity_blobs.append((name, raw, ext))
+            source = 'garmin'  # .fit is Garmin's export path (see _ACTIVITY_EXTS)
+        else:
+            source = detect_source(raw, ext)  # #1055 — read off the file's own metadata
+        activity_blobs.append((name, raw, ext, source))
 
     # Wellness / daily-metric ingestion — chronological so same-day _METRICS
     # files UPSERT newest-last (the acute-load / RMR race, see _ingest_wellness_fit).
@@ -1167,10 +1160,10 @@ def import_bulk():
 
     # Phase 1 (activities) — hash, dedup, parse. Inserts are deferred so strength
     # sessions can be applied oldest-first (rx_engine is order-aware).
-    to_insert = []   # (name, gid, result)
+    to_insert = []   # (name, gid, result, source)
     seen = set()
-    for name, raw, ext in activity_blobs:
-        gid = _fit_dedup_id(raw, prefix)
+    for name, raw, ext, source in activity_blobs:
+        gid = _fit_dedup_id(raw, _source_prefix(source))
         if gid in seen or _already_imported(db, gid, source):
             results.append({'name': name, 'status': 'duplicate', 'detail': 'already imported'})
             summary['duplicates'] += 1
@@ -1192,14 +1185,15 @@ def import_bulk():
             summary['errors'] += 1
             continue
         seen.add(gid)
-        to_insert.append((name, gid, result))
+        print(f"[bulk-import] {name}: detected source={source}")  # Rule #15
+        to_insert.append((name, gid, result, source))
 
     to_insert.sort(key=lambda it: _activity_repr_date(it[2]))
 
     # Phase 2 — insert + match. Each file is its own transaction so one bad
     # file can't roll back the rest of the batch. Matching runs here (not in
     # phase 1) so each completed plan item is claimed once, in date order.
-    for name, gid, result in to_insert:
+    for name, gid, result, source in to_insert:
         try:
             r = _bulk_log_one(db, uid, gid, result, match_plan, source)
             if r is None:
