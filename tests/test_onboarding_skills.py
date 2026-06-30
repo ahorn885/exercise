@@ -336,6 +336,9 @@ class TestSkillsRoute:
         captured = {}
         monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
         monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 1)
+        # #884 slice 6c-2 — the gear picker reads the unified store's access map.
+        monkeypatch.setattr(
+            ob_mod, 'get_gear_access_map', lambda db, uid: {'road_bike': 'own'})
         monkeypatch.setattr(
             ob_mod, 'render_template',
             lambda tpl, **kw: captured.update({'tpl': tpl, **kw}) or 'OK',
@@ -352,13 +355,12 @@ class TestSkillsRoute:
         }]
         assert captured['current_states'] == {'climbing_roped': True}
         assert captured['post_step_skills_target'] == '/onboarding/schedule'
-        # 2c.2b — the craft picker shares this step.
-        # cycling_trainer dropped (WS-I, #586); tt_bike/sup/raft added (#622)
-        assert [c['slug'] for c in captured['craft_catalog']['cycling']] == [
-            'road_bike', 'mountain_bike', 'gravel_bike', 'tt_bike']
-        assert [c['slug'] for c in captured['craft_catalog']['paddling']] == [
-            'kayak', 'canoe', 'packraft', 'sup', 'raft']
-        assert captured['athlete_crafts'] == {'bike_types': [], 'paddle_crafts': []}
+        # 2c.2b + #884 slice 6c-2 — the unified gear registry (all kinds, not just
+        # craft) feeds the picker, so onboarding/profile capture identically.
+        group_kinds = [g['group_kind'] for g in captured['gear_registry']]
+        assert 'bike' in group_kinds and 'paddle' in group_kinds
+        assert any(k in group_kinds for k in ('ski', 'snow', 'climb', 'alpine'))
+        assert captured['gear_access'] == {'road_bike': 'own'}
 
     def test_post_upserts_state_and_evicts_layer1(self, monkeypatch):
         app = _make_onboarding_app()
@@ -386,10 +388,6 @@ class TestSkillsRoute:
         ):
             response = ob_mod.skills_save()
 
-        # Vocab SELECT + 2 craft upserts (2c.2b) + the #884 slice-4 gear sync
-        # (a scoped DELETE, no crafts submitted → no INSERT) + 2 skill upserts.
-        assert len(conn.calls) == 6
-        assert any('DELETE FROM athlete_gear' in sql for sql, _ in conn.calls)
         skill_upserts = [(sql, params) for sql, params in conn.calls
                          if 'INSERT INTO athlete_skill_toggles' in sql]
         assert len(skill_upserts) == 2
@@ -399,11 +397,18 @@ class TestSkillsRoute:
             'climbing_roped': True,
             'swim_open_water': False,
         }
-        # No craft checkboxes submitted → both families cleared (empty strings).
+        # No gear submitted → both craft families cleared (empty strings) + the
+        # unified store scoped-DELETEs both the craft kinds and the toggle kinds,
+        # with no INSERT (#884 slice 6c-2 — onboarding now writes both via the
+        # registry split).
         craft_upserts = [(sql, params) for sql, params in conn.calls
                          if 'discipline_baseline_' in sql]
         assert len(craft_upserts) == 2
         assert all(p[1] == '' for _, p in craft_upserts)
+        gear_deletes = [p for sql, p in conn.calls
+                        if sql.startswith('DELETE FROM athlete_gear')]
+        assert len(gear_deletes) == 2  # one craft-kinds, one toggle-kinds DELETE
+        assert not any('INSERT INTO athlete_gear' in sql for sql, _ in conn.calls)
         # Commit + Layer 1 eviction fired once.
         assert conn.commits == 1
         assert evictions == [42]
@@ -411,9 +416,9 @@ class TestSkillsRoute:
         assert response.status_code == 302
         assert '/onboarding/schedule' in response.location
 
-    def test_post_empty_vocab_still_persists_crafts_and_redirects(self, monkeypatch):
-        # Defensive path: skill vocab not applied → no skill rows. Crafts are a
-        # separate closed enum and still persist; the athlete advances.
+    def test_post_empty_vocab_still_persists_gear_and_redirects(self, monkeypatch):
+        # Defensive path: skill vocab not applied → no skill rows. Gear is a
+        # separate closed registry and still persists; the athlete advances.
         app = _make_onboarding_app()
         conn = _FakeConn()
         conn.queue_response(rows=[])  # empty vocab
@@ -427,12 +432,9 @@ class TestSkillsRoute:
         )
 
         with app.test_request_context('/onboarding/skills', method='POST',
-                                      data={'bike_types': 'mountain_bike'}):
+                                      data={'gear__mountain_bike': 'own'}):
             response = ob_mod.skills_save()
 
-        # Vocab SELECT + 2 craft upserts (no skill upsert — empty vocab) + the
-        # #884 slice-4 gear sync (scoped DELETE + one INSERT for mountain_bike).
-        assert len(conn.calls) == 5
         craft_upserts = [(sql, params) for sql, params in conn.calls
                          if 'discipline_baseline_' in sql]
         assert len(craft_upserts) == 2
@@ -444,6 +446,29 @@ class TestSkillsRoute:
         assert gear_inserts == [(42, 'mountain_bike', 'bike', 'own')]
         assert conn.commits == 1
         assert evictions == [42]
+        assert response.status_code == 302
+        assert '/onboarding/schedule' in response.location
+
+    def test_post_captures_gear_toggle_kinds(self, monkeypatch):
+        # #884 slice 6c-2 — the parity win: onboarding now captures the
+        # discipline-unlocking gear toggles (ski/snow/climb/alpine), not just
+        # bike/paddle craft. A climbing-gear own → an athlete_gear INSERT.
+        app = _make_onboarding_app()
+        conn = _FakeConn()
+        conn.queue_response(rows=[])  # empty vocab
+        import routes.onboarding as ob_mod
+        monkeypatch.setattr(ob_mod, 'get_db', lambda: conn)
+        monkeypatch.setattr(ob_mod, 'current_user_id', lambda: 42)
+        monkeypatch.setattr(
+            ob_mod, 'evict_layer1_on_skill_toggle_change', lambda db, uid: None)
+
+        with app.test_request_context('/onboarding/skills', method='POST',
+                                      data={'gear__climbing_gear': 'own'}):
+            response = ob_mod.skills_save()
+
+        gear_inserts = [p for sql, p in conn.calls
+                        if 'INSERT INTO athlete_gear' in sql]
+        assert (42, 'climbing_gear', 'climb', 'own') in gear_inserts
         assert response.status_code == 302
         assert '/onboarding/schedule' in response.location
 
@@ -459,9 +484,9 @@ class TestSkillsRoute:
 
         with app.test_request_context(
             '/onboarding/skills', method='POST',
-            # submitted out of enum order → stored in enum order.
-            data={'bike_types': ['gravel_bike', 'road_bike'],
-                  'paddle_crafts': ['packraft']},
+            # the registry parse emits in _GEAR_IDS order → stored in enum order.
+            data={'gear__gravel_bike': 'own', 'gear__road_bike': 'own',
+                  'gear__packraft': 'own'},
         ):
             ob_mod.skills_save()
 
@@ -470,7 +495,11 @@ class TestSkillsRoute:
         assert craft['cycling'] == (42, 'road_bike,gravel_bike')
         assert craft['paddling'] == (42, 'packraft')
 
-    def test_post_invalid_craft_bounces_to_skills(self, monkeypatch):
+    def test_post_unknown_gear_field_ignored(self, monkeypatch):
+        # #884 slice 6c-2 — `parse_gear_registry_form` keeps only registry
+        # gear_ids, so a malformed POST with an off-registry id is silently
+        # dropped (no write for it) and the athlete still advances — the unified
+        # surface validates at parse time, not by bouncing.
         app = _make_onboarding_app()
         conn = _FakeConn()
         conn.queue_response(rows=[])  # vocab
@@ -483,13 +512,13 @@ class TestSkillsRoute:
             lambda db, uid: evictions.append(uid))
 
         with app.test_request_context('/onboarding/skills', method='POST',
-                                      data={'bike_types': 'tandem'}):
+                                      data={'gear__tandem': 'own'}):
             response = ob_mod.skills_save()
 
-        # Validation rejects before any write/commit/eviction.
-        assert conn.commits == 0
-        assert evictions == []
-        assert all('INSERT' not in sql for sql, _ in conn.calls)
-        # Bounced back to the skills step, not advanced.
+        # The unknown id never reaches athlete_gear; the save still completes.
+        assert not any("tandem" in str(p) for _, p in conn.calls)
+        assert not any('INSERT INTO athlete_gear' in sql for sql, _ in conn.calls)
+        assert conn.commits == 1
+        assert evictions == [42]
         assert response.status_code == 302
-        assert '/onboarding/skills' in response.location
+        assert '/onboarding/schedule' in response.location
