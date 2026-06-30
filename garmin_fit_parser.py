@@ -19,7 +19,7 @@ SPORT_MAP = {
     'gravel_cycling': 'Gravel Cycling',
     'indoor_cycling': 'Indoor Bike Trainer',
     'hiking': 'Hiking',
-    'walking': 'Hiking',
+    'walking': 'Walking',
     'swimming': 'Swimming Pool',
     'open_water_swimming': 'Swimming Open',
     'yoga': 'Yoga',

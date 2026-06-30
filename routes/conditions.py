@@ -28,7 +28,7 @@ def cron_refresh_conditions():
 
 WIND_DIRS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'Calm', 'Variable']
 CONDITION_ACTIVITIES = [
-    'Running', 'Treadmill', 'Trail Running', 'Hiking', 'Stair Climbing',
+    'Running', 'Treadmill', 'Trail Running', 'Walking', 'Hiking', 'Stair Climbing',
     'Road Cycling', 'Mountain Biking', 'Gravel Cycling', 'Indoor Bike Trainer',
     'Kayaking', 'Pack Rafting', 'Kayak Ergometer', 'Rowing Ergometer',
     'Swimming Pool', 'Swimming Open', 'Yoga', 'Strength Training', 'Other',

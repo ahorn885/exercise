@@ -8,7 +8,7 @@ from routes.auth import current_user_id
 bp = Blueprint('cardio', __name__)
 
 ACTIVITIES = [
-    'Running', 'Treadmill', 'Trail Running', 'Hiking', 'Stair Climbing',
+    'Running', 'Treadmill', 'Trail Running', 'Walking', 'Hiking', 'Stair Climbing',
     'Road Cycling', 'Mountain Biking', 'Gravel Cycling', 'Indoor Bike Trainer',
     'Kayaking', 'Pack Rafting', 'Kayak Ergometer', 'Rowing Ergometer',
     'Swimming Pool', 'Swimming Open', 'Yoga'
