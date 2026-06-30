@@ -903,7 +903,7 @@ def _build_event_window_overlay(
             w.override_type,
             w.unavailable_locale,
             w.away_locale,
-            brought_craft=tuple(w.brought_craft),
+            brought_gear=tuple(w.brought_gear),
             volume_pct=w.volume_pct,
         )
         if w.override_type == "reduced_volume" and w.volume_by_date:
@@ -946,9 +946,9 @@ def _build_event_window_overlay(
             # _CRAFT_ALIAS_GROUP_KINDS — same filter `_collect_athlete_crafts`
             # applies at home), so swim/other gear can't leak into owned_crafts.
             # Empty union → byte-identical to the Slice-2a owned_crafts=[] path.
-            # (Brought stays the brought_craft (c) field — craft slugs ARE gear_ids;
-            # the brought-gear picker generalizes in slice 6.)
-            brought = set(away_ov.brought_craft)
+            # (Brought is the brought_gear (c) field — gear_ids of any kind; the
+            # brought-gear picker generalized in slice 6b, storage cut in 6c-1.)
+            brought = set(away_ov.brought_gear)
             standing = {
                 g for loc in away_cluster for g in gear_locale_map.get(loc, ())
             }
