@@ -231,12 +231,16 @@ RESIDENTIAL_CATEGORIES = frozenset({'home_gym', 'other_residence'})
 
 
 def _category_default_private(category) -> bool:
-    """The category-derived privacy default (Track 1 §6). Residential
-    categories default private; everything else defaults shareable. A
-    categoryless locale (legacy enum slug / un-categorized manual entry)
-    falls back to the residential default — matching `_create_gym_profile`,
-    where `category or 'home_gym'` keeps the NOT-NULL column populated."""
-    return (category or 'home_gym') in RESIDENTIAL_CATEGORIES
+    """The category-derived privacy default (Track 1 §6). Only the explicit
+    residential categories default private; everything else — including a
+    categoryless locale (Mapbox returned no gym/fitness hint, a legacy enum
+    slug, an un-categorized manual entry) — defaults shareable. #1064: a
+    missing category must NOT force private. The athlete's opt-out toggle is
+    the only other way a shareable-category locale becomes private, and
+    `_create_gym_profile` now fills the NOT-NULL column with the non-residential
+    `'uncategorized'` sentinel (not `'home_gym'`) so this stays consistent on a
+    later re-read."""
+    return category in RESIDENTIAL_CATEGORIES
 
 
 def _resolve_private(category, sharing_opt_out) -> bool:
@@ -501,9 +505,14 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
     # gym_profiles.category is NOT NULL. A categoryless locale (a legacy enum
-    # slug like 'home', or a manual entry the athlete didn't categorize)
-    # defaults to a private residential profile.
-    category = category or 'home_gym'
+    # slug like 'home', or a Mapbox/manual entry with no detected category)
+    # fills the column with the non-residential `'uncategorized'` sentinel.
+    # #1064: the old `'home_gym'` fallback was residential, so every locale
+    # Mapbox didn't tag as a gym was force-privatized even with the toggle off.
+    # `'uncategorized'` keeps the column populated AND stays shareable, so a
+    # later own-edit (which recomputes `private` from the stored category) does
+    # not silently re-privatize the locale.
+    category = category or 'uncategorized'
     mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
     opt_out = bool(sharing_opt_out) or bool(
         _row_has(profile_row, 'sharing_opt_out') and profile_row['sharing_opt_out']
