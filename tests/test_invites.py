@@ -1,8 +1,9 @@
-"""Admin invite flow tests (#274).
+"""Admin invite flow tests (#274, #272 SMS/WhatsApp).
 
-Covers the auth-layer invite token helpers (issue/lookup gate), the admin
-create/revoke routes, and register's invite-acceptance path (bypasses closed
-registration, locks the email, marks the invite used + the email verified).
+Covers the auth-layer invite token helpers (issue/lookup gate, one per
+channel), the admin create/revoke routes, and register's invite-acceptance
+path (bypasses closed registration, locks the email when present, marks the
+invite used + the email verified when there is one to verify).
 Fake DBs throughout — no live PG.
 """
 
@@ -49,7 +50,7 @@ class _InviteHelperDB:
         if s.startswith('INSERT INTO user_invites'):
             self.inserted.append(params)
             return _Cur([])
-        if s.startswith('SELECT token, email, accepted_at, expires_at FROM user_invites'):
+        if s.startswith('SELECT token, email, phone, channel, accepted_at, expires_at FROM user_invites'):
             return _Cur([self.row] if self.row else [])
         raise AssertionError('unexpected SQL: ' + s)
 
@@ -61,15 +62,24 @@ class TestInviteHelpers:
     def test_issue_inserts_and_returns_token(self):
         from routes import auth
         db = _InviteHelperDB()
-        token = auth.issue_invite(db, 'new@b.test', created_by=1)
+        token = auth.issue_invite(db, email='new@b.test', channel='email', created_by=1)
         assert token and isinstance(token, str)
         ins = db.inserted[0]
-        assert ins[0] == token and ins[1] == 'new@b.test' and ins[2] == 1
+        assert ins[0] == token and ins[1] == 'new@b.test' and ins[2] is None
+        assert ins[3] == 'email' and ins[4] == 1
         assert db.committed == 1
+
+    def test_issue_phone_channel(self):
+        from routes import auth
+        db = _InviteHelperDB()
+        token = auth.issue_invite(db, phone='+15551234567', channel='sms', created_by=1)
+        ins = db.inserted[0]
+        assert ins[0] == token and ins[1] is None and ins[2] == '+15551234567'
+        assert ins[3] == 'sms' and ins[4] == 1
 
     def test_lookup_valid(self):
         from routes import auth
-        row = {'token': 'TOK', 'email': 'a@b.test',
+        row = {'token': 'TOK', 'email': 'a@b.test', 'phone': None, 'channel': 'email',
                'accepted_at': None, 'expires_at': _iso(timedelta(days=1))}
         assert auth.lookup_invite(_InviteHelperDB(row), 'TOK')['email'] == 'a@b.test'
 
@@ -83,14 +93,14 @@ class TestInviteHelpers:
 
     def test_lookup_none_when_accepted(self):
         from routes import auth
-        row = {'token': 'TOK', 'email': 'a@b.test',
+        row = {'token': 'TOK', 'email': 'a@b.test', 'phone': None, 'channel': 'email',
                'accepted_at': _iso(timedelta(hours=-1)),
                'expires_at': _iso(timedelta(days=1))}
         assert auth.lookup_invite(_InviteHelperDB(row), 'TOK') is None
 
     def test_lookup_none_when_expired(self):
         from routes import auth
-        row = {'token': 'TOK', 'email': 'a@b.test',
+        row = {'token': 'TOK', 'email': 'a@b.test', 'phone': None, 'channel': 'email',
                'accepted_at': None, 'expires_at': _iso(timedelta(days=-1))}
         assert auth.lookup_invite(_InviteHelperDB(row), 'TOK') is None
 
@@ -134,6 +144,21 @@ class TestAdminInvite:
         import routes.auth as auth
         monkeypatch.setattr(auth, 'send_invite_email',
                             lambda d, email, by: sent.update(email=email, by=by))
+        resp = app.test_client().post('/admin/invite', data={'channel': 'email', 'email': 'new@b.test'})
+        assert resp.status_code == 302
+        assert sent == {'email': 'new@b.test', 'by': 1}
+
+    def test_invite_defaults_to_email_channel(self, monkeypatch):
+        # No `channel` field posted (e.g. a stale cached form) — defaults to
+        # email, matching pre-#272 behavior.
+        app, admin = _admin_app()
+        sent = {}
+        db = _AdminDB(email_exists=False)
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: db)
+        import routes.auth as auth
+        monkeypatch.setattr(auth, 'send_invite_email',
+                            lambda d, email, by: sent.update(email=email, by=by))
         resp = app.test_client().post('/admin/invite', data={'email': 'new@b.test'})
         assert resp.status_code == 302
         assert sent == {'email': 'new@b.test', 'by': 1}
@@ -147,7 +172,7 @@ class TestAdminInvite:
         import routes.auth as auth
         monkeypatch.setattr(auth, 'send_invite_email',
                             lambda *a, **k: sent.setdefault('called', True))
-        resp = app.test_client().post('/admin/invite', data={'email': 'dupe@b.test'})
+        resp = app.test_client().post('/admin/invite', data={'channel': 'email', 'email': 'dupe@b.test'})
         assert resp.status_code == 302
         assert sent == {}                       # no invite sent
 
@@ -155,8 +180,80 @@ class TestAdminInvite:
         app, admin = _admin_app()
         monkeypatch.setattr(admin, 'current_user_id', lambda: 2)  # not admin
         monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
-        resp = app.test_client().post('/admin/invite', data={'email': 'x@b.test'})
+        resp = app.test_client().post('/admin/invite', data={'channel': 'email', 'email': 'x@b.test'})
         assert resp.status_code == 403
+
+    def test_invite_sms_sends_when_configured(self, monkeypatch):
+        app, admin = _admin_app()
+        sent = {}
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        monkeypatch.setattr(admin, 'sms_configured', lambda: True)
+        import routes.auth as auth
+        monkeypatch.setattr(auth, 'send_invite_sms',
+                            lambda d, phone, by: sent.update(phone=phone, by=by))
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'sms', 'phone': '+15551234567'})
+        assert resp.status_code == 302
+        assert sent == {'phone': '+15551234567', 'by': 1}
+
+    def test_invite_sms_blocked_when_unconfigured(self, monkeypatch):
+        app, admin = _admin_app()
+        sent = {}
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        monkeypatch.setattr(admin, 'sms_configured', lambda: False)
+        import routes.auth as auth
+        monkeypatch.setattr(auth, 'send_invite_sms',
+                            lambda *a, **k: sent.setdefault('called', True))
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'sms', 'phone': '+15551234567'})
+        assert resp.status_code == 302
+        assert sent == {}
+
+    def test_invite_whatsapp_sends_when_configured(self, monkeypatch):
+        app, admin = _admin_app()
+        sent = {}
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        monkeypatch.setattr(admin, 'whatsapp_configured', lambda: True)
+        import routes.auth as auth
+        monkeypatch.setattr(auth, 'send_invite_whatsapp',
+                            lambda d, phone, by: sent.update(phone=phone, by=by))
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'whatsapp', 'phone': '+15551234567'})
+        assert resp.status_code == 302
+        assert sent == {'phone': '+15551234567', 'by': 1}
+
+    def test_invite_whatsapp_blocked_when_unconfigured(self, monkeypatch):
+        app, admin = _admin_app()
+        sent = {}
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        monkeypatch.setattr(admin, 'whatsapp_configured', lambda: False)
+        import routes.auth as auth
+        monkeypatch.setattr(auth, 'send_invite_whatsapp',
+                            lambda *a, **k: sent.setdefault('called', True))
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'whatsapp', 'phone': '+15551234567'})
+        assert resp.status_code == 302
+        assert sent == {}
+
+    def test_invite_rejects_malformed_phone(self, monkeypatch):
+        app, admin = _admin_app()
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'sms', 'phone': 'not-a-phone'})
+        assert resp.status_code == 302
+
+    def test_invite_rejects_unknown_channel(self, monkeypatch):
+        app, admin = _admin_app()
+        monkeypatch.setattr(admin, 'current_user_id', lambda: 1)
+        monkeypatch.setattr(admin, 'get_db', lambda: _AdminDB())
+        resp = app.test_client().post('/admin/invite',
+                                       data={'channel': 'carrier-pigeon', 'email': 'x@b.test'})
+        assert resp.status_code == 302
 
     def test_revoke_deletes_pending(self, monkeypatch):
         app, admin = _admin_app()
@@ -183,7 +280,7 @@ class _RegisterDB:
         s = ' '.join(sql.split())
         if s.startswith('SELECT COUNT(*) AS n FROM users'):
             return _Cur([{'n': 1}])                     # not bootstrap
-        if s.startswith('SELECT token, email, accepted_at, expires_at FROM user_invites'):
+        if s.startswith('SELECT token, email, phone, channel, accepted_at, expires_at FROM user_invites'):
             return _Cur([self.invite_row] if self.invite_row else [])
         if s.startswith('SELECT 1 FROM users WHERE username'):
             return _Cur([])
@@ -234,7 +331,7 @@ class TestRegisterInvite:
     def test_invite_bypasses_closed_registration_and_verifies(self, monkeypatch):
         app, auth = _auth_app()
         monkeypatch.setenv('ALLOW_REGISTRATION', '0')   # registration is closed
-        row = {'token': 'TOK', 'email': 'invitee@b.test',
+        row = {'token': 'TOK', 'email': 'invitee@b.test', 'phone': None, 'channel': 'email',
                'accepted_at': None, 'expires_at': _iso(timedelta(days=1))}
         db = _RegisterDB(row)
         monkeypatch.setattr(auth, 'get_db', lambda: db)
@@ -267,3 +364,28 @@ class TestRegisterInvite:
                   'confirm': 'tr0ubad0ur-xy9q-kestrel'},
         )
         assert resp.status_code == 403
+
+    def test_phone_invite_bypasses_closed_registration_no_email_pin(self, monkeypatch):
+        # An SMS/WhatsApp invite (#272) has no email to pin — the athlete's
+        # posted email goes through untouched, same as organic signup, and
+        # email_verified is still set (no email at all is harmless to "verify").
+        app, auth = _auth_app()
+        monkeypatch.setenv('ALLOW_REGISTRATION', '0')
+        row = {'token': 'TOK', 'email': None, 'phone': '+15551234567', 'channel': 'sms',
+               'accepted_at': None, 'expires_at': _iso(timedelta(days=1))}
+        db = _RegisterDB(row)
+        monkeypatch.setattr(auth, 'get_db', lambda: db)
+        monkeypatch.setattr(auth, 'send_verification_email',
+                            lambda *a, **k: pytest.fail('should not send verify on invite'))
+
+        resp = app.test_client().post(
+            '/auth/register?invite=TOK',
+            data={'username': 'phoneinvitee', 'display_name': '',
+                  'email': 'me@b.test',
+                  'password': 'tr0ubad0ur-xy9q-kestrel',
+                  'confirm': 'tr0ubad0ur-xy9q-kestrel'},
+        )
+        assert resp.status_code == 302
+        assert db.inserted_user[1] == 'me@b.test'         # not pinned — athlete's own email used
+        assert db.verified == [(42,)]
+        assert db.accepted and db.accepted[0][2] == 'TOK'

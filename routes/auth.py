@@ -24,6 +24,7 @@ from database import get_db
 from email_helper import send_email, email_configured
 from email_templates import render_email, account_security_url, format_timestamp
 from routes import provider_identity as pi
+from sms_helper import send_sms, send_whatsapp
 
 PASSWORD_RESET_TTL_MIN = 30
 # Email-verification links live longer than reset links — there's no security
@@ -347,10 +348,13 @@ def register():
     db = get_db()
     is_bootstrap = _no_users(db)
     # A valid invite (#274) opens registration even when it's otherwise closed,
-    # and pins the email to the invited address.
+    # and pins the email to the invited address. An SMS/WhatsApp invite (#272)
+    # has a phone instead — invited_email stays None and the athlete enters
+    # their own email normally.
     invite = lookup_invite(db, request.values.get('invite'))
     invite_token = invite['token'] if invite else None
     invited_email = invite['email'] if invite else None
+    invited_phone = invite['phone'] if invite else None
     if not is_bootstrap and not _registration_open() and not invite:
         return ('Registration is closed.', 403)
 
@@ -388,6 +392,7 @@ def register():
                                    is_bootstrap=is_bootstrap,
                                    invite_token=invite_token,
                                    invited_email=invited_email,
+                                   invited_phone=invited_phone,
                                    signin_providers=pi.enabled_signin_providers())
 
         cur = db.execute(
@@ -450,6 +455,7 @@ def register():
                            is_bootstrap=is_bootstrap,
                            invite_token=invite_token,
                            invited_email=invited_email,
+                           invited_phone=invited_phone,
                            signin_providers=pi.enabled_signin_providers())
 
 
@@ -725,15 +731,17 @@ def resend_verification():
 
 # ── Admin invites ──────────────────────────────────────────────────────────
 
-def issue_invite(db, email: str, created_by: int) -> str:
-    """Create a single-use, time-limited invite token for `email`. Returns the
-    token; caller sends the link."""
+def issue_invite(db, *, email: str | None = None, phone: str | None = None,
+                  channel: str = 'email', created_by: int) -> str:
+    """Create a single-use, time-limited invite token delivered via `channel`
+    (#272 — 'email' | 'sms' | 'whatsapp'). Exactly one of `email`/`phone` is
+    set, matching `channel`. Returns the token; caller sends the link."""
     token = secrets.token_urlsafe(32)
     expires = datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS)
     db.execute(
-        'INSERT INTO user_invites (token, email, created_by, expires_at) '
-        'VALUES (?,?,?,?)',
-        (token, email, created_by, expires.isoformat(timespec='seconds')),
+        'INSERT INTO user_invites (token, email, phone, channel, created_by, expires_at) '
+        'VALUES (?,?,?,?,?,?)',
+        (token, email, phone, channel, created_by, expires.isoformat(timespec='seconds')),
     )
     db.commit()
     return token
@@ -745,7 +753,7 @@ def lookup_invite(db, token):
     if not token:
         return None
     row = db.execute(
-        'SELECT token, email, accepted_at, expires_at FROM user_invites '
+        'SELECT token, email, phone, channel, accepted_at, expires_at FROM user_invites '
         'WHERE token = ?', (token,)
     ).fetchone()
     if not row or row['accepted_at']:
@@ -761,11 +769,38 @@ def lookup_invite(db, token):
 def send_invite_email(db, email: str, created_by: int) -> str:
     """Issue an invite token and email the registration link. Returns the token
     (False-y send still logs the link via send_email's dev fallback)."""
-    token = issue_invite(db, email, created_by)
+    token = issue_invite(db, email=email, channel='email', created_by=created_by)
     invite_url = url_for('auth.register', invite=token, _external=True)
     _send_invite_email(email, invite_url)
-    print(f'[invite] issued to {email} by user={created_by}')  # Rule #15 — no token
+    print(f'[invite] issued via email to {email} by user={created_by}')  # Rule #15 — no token
     return token
+
+
+def send_invite_sms(db, phone: str, created_by: int) -> str:
+    """Issue an invite token and text the registration link via Twilio SMS
+    (#272). Returns the token (False-y send still logs the link via
+    sms_helper's dev fallback)."""
+    token = issue_invite(db, phone=phone, channel='sms', created_by=created_by)
+    invite_url = url_for('auth.register', invite=token, _external=True)
+    send_sms(phone, _invite_text(invite_url))
+    print(f'[invite] issued via sms to {phone} by user={created_by}')  # Rule #15 — no token
+    return token
+
+
+def send_invite_whatsapp(db, phone: str, created_by: int) -> str:
+    """Issue an invite token and message the registration link via Twilio
+    WhatsApp (#272). Returns the token (False-y send still logs the link via
+    sms_helper's dev fallback)."""
+    token = issue_invite(db, phone=phone, channel='whatsapp', created_by=created_by)
+    invite_url = url_for('auth.register', invite=token, _external=True)
+    send_whatsapp(phone, _invite_text(invite_url))
+    print(f'[invite] issued via whatsapp to {phone} by user={created_by}')  # Rule #15 — no token
+    return token
+
+
+def _invite_text(invite_url: str) -> str:
+    return (f"You're invited to AIDSTATION. Create your account: {invite_url} "
+            f'(expires in {INVITE_TTL_DAYS} days)')
 
 
 def _send_invite_email(to_address: str, invite_url: str) -> None:

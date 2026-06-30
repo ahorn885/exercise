@@ -6,6 +6,7 @@ same `_require_admin()` gate at the top of every handler.
 """
 import hmac
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from flask import (
@@ -16,6 +17,7 @@ from werkzeug.utils import secure_filename
 from database import get_db
 from plan_sessions_repo import load_plan_sessions_as_blocks, load_progress_blocks
 from routes.auth import current_user_id
+from sms_helper import sms_configured, whatsapp_configured
 from evidence_repo import (
     create_evidence_source,
     dismiss_curation_flag,
@@ -102,31 +104,62 @@ def dashboard():
             ORDER BY u.id'''
     ).fetchall()
     invites = db.execute(
-        'SELECT token, email, created_at, expires_at FROM user_invites '
+        'SELECT token, email, phone, channel, created_at, expires_at FROM user_invites '
         'WHERE accepted_at IS NULL ORDER BY created_at DESC'
     ).fetchall()
     return render_template('admin/dashboard.html', users=users,
                            admin_user_id=ADMIN_USER_ID, invites=invites)
 
 
+_PHONE_RE = re.compile(r'^\+[1-9]\d{7,14}$')
+
+
 @bp.route('/invite', methods=['POST'])
 def invite():
-    """Email a registration link to `email` (#274). The link lets that address
-    register even when ALLOW_REGISTRATION is off, and registering through it
-    marks the email verified."""
+    """Send a registration link via email, SMS, or WhatsApp (#274, #272). The
+    link lets that recipient register even when ALLOW_REGISTRATION is off; an
+    email-channel invite marks the email verified on acceptance (an SMS/
+    WhatsApp invite has no email to verify until the athlete enters one)."""
     _require_admin()
     db = get_db()
-    email = (request.form.get('email') or '').strip()
-    if not email or '@' not in email or '.' not in email.split('@')[-1]:
-        flash('Enter a valid email to invite.', 'danger')
+    channel = (request.form.get('channel') or 'email').strip().lower()
+    if channel not in ('email', 'sms', 'whatsapp'):
+        flash('Unknown invite channel.', 'danger')
         return redirect(url_for('admin.dashboard'))
-    if db.execute('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)',
-                  (email,)).fetchone():
-        flash(f'{email} already has an account.', 'warning')
+
+    if channel == 'email':
+        email = (request.form.get('email') or '').strip()
+        if not email or '@' not in email or '.' not in email.split('@')[-1]:
+            flash('Enter a valid email to invite.', 'danger')
+            return redirect(url_for('admin.dashboard'))
+        if db.execute('SELECT 1 FROM users WHERE LOWER(email) = LOWER(?)',
+                      (email,)).fetchone():
+            flash(f'{email} already has an account.', 'warning')
+            return redirect(url_for('admin.dashboard'))
+        from routes.auth import send_invite_email
+        send_invite_email(db, email, ADMIN_USER_ID)
+        flash(f'Invite sent to {email}.', 'success')
         return redirect(url_for('admin.dashboard'))
-    from routes.auth import send_invite_email
-    send_invite_email(db, email, ADMIN_USER_ID)
-    flash(f'Invite sent to {email}.', 'success')
+
+    phone = (request.form.get('phone') or '').strip()
+    if not _PHONE_RE.match(phone):
+        flash('Enter a phone number in international format, e.g. +15551234567.', 'danger')
+        return redirect(url_for('admin.dashboard'))
+
+    from routes.auth import send_invite_sms, send_invite_whatsapp
+    if channel == 'sms':
+        if not sms_configured():
+            flash("SMS isn't configured yet — set TWILIO_ACCOUNT_SID, "
+                  'TWILIO_AUTH_TOKEN, and TWILIO_SMS_FROM.', 'danger')
+            return redirect(url_for('admin.dashboard'))
+        send_invite_sms(db, phone, ADMIN_USER_ID)
+    else:
+        if not whatsapp_configured():
+            flash("WhatsApp isn't configured yet — set TWILIO_ACCOUNT_SID, "
+                  'TWILIO_AUTH_TOKEN, and TWILIO_WHATSAPP_FROM.', 'danger')
+            return redirect(url_for('admin.dashboard'))
+        send_invite_whatsapp(db, phone, ADMIN_USER_ID)
+    flash(f'Invite sent to {phone}.', 'success')
     return redirect(url_for('admin.dashboard'))
 
 
