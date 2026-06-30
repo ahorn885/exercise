@@ -374,8 +374,7 @@ def evict_layer1_on_gear_change(db, user_id: int) -> None:
 
 def load_gear_locales(db, user_id: int) -> dict[str, list[str]]:
     """`{locale: [gear_id, …]}` for the athlete — gear emitted in `_GEAR_IDS`
-    order per locale for a stable read. Empty dict when none. Mirrors
-    `athlete_craft_locale_repo.load_craft_locales`."""
+    order per locale for a stable read. Empty dict when none."""
     rows = db.execute(
         "SELECT locale, gear_id FROM athlete_gear_locale "
         "WHERE user_id = ? ORDER BY locale, gear_id",
@@ -393,8 +392,7 @@ def load_gear_locales(db, user_id: int) -> dict[str, list[str]]:
 def replace_gear_locale(db, user_id: int, locale: str, gear_ids: list[str]) -> None:
     """Replace the gear kept at `locale` with `gear_ids` (replace-all per locale;
     an empty list clears the locale). Raises `GearSelectionError` (writing nothing)
-    on an unknown gear_id or a locale the athlete doesn't own. Caller commits.
-    Mirrors `athlete_craft_locale_repo.replace_craft_locale`."""
+    on an unknown gear_id or a locale the athlete doesn't own. Caller commits."""
     loc = (locale or "").strip()
     if not loc:
         raise GearSelectionError("a locale is required")
@@ -425,8 +423,7 @@ def evict_plan_caches_on_gear_locale_change(db, user_id: int) -> None:
     """A gear↔locale change alters which gear an away segment resolves with, so
     invalidate the two synthesis entry points that consume the away env. Standing
     athlete data (not a window field) → eviction-on-write is the cache story (not
-    folded into `compute_event_windows_hash`). Mirrors
-    `athlete_craft_locale_repo.evict_plan_caches_on_craft_locale_change`."""
+    folded into `compute_event_windows_hash`)."""
     cache = Layer4Cache(PostgresCacheBackend(lambda: db))
     cache.invalidate_user(
         user_id,
@@ -450,8 +447,7 @@ def _validate_owned(owned: dict[str, str]) -> dict[str, str]:
 
 
 def _validate_gear_ids(values: list[str]) -> list[str]:
-    """De-dupe + reject unknown gear_ids; emit in `_GEAR_IDS` order. Mirrors
-    `athlete_craft_locale_repo._validate`."""
+    """De-dupe + reject unknown gear_ids; emit in `_GEAR_IDS` order."""
     chosen = {v for v in (values or []) if v}
     unknown = chosen - set(GEAR_REGISTRY)
     if unknown:
