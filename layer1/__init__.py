@@ -3,7 +3,7 @@
 Reads the D-51 §3 storage shipped in D-73 Phase 1.2A/B/C (athlete_profile +
 7 per-discipline 1:1 sub-tables + 8 multi-row tables + strength_benchmarks
 + daily_availability_windows) plus existing companion tables (body_metrics,
-wellness_self_report, race_events, injury_log, disclosure_acknowledgments)
+wellness_self_report, race_events, injury_log)
 and assembles a typed `Layer1Payload` per `Layer1_Spec.md` §3.
 
 See:

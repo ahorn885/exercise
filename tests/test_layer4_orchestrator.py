@@ -53,7 +53,6 @@ from layer4.context import (
     CurrentState,
     DataDensity,
     GoalViability,
-    Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
     Layer1Identity,
@@ -327,7 +326,6 @@ def _fake_layer1_payload() -> Layer1Payload:
         event_goal=Layer1EventGoal(),
         lifestyle=Layer1Lifestyle(),
         network=Layer1Network(),
-        disclosures=Layer1Disclosures(),
     )
 
 
@@ -1080,7 +1078,6 @@ class TestDiscoveryFailures:
             event_goal=Layer1EventGoal(),
             lifestyle=Layer1Lifestyle(),
             network=Layer1Network(),
-            disclosures=Layer1Disclosures(),
         )
         with patch(
             "layer4.orchestrator.build_layer1_payload", return_value=l1_no_sport
@@ -1585,7 +1582,6 @@ class TestFrameworkSportOverride:
             event_goal=Layer1EventGoal(),
             lifestyle=Layer1Lifestyle(),
             network=Layer1Network(),
-            disclosures=Layer1Disclosures(),
         )
 
         race_event_for_l4 = RaceEventPayload(
@@ -2896,7 +2892,6 @@ class TestOrchestratePlanRefreshPreflightGates:
             event_goal=Layer1EventGoal(),
             lifestyle=Layer1Lifestyle(),
             network=Layer1Network(),
-            disclosures=Layer1Disclosures(),
         )
         with patch(
             "layer4.orchestrator.build_layer1_payload", return_value=l1_no_sport
@@ -3732,7 +3727,6 @@ class TestOrchestratePlanCreatePreflightGates:
             event_goal=Layer1EventGoal(),
             lifestyle=Layer1Lifestyle(),
             network=Layer1Network(),
-            disclosures=Layer1Disclosures(),
         )
         with patch(
             "layer4.orchestrator.build_layer1_payload", return_value=l1_no_sport

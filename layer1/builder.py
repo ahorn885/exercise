@@ -25,12 +25,10 @@ from layer4.context import (
     AthleteSupplementRecord,
     CyclingBaseline,
     DailyAvailabilityWindow,
-    DisclosureAck,
     DisciplineWeightRecord,
     HealthConditionRecord,
     InjuryRecord,
     Layer1CoachingPreference,
-    Layer1Disclosures,
     Layer1DisciplineBaselines,
     Layer1EventGoal,
     Layer1HealthStatus,
@@ -108,7 +106,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     discipline_baselines = _load_discipline_baselines(db, user_id)
     network_links = _load_network_links(db, user_id)
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
-    disclosures = _load_disclosures(db, user_id)
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
     owned_gear = _load_owned_gear(db, user_id)
     supplements = _load_supplements(db, user_id)
@@ -142,7 +139,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         network_links=network_links,
         linked_partner_consents=linked_partner_consents,
     )
-    disclosures_model = Layer1Disclosures(acknowledgments=disclosures)
 
     available_days_per_week = sum(1 for w in daily_windows if w.enabled)
 
@@ -180,7 +176,6 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         event_goal=event_goal,
         lifestyle=lifestyle_model,
         network=network,
-        disclosures=disclosures_model,
     )
 
 
@@ -991,36 +986,6 @@ def _load_linked_partner_consents(db, user_id: int) -> list[LinkedPartnerConsent
             consent_scope=r["consent_scope"],
             granted_at=r["granted_at"],
             revoked_at=r["revoked_at"],
-        )
-        for r in cur.fetchall()
-    ]
-
-
-# ─── disclosure_acknowledgments — latest per disclosure_id ───────────────────
-
-
-def _load_disclosures(db, user_id: int) -> list[DisclosureAck]:
-    cur = db.execute(
-        """
-        SELECT disclosure_id, version_id, scopes_granted, delivery_method, acknowledged_at
-          FROM (
-            SELECT disclosure_id, version_id, scopes_granted, delivery_method, acknowledged_at,
-                   ROW_NUMBER() OVER (PARTITION BY disclosure_id ORDER BY acknowledged_at DESC) AS rn
-              FROM disclosure_acknowledgments
-             WHERE user_id = ?
-          ) latest
-         WHERE rn = 1
-         ORDER BY disclosure_id
-        """,
-        (user_id,),
-    )
-    return [
-        DisclosureAck(
-            disclosure_id=r["disclosure_id"],
-            version_id=r["version_id"],
-            scopes_granted=r["scopes_granted"],
-            delivery_method=r["delivery_method"],
-            acknowledged_at=r["acknowledged_at"],
         )
         for r in cur.fetchall()
     ]
