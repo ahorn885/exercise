@@ -35,6 +35,8 @@ from athlete import (
     DIETARY_PATTERN_CHOICES, FUELING_FORMAT_CHOICES,
     CAFFEINE_TOLERANCE_CHOICES, CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
     SALT_ELECTROLYTE_TOLERANCE_CHOICES, EXPERIENCE_LEVEL_CHOICES,
+    SWEAT_RATE_LEVEL_CHOICES, DAILY_HYDRATION_BASELINE_CHOICES,
+    SLEEP_CONSISTENCY_CHOICES, BODY_WEIGHT_TREND_CHOICES,
     get_athlete_profile, upsert_athlete_profile,
     get_daily_availability_windows, upsert_daily_availability_windows,
 )
@@ -410,6 +412,10 @@ def edit():
         experience_level = _str('experience_level')
         if experience_level not in EXPERIENCE_LEVEL_CHOICES:
             experience_level = None
+        # #257 V3-I-10 — body-weight trend; reject a tampered value to the set.
+        body_weight_trend = _str('body_weight_trend')
+        if body_weight_trend not in BODY_WEIGHT_TREND_CHOICES:
+            body_weight_trend = None
         upsert_athlete_profile(
             db, uid,
             date_of_birth=_str('date_of_birth'),
@@ -418,6 +424,7 @@ def edit():
             primary_sport=_str('primary_sport'),
             weekly_hours_target=_num('weekly_hours_target'),
             experience_level=experience_level,
+            body_weight_trend=body_weight_trend,
             unit_preference=submitted_unit_pref,
             # #894 — the nutrition / fueling / altitude protocol moved to its own
             # Fuel & health tab (profile.save_nutrition); supplements moved to
@@ -568,6 +575,10 @@ def edit():
         caffeine_tolerance_choices=CAFFEINE_TOLERANCE_CHOICES,
         caffeine_race_day_strategy_choices=CAFFEINE_RACE_DAY_STRATEGY_CHOICES,
         salt_electrolyte_tolerance_choices=SALT_ELECTROLYTE_TOLERANCE_CHOICES,
+        sweat_rate_level_choices=SWEAT_RATE_LEVEL_CHOICES,
+        daily_hydration_baseline_choices=DAILY_HYDRATION_BASELINE_CHOICES,
+        sleep_consistency_choices=SLEEP_CONSISTENCY_CHOICES,
+        body_weight_trend_choices=BODY_WEIGHT_TREND_CHOICES,
         experience_level_choices=EXPERIENCE_LEVEL_CHOICES,
         skill_toggle_defs=skill_toggle_defs,
         skill_toggle_states=skill_toggle_states,
@@ -831,6 +842,12 @@ def save_nutrition():
         picked = [v for v in f.getlist(key) if v in allowed]
         return ','.join(picked) or None
 
+    def _enum(key, allowed):
+        # Single closed-vocab select; a tampered or blank POST stores NULL
+        # rather than a junk token (mirrors the supplement repo's clean_*).
+        v = (f.get(key) or '').strip()
+        return v if v in allowed else None
+
     # Altitude acclimatization is a tri-state select: yes / no / unset.
     # Map to BOOLEAN | None; anything outside the pair stays None.
     _alt_raw = _str('altitude_acclimatization_history')
@@ -847,6 +864,12 @@ def save_nutrition():
         caffeine_daily_mg_estimate=_num('caffeine_daily_mg_estimate', cast=int),
         caffeine_race_day_strategy=_str('caffeine_race_day_strategy'),
         salt_electrolyte_tolerance=_str('salt_electrolyte_tolerance'),
+        # #257 V3-I-4 / V3-I-9 / V3-I-1 — sweat rate (fluid signal, split from
+        # salt), daily hydration baseline, and sleep consistency.
+        sweat_rate_level=_enum('sweat_rate_level', SWEAT_RATE_LEVEL_CHOICES),
+        daily_hydration_baseline=_enum(
+            'daily_hydration_baseline', DAILY_HYDRATION_BASELINE_CHOICES),
+        sleep_consistency=_enum('sleep_consistency', SLEEP_CONSISTENCY_CHOICES),
         gi_triggers_known=_str('gi_triggers_known'),
         # §I altitude exposure — acclimatization history (tri-state), highest
         # sustained exposure, and how many distinct exposures.
