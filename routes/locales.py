@@ -652,6 +652,26 @@ def _list_pending_profile_edits(db, limit: int = 500) -> list:
             'shared_tags': sorted(_shared_equipment_set(r)),
             'proposals': proposals,
         })
+    # #971 follow-up B — per-profile inheritor count so the operator can gauge a
+    # dispute's blast radius (a 1-inheritor profile is low-stakes; a 40-inheritor
+    # commercial chain is not). Distinct *users*, not locale links — one athlete
+    # can link the same profile at several locales; distinct users is the honest
+    # reach. One grouped query over the queued ids (not per-row) to avoid N+1.
+    if out:
+        ids = [e['id'] for e in out]
+        placeholders = ','.join('?' * len(ids))
+        counts = {
+            row['gym_profile_id']: row['n']
+            for row in db.execute(
+                'SELECT gym_profile_id, COUNT(DISTINCT user_id) AS n '
+                'FROM locale_profiles '
+                f'WHERE gym_profile_id IN ({placeholders}) '
+                'GROUP BY gym_profile_id',
+                ids,
+            ).fetchall()
+        }
+        for e in out:
+            e['inheritor_count'] = counts.get(e['id'], 0)
     return out
 
 
@@ -1295,6 +1315,15 @@ def _edit_locale(db, uid: int, locale: str, profile):
     # chips).
     adds, removes = _load_overrides(db, uid, locale)
     mode = 'shared_inherit' if inherit else 'legacy'
+    # #971 follow-up A — a tag a peer flagged as wrong (an open-dispute `removes`
+    # on the shared profile) is excluded from plan generation while it's under
+    # admin review, yet the athlete still SEES it in this locale view (plan-gen
+    # subtracts; the UI shows the real shared set). Surface those disputed tags
+    # so the template can mark them "under review" — closing the plan-gen-vs-UI
+    # divergence. Only the inherit path can carry a dispute (it exists against a
+    # shared base); own/build modes get the empty set.
+    disputed = (locations.disputed_equipment_tags(db, shared['id'])
+                if inherit and shared is not None else set())
     # #971 Slice 3 — pre-check the "report as wrong" box when this peer already
     # has a correction pending admin review, so re-saving doesn't silently
     # withdraw it.
@@ -1329,6 +1358,7 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            active=prior_effective,
                            shared_tags=shared_tags,
                            adds=adds, removes=removes,
+                           disputed=disputed,
                            shared=shared,
                            reported=reported,
                            photo_profile_id=photo_profile_id,

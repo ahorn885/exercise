@@ -41,6 +41,8 @@ def _form_ctx(**kw):
         profile={'locale_name': None, 'chain_name': None, 'category': None,
                  'notes': ''},
         equipment_categories=_EQUIP, active={'db'},
+        # #971 follow-up A — disputed-tag set drives the "under review" chip.
+        disputed=set(),
         notes='', is_manual=False, is_mapbox_anchored=False,
         is_deletable=False, display_address='',
         privacy_locked=False, privacy_opt_out=False, privacy_effective=False,
@@ -96,6 +98,41 @@ def test_form_shared_inherit_shows_override_chips():
     # shared modes are not legacy → no city field.
     assert 'name="city"' not in html
     assert 'style="' not in html
+
+
+def test_form_shared_inherit_shows_under_review_chip():
+    """#971 follow-up A — a shared tag a peer flagged as wrong (in `disputed`)
+    renders an 'under review' chip so the athlete understands why the plan may
+    not build around a tag they can still see. Suppressed when the viewer
+    removed it themselves (the – override already covers that)."""
+    # 'bb' is a shared tag under dispute and not personally removed → chip shows.
+    html = _render('locales/form.html', **_form_ctx(
+        mode='shared_inherit',
+        profile={'locale_name': 'Planet Fitness', 'chain_name': 'Planet Fitness',
+                 'category': None, 'notes': ''},
+        active={'bb'}, shared_tags={'bb'}, adds=set(), removes=set(),
+        disputed={'bb'},
+        shared={'last_confirmed_at': '2026-05-01', 'contribution_count': 3},
+    ))
+    assert 'under review' in html
+    assert 'shared' in html             # still shows it's inherited
+
+    # Same tag, but this viewer removed it personally → suppress "under review"
+    # (the – override already tells them it's gone for them).
+    html_removed = _render('locales/form.html', **_form_ctx(
+        mode='shared_inherit',
+        profile={'locale_name': 'Planet Fitness', 'chain_name': 'Planet Fitness',
+                 'category': None, 'notes': ''},
+        active=set(), shared_tags={'bb'}, adds=set(), removes={'bb'},
+        disputed={'bb'},
+        shared={'last_confirmed_at': '2026-05-01', 'contribution_count': 3},
+    ))
+    assert 'under review' not in html_removed
+    assert '– override' in html_removed
+
+    # No chip in legacy mode even if a disputed set somehow leaks through.
+    html_legacy = _render('locales/form.html', **_form_ctx(disputed={'bb'}))
+    assert 'under review' not in html_legacy
 
 
 def test_form_deletable_shows_delete():

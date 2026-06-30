@@ -33,6 +33,10 @@
     <b>{{ p.display_name or 'Profile #' ~ p.id }}</b>
     <span class="chip solid">{{ (p.category or 'uncategorized').replace('_', ' ') }}</span>
     <span class="chip" title="Profile id">#{{ p.id }}</span>
+    {# #971 follow-up B — dispute blast radius: distinct athletes inheriting this
+       shared profile, so the operator can weigh the reach before deciding. #}
+    <span class="chip{% if p.inheritor_count and p.inheritor_count >= 10 %} warn{% endif %}"
+          title="Athletes inheriting this profile (distinct users)">{{ p.inheritor_count }} inheritor{{ '' if p.inheritor_count == 1 else 's' }}</span>
     <p class="page-sub" style="margin-top:.35rem">
       Shared equipment:
       {% if p.shared_tags %}{{ p.shared_tags|join(', ') }}{% else %}<span class="dim">(none)</span>{% endif %}

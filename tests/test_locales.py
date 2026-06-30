@@ -1172,6 +1172,31 @@ class TestListPendingProfileEdits:
         ])
         assert _list_pending_profile_edits(conn) == []
 
+    def test_attaches_distinct_user_inheritor_count(self):
+        """#971 follow-up B — each entry carries `inheritor_count`, resolved by
+        one grouped COUNT(DISTINCT user_id) over the queued profile ids (the
+        honest blast radius — distinct users, not locale links)."""
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'id': 77, 'display_name': 'Hilton', 'category': 'hotel_gym',
+             'equipment': '["Barbell"]',
+             'disputed_items': _json.dumps(
+                 [{'by': 42, 'adds': [], 'removes': ['Barbell'], 'at': 't'}])},
+            {'id': 88, 'display_name': 'Y Gym', 'category': 'gym',
+             'equipment': '["Squat rack"]',
+             'disputed_items': _json.dumps(
+                 [{'by': 9, 'adds': [], 'removes': ['Squat rack'], 'at': 't'}])},
+        ])
+        # The grouped count query — 88 absent from the result → count 0.
+        conn.queue_response(rows=[{'gym_profile_id': 77, 'n': 12}])
+        out = _list_pending_profile_edits(conn)
+        count_sql, count_params = conn.calls[1]
+        assert 'COUNT(DISTINCT user_id)' in count_sql
+        assert 'FROM locale_profiles' in count_sql
+        assert sorted(count_params) == [77, 88]   # grouped over both queued ids
+        by_id = {e['id']: e['inheritor_count'] for e in out}
+        assert by_id == {77: 12, 88: 0}
+
 
 class TestReviewProfileEdit:
     """`_review_profile_edit` approves (folds into shared equipment) or rejects
