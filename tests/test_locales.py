@@ -32,19 +32,25 @@ from routes.locales import (
     _TRN_PATTERN,
     _address_fingerprint,
     _category_default_private,
+    _count_active_photos,
     _create_gym_profile,
+    _delete_profile_photo,
     _edit_locale,
     _evict_layer2b_on_terrain_change,
     _evict_layer2c_on_equipment_change,
     _find_gym_profile,
     _find_gym_profile_by_fingerprint,
     _hydrate_locale_terrain_ids,
+    _insert_profile_photo,
     _list_pending_profile_edits,
+    _list_pending_profile_photos,
+    _list_profile_photos,
     _parse_locale_terrain,
     _record_profile_edit,
     _resolve_private,
     _resolve_shared_profile,
     _review_profile_edit,
+    _review_profile_photo,
     _terrain_choices,
     delete_locale,
 )
@@ -1215,3 +1221,124 @@ class TestReviewProfileEdit:
         conn = _FakeConn()
         conn.queue_response(row=None)
         assert _review_profile_edit(conn, 77, 42, approve=True) is None
+
+
+# ─── #971 Slice 2 — crowd-sourced gym/hotel profile photos ───────────────────
+
+
+def _calls_matching(conn, *needles):
+    """(sql, params) for calls whose SQL contains every needle."""
+    return [(sql, params) for sql, params in conn.calls
+            if all(n in sql for n in needles)]
+
+
+class TestInsertProfilePhoto:
+    def test_inserts_pending_row(self):
+        conn = _FakeConn()
+        _insert_profile_photo(conn, 77, 42, 'https://blob/x.jpg',
+                              'gym-profiles/77/x.jpg', 'image/jpeg')
+        ins = _calls_matching(conn, 'INSERT INTO gym_profile_photos')
+        assert ins, 'expected an INSERT'
+        params = ins[0][1]
+        assert params[0] == 77        # gym_profile_id
+        assert params[1] == 42        # uploader
+        assert params[2] == 'https://blob/x.jpg'
+        assert params[5] == 'pending'  # starts pending review
+
+
+class TestCountActivePhotos:
+    def test_counts_all_rows(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'n': 3})
+        assert _count_active_photos(conn, 77) == 3
+        sql = conn.calls[0][0]
+        assert 'COUNT(*)' in sql and 'gym_profile_photos' in sql
+
+    def test_no_row_is_zero(self):
+        conn = _FakeConn()
+        assert _count_active_photos(conn, 77) == 0
+
+
+class TestListProfilePhotos:
+    def test_returns_approved_and_own_pending_marked(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            {'id': 1, 'uploaded_by_user_id': 99, 'blob_url': 'a.jpg',
+             'status': 'approved'},                 # peer's approved
+            {'id': 2, 'uploaded_by_user_id': 42, 'blob_url': 'b.jpg',
+             'status': 'pending'},                  # viewer's own pending
+        ])
+        out = _list_profile_photos(conn, 77, viewer_uid=42)
+        # SQL fetches approved OR the viewer's own.
+        sql = conn.calls[0][0]
+        assert 'gym_profile_photos' in sql and 'uploaded_by_user_id = ?' in sql
+        assert out[0] == {'id': 1, 'url': 'a.jpg', 'is_own': False, 'pending': False}
+        assert out[1] == {'id': 2, 'url': 'b.jpg', 'is_own': True, 'pending': True}
+
+
+class TestDeleteProfilePhoto:
+    def test_uploader_deletes_own(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'uploaded_by_user_id': 42, 'blob_url': 'x.jpg'})
+        out = _delete_profile_photo(conn, 5, uid=42)
+        assert out == {'blob_url': 'x.jpg'}
+        assert _calls_matching(conn, 'DELETE FROM gym_profile_photos')
+
+    def test_non_owner_blocked(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'uploaded_by_user_id': 99, 'blob_url': 'x.jpg'})
+        assert _delete_profile_photo(conn, 5, uid=42) is None
+        assert not _calls_matching(conn, 'DELETE FROM gym_profile_photos')
+
+    def test_missing_photo_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        assert _delete_profile_photo(conn, 5, uid=42) is None
+
+
+class TestListPendingProfilePhotos:
+    def test_excludes_private_and_joins_profile(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[{
+            'id': 7, 'gym_profile_id': 77, 'uploaded_by_user_id': 42,
+            'blob_url': 'p.jpg', 'created_at': '2026-06-29T12:00:00',
+            'display_name': 'Hilton', 'category': 'hotel_gym',
+        }])
+        out = _list_pending_profile_photos(conn)
+        sql = conn.calls[0][0]
+        assert "p.status = 'pending'" in sql
+        assert 'COALESCE(g.private, FALSE) = FALSE' in sql
+        assert out[0]['gym_profile_id'] == 77
+        assert out[0]['display_name'] == 'Hilton'
+        assert out[0]['url'] == 'p.jpg'
+
+
+class TestReviewProfilePhoto:
+    def test_approve_sets_status(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'gym_profile_id': 77, 'blob_url': 'p.jpg',
+                                 'status': 'pending'})
+        out = _review_profile_photo(conn, 7, approve=True, reviewer_uid=1)
+        assert out == {'id': 7, 'gym_profile_id': 77, 'blob_url': 'p.jpg'}
+        upd = _calls_matching(conn, 'UPDATE gym_profile_photos', "'approved'")
+        assert upd and upd[0][1] == (1, 7)  # reviewer, photo id
+        assert not _calls_matching(conn, 'DELETE FROM gym_profile_photos')
+
+    def test_reject_deletes_row(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'gym_profile_id': 77, 'blob_url': 'p.jpg',
+                                 'status': 'pending'})
+        out = _review_profile_photo(conn, 7, approve=False)
+        assert out['blob_url'] == 'p.jpg'  # returned so caller drops the blob
+        assert _calls_matching(conn, 'DELETE FROM gym_profile_photos')
+
+    def test_already_reviewed_returns_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row={'gym_profile_id': 77, 'blob_url': 'p.jpg',
+                                 'status': 'approved'})
+        assert _review_profile_photo(conn, 7, approve=True) is None
+
+    def test_missing_photo_returns_none(self):
+        conn = _FakeConn()
+        conn.queue_response(row=None)
+        assert _review_profile_photo(conn, 7, approve=True) is None

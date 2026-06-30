@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -698,6 +699,184 @@ def _review_profile_edit(db, gym_profile_id: int, proposer_uid: int,
     return match
 
 
+# ── #971 Slice 2 — crowd-sourced gym/hotel profile photos (Vercel Blob) ──────
+# Photos attach to the shared gym_profiles row (every inheritor sees an approved
+# photo, mirroring the shared equipment set). Capture: the athlete uploads from
+# the locale equipment editor; the bytes go to Vercel Blob and a `pending` row
+# lands in gym_profile_photos. Visibility: an admin approves each photo before
+# peers see it (the same review step Slice 3 gave equipment corrections) — the
+# uploader sees their own pending photos meanwhile; a reject deletes the row +
+# blob outright. Storage = Vercel Blob (Andy 2026-06-29); scope = shared profile
+# + admin-approved (Andy 2026-06-29).
+
+# JPEG/PNG/WebP only, ≤8 MB each, ≤8 non-rejected photos per shared profile.
+_PHOTO_ALLOWED_TYPES = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+}
+_PHOTO_MAX_BYTES = 8 * 1024 * 1024
+_PHOTO_MAX_PER_PROFILE = 8
+
+
+def _photo_blob_configured() -> bool:
+    """The Blob backend is usable only with its read/write token set."""
+    return bool(os.environ.get('BLOB_READ_WRITE_TOKEN'))
+
+
+def _put_photo_blob(data: bytes, pathname: str, content_type: str) -> dict:
+    """Upload one photo to Vercel Blob and return the store's response
+    (`url` = public URL, `pathname` = store key). Isolated + lazily imported so
+    the SDK/token aren't needed off the upload path and tests can stub it."""
+    import vercel_blob  # lazy: only the upload route needs the SDK present
+    return vercel_blob.put(pathname, data, {
+        'contentType': content_type,
+        'addRandomSuffix': 'false',
+    })
+
+
+def _delete_photo_blob(url: str) -> None:
+    """Best-effort delete of a photo's blob (on photo removal / reject). A blob
+    that outlives its row is harmless storage leakage, so a failure here is
+    logged (Rule #15) but never fails the request the caller is serving."""
+    if not url:
+        return
+    try:
+        import vercel_blob  # lazy, same rationale as _put_photo_blob
+        vercel_blob.delete(url)
+    except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
+        print(f'_delete_photo_blob: could not delete {url}: {exc}')
+
+
+def _count_active_photos(db, gym_profile_id: int) -> int:
+    """How many photos (pending + approved) a profile already carries — caps
+    per-profile storage. Rejected photos are deleted, so every row counts."""
+    row = db.execute(
+        'SELECT COUNT(*) AS n FROM gym_profile_photos WHERE gym_profile_id = ?',
+        (gym_profile_id,),
+    ).fetchone()
+    return int(row['n']) if row and _row_has(row, 'n') else 0
+
+
+def _insert_profile_photo(db, gym_profile_id: int, uploader_uid: int,
+                          blob_url: str, blob_pathname: str | None,
+                          content_type: str | None) -> None:
+    """Record an uploaded photo as `pending` admin review. Caller owns the
+    transaction boundary."""
+    print(f'_insert_profile_photo: profile={gym_profile_id} '
+          f'uploader={uploader_uid} type={content_type} -> pending')
+    db.execute(
+        'INSERT INTO gym_profile_photos '
+        '(gym_profile_id, uploaded_by_user_id, blob_url, blob_pathname, '
+        'content_type, status) VALUES (?, ?, ?, ?, ?, ?)',
+        (gym_profile_id, uploader_uid, blob_url, blob_pathname,
+         content_type, 'pending'),
+    )
+
+
+def _list_profile_photos(db, gym_profile_id: int, viewer_uid: int) -> list:
+    """Photos to show on a profile for one viewer: every approved photo, plus
+    the viewer's own still-pending uploads (so they see their submission is in
+    review). Each entry carries `is_own` (viewer may delete) + `pending`."""
+    rows = db.execute(
+        'SELECT id, uploaded_by_user_id, blob_url, status '
+        'FROM gym_profile_photos '
+        'WHERE gym_profile_id = ? AND (status = ? OR uploaded_by_user_id = ?) '
+        'ORDER BY created_at',
+        (gym_profile_id, 'approved', viewer_uid),
+    ).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            'id': r['id'],
+            'url': r['blob_url'] if _row_has(r, 'blob_url') else None,
+            'is_own': _row_has(r, 'uploaded_by_user_id')
+            and r['uploaded_by_user_id'] == viewer_uid,
+            'pending': (r['status'] if _row_has(r, 'status') else None)
+            != 'approved',
+        })
+    return out
+
+
+def _delete_profile_photo(db, photo_id: int, uid: int) -> dict | None:
+    """Delete one of the caller's OWN photos (uploader-only — admins remove via
+    the review queue). Returns the deleted row's `{blob_url}` so the caller can
+    clean up the blob, or None when the photo isn't this user's. Caller owns the
+    transaction boundary."""
+    row = db.execute(
+        'SELECT uploaded_by_user_id, blob_url FROM gym_profile_photos '
+        'WHERE id = ?',
+        (photo_id,),
+    ).fetchone()
+    if not row or not _row_has(row, 'uploaded_by_user_id') \
+            or row['uploaded_by_user_id'] != uid:
+        return None
+    db.execute('DELETE FROM gym_profile_photos WHERE id = ?', (photo_id,))
+    print(f'_delete_profile_photo: photo={photo_id} by uploader={uid} -> deleted')
+    return {'blob_url': row['blob_url'] if _row_has(row, 'blob_url') else None}
+
+
+def _list_pending_profile_photos(db, limit: int = 200) -> list:
+    """Admin queue: photos awaiting approval, oldest first, on non-private
+    shared profiles (a private profile's photos never reach peers, so they need
+    no review). Each entry carries the profile name/category + uploader so the
+    operator can judge it."""
+    rows = db.execute(
+        'SELECT p.id, p.gym_profile_id, p.uploaded_by_user_id, p.blob_url, '
+        'p.created_at, g.display_name, g.category '
+        'FROM gym_profile_photos p JOIN gym_profiles g '
+        'ON g.id = p.gym_profile_id '
+        "WHERE p.status = 'pending' AND COALESCE(g.private, FALSE) = FALSE "
+        'ORDER BY p.created_at LIMIT ?',
+        (limit,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        out.append({
+            'id': r['id'],
+            'gym_profile_id': r['gym_profile_id'],
+            'uploaded_by_user_id': r['uploaded_by_user_id']
+            if _row_has(r, 'uploaded_by_user_id') else None,
+            'url': r['blob_url'] if _row_has(r, 'blob_url') else None,
+            'display_name': r['display_name'] if _row_has(r, 'display_name') else None,
+            'category': r['category'] if _row_has(r, 'category') else None,
+            'created_at': r['created_at'] if _row_has(r, 'created_at') else None,
+        })
+    return out
+
+
+def _review_profile_photo(db, photo_id: int, approve: bool,
+                          reviewer_uid: int | None = None) -> dict | None:
+    """Approve (peer-visible) or reject (delete row, leaving the caller to drop
+    the blob) one pending photo. Returns the reviewed row's
+    `{id, gym_profile_id, blob_url}`, or None when no pending photo with that id
+    exists. Caller owns the transaction boundary."""
+    row = db.execute(
+        'SELECT gym_profile_id, blob_url, status FROM gym_profile_photos '
+        'WHERE id = ?',
+        (photo_id,),
+    ).fetchone()
+    if not row or (_row_has(row, 'status') and row['status'] != 'pending'):
+        return None
+    if approve:
+        db.execute(
+            "UPDATE gym_profile_photos SET status = 'approved', "
+            'reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP '
+            'WHERE id = ?',
+            (reviewer_uid, photo_id),
+        )
+    else:
+        db.execute('DELETE FROM gym_profile_photos WHERE id = ?', (photo_id,))
+    print(f'_review_profile_photo: photo={photo_id} '
+          f'action={"approve" if approve else "reject"} '
+          f'profile={row["gym_profile_id"] if _row_has(row, "gym_profile_id") else None}')
+    return {
+        'id': photo_id,
+        'gym_profile_id': row['gym_profile_id'] if _row_has(row, 'gym_profile_id') else None,
+        'blob_url': row['blob_url'] if _row_has(row, 'blob_url') else None,
+    }
+
+
 def _display_address(profile_row) -> str:
     """Pull the human-readable street address out of `place_payload` JSON
     for UI rendering (PR18 item A — athletes need to distinguish two rows
@@ -879,6 +1058,81 @@ def save_locale_crafts(locale):
     return redirect(url_for('locales.edit_profile', locale=locale))
 
 
+@bp.route('/locales/<locale>/photos', methods=['POST'])
+def upload_locale_photo(locale):
+    """#971 Slice 2 — upload one photo for this location's shared gym/hotel
+    profile. The photo lands in Vercel Blob + a `pending` gym_profile_photos
+    row; an admin approves it before peers see it. A backing profile must exist
+    (save the equipment first); JPEG/PNG/WebP, ≤8 MB, ≤8 photos per profile."""
+    db = get_db()
+    uid = current_user_id()
+    profile = db.execute(
+        'SELECT * FROM locale_profiles WHERE user_id = ? AND locale = ?',
+        (uid, locale),
+    ).fetchone()
+    if not profile:
+        flash('Unknown location.', 'danger')
+        return redirect(url_for('locales.list_profiles'))
+    shared, _ = _resolve_shared_profile(db, uid, profile)
+    if shared is None:
+        flash('Save this location’s equipment first, then add photos.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    if not _photo_blob_configured():
+        flash('Photo upload isn’t configured yet.', 'danger')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    f = request.files.get('photo')
+    if not f or not f.filename:
+        flash('Choose a photo to upload.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    content_type = (f.mimetype or '').lower()
+    ext = _PHOTO_ALLOWED_TYPES.get(content_type)
+    if ext is None:
+        flash('Photos must be JPEG, PNG, or WebP.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    data = f.read()
+    if not data:
+        flash('That photo file is empty.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    if len(data) > _PHOTO_MAX_BYTES:
+        flash('Photos must be under 8 MB.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    if _count_active_photos(db, shared['id']) >= _PHOTO_MAX_PER_PROFILE:
+        flash(f'This location already has the maximum of '
+              f'{_PHOTO_MAX_PER_PROFILE} photos.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    pathname = f"gym-profiles/{shared['id']}/{uuid.uuid4().hex}.{ext}"
+    try:
+        blob = _put_photo_blob(data, pathname, content_type)
+    except Exception as exc:  # noqa: BLE001 — surface upload failure to the user
+        print(f'upload_locale_photo: blob put failed profile={shared["id"]} '
+              f'uploader={uid}: {exc}')
+        flash('Could not upload that photo — try again.', 'danger')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    _insert_profile_photo(db, shared['id'], uid, blob.get('url'),
+                          blob.get('pathname'), content_type)
+    db.commit()
+    flash('Photo uploaded — it’ll appear here once an admin approves it.',
+          'success')
+    return redirect(url_for('locales.edit_profile', locale=locale))
+
+
+@bp.route('/locales/<locale>/photos/<int:photo_id>/delete', methods=['POST'])
+def delete_locale_photo(locale, photo_id):
+    """#971 Slice 2 — remove one of the caller's own uploaded photos (pending or
+    approved). Drops the row + its blob. Admins remove others' photos via the
+    review queue."""
+    db = get_db()
+    uid = current_user_id()
+    deleted = _delete_profile_photo(db, photo_id, uid)
+    if deleted is None:
+        flash('That photo can’t be removed.', 'warning')
+        return redirect(url_for('locales.edit_profile', locale=locale))
+    db.commit()
+    _delete_photo_blob(deleted.get('blob_url'))
+    flash('Photo removed.', 'success')
+    return redirect(url_for('locales.edit_profile', locale=locale))
+
+
 def _resolve_shared_profile(db, uid: int, profile):
     """Resolve the gym_profiles row backing a locale, if any: the linked
     `gym_profile_id` first, else a peer at the same `mapbox_id` (another
@@ -1046,6 +1300,12 @@ def _edit_locale(db, uid: int, locale: str, profile):
     # withdraw it.
     reported = bool(inherit and shared and any(
         p.get('by') == uid for p in _load_profile_edits(db, shared['id'])))
+    # #971 Slice 2 — photos hang off the backing shared profile, so they're only
+    # offered once one exists (a brand-new locale with no profile yet must save
+    # its equipment first). `photos` = approved ∪ this viewer's own pending.
+    photo_profile_id = shared['id'] if shared is not None else None
+    photos = (_list_profile_photos(db, shared['id'], uid)
+              if shared is not None else [])
     is_manual = bool(_row_has(profile, 'manual_entry') and profile['manual_entry'])
     is_mapbox_anchored = bool(_row_has(profile, 'mapbox_id') and profile['mapbox_id'])
     # #446 — privacy state for the form chip + opt-out toggle. The backing
@@ -1071,6 +1331,8 @@ def _edit_locale(db, uid: int, locale: str, profile):
                            adds=adds, removes=removes,
                            shared=shared,
                            reported=reported,
+                           photo_profile_id=photo_profile_id,
+                           photos=photos,
                            notes=(profile['notes'] if profile and profile['notes'] else ''),
                            is_manual=is_manual,
                            is_mapbox_anchored=is_mapbox_anchored,
