@@ -1,9 +1,12 @@
 """Layer 2E builder — nutrition baseline query node.
 
 Per `Layer2E_Spec.md` §3 (function signature) + §5 (algorithm). Pure query
-node: deterministic given inputs, no LLM involvement. One indexed SELECT
-per phase on `layer0.phase_load_weekly_totals` (4 SELECTs total) — every
-other path is pure-Python math against spec-internal constant tables.
+node: deterministic given inputs, no LLM involvement. DB queries per call
+(after migration 0036): 4 SELECTs on `layer0.phase_load_weekly_totals` (one
+per phase) + 4 nutrition-table SELECTs loaded once at call start
+(sport_met_values, race_fueling_bands, sport_profile_cho_mod,
+dietary_pattern_flags). Nutrition-table queries soft-fail to hardcoded
+constants if a table is absent (pre-migration window).
 
 This is the **vertical-slice** ship per Andy 2026-05-19 scope pick:
 
@@ -434,21 +437,139 @@ def _load_phase_weekly_hours(
     )
 
 
+def _load_all_sport_met_values(db) -> dict[tuple[str, int], float] | None:
+    """Load sport_met_values → {(phase, tier_index): multiplier} or None.
+
+    Soft-fail: returns None on any error (table absent pre-0036, query fault).
+    The caller falls back to _MULTIPLIER_BANDS.
+    """
+    try:
+        cur = db.execute(
+            "SELECT phase, volume_tier_index, multiplier "
+            "FROM layer0.sport_met_values WHERE superseded_at IS NULL"
+        )
+        rows = cur.fetchall()
+    except Exception:  # noqa: BLE001 — advisory; fall back to hardcoded
+        return None
+    if not rows:
+        return None
+    result: dict[tuple[str, int], float] = {}
+    for row in rows:
+        result[(row["phase"], int(row["volume_tier_index"]))] = float(row["multiplier"])
+    return result or None
+
+
+def _load_all_race_fueling_bands(db) -> dict[str, dict[str, Any]] | None:
+    """Load race_fueling_bands → {tier: band_dict} or None.
+
+    Band dict has the same keys as _FUELING_BANDS entries, including the
+    protein_after_hr tuple reconstructed from the three column values.
+    Soft-fail: returns None on any error; caller falls back to _FUELING_BANDS.
+    """
+    try:
+        cur = db.execute(
+            "SELECT duration_tier, cho_low, cho_high, na_low, na_high, "
+            "       fluid_low, fluid_high, "
+            "       protein_after_hr_threshold, protein_g_per_hr_flat, protein_g_initial "
+            "FROM layer0.race_fueling_bands WHERE superseded_at IS NULL"
+        )
+        rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        thr = row["protein_after_hr_threshold"]
+        flat = row["protein_g_per_hr_flat"]
+        init = row["protein_g_initial"]
+        protein = (int(thr), float(flat), float(init)) if thr is not None else None
+        result[row["duration_tier"]] = {
+            "cho_low": float(row["cho_low"]),
+            "cho_high": float(row["cho_high"]),
+            "na_low": float(row["na_low"]),
+            "na_high": float(row["na_high"]),
+            "fluid_low": float(row["fluid_low"]) if row["fluid_low"] is not None else None,
+            "fluid_high": float(row["fluid_high"]) if row["fluid_high"] is not None else None,
+            "protein_after_hr": protein,
+        }
+    return result or None
+
+
+def _load_all_sport_profile_cho_mods(db) -> dict[str, float] | None:
+    """Load sport_profile_cho_mod → {profile: modifier} or None.
+
+    Soft-fail: returns None on any error; caller falls back to _SPORT_PROFILE_CHO_MOD.
+    """
+    try:
+        cur = db.execute(
+            "SELECT sport_profile, cho_modifier "
+            "FROM layer0.sport_profile_cho_mod WHERE superseded_at IS NULL"
+        )
+        rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    return {row["sport_profile"]: float(row["cho_modifier"]) for row in rows}
+
+
+def _load_all_dietary_pattern_rules(db) -> list[dict[str, Any]] | None:
+    """Load dietary_pattern_flags → list of rule dicts sorted by (pattern, sort_order).
+
+    Soft-fail: returns None on any error; caller falls back to hardcoded logic.
+    """
+    try:
+        cur = db.execute(
+            "SELECT pattern, concern, severity, rationale, "
+            "       suggested_supplement_id, race_day_format_adjustment, "
+            "       requires_medical_guidance, sort_order "
+            "FROM layer0.dietary_pattern_flags "
+            "WHERE superseded_at IS NULL "
+            "ORDER BY pattern, sort_order"
+        )
+        rows = cur.fetchall()
+    except Exception:  # noqa: BLE001
+        return None
+    if not rows:
+        return None
+    return [
+        {
+            "pattern": row["pattern"],
+            "concern": row["concern"],
+            "severity": row["severity"],
+            "rationale": row["rationale"],
+            "suggested_supplement_id": row["suggested_supplement_id"],
+            "race_day_format_adjustment": row["race_day_format_adjustment"],
+            "requires_medical_guidance": bool(row["requires_medical_guidance"]),
+        }
+        for row in rows
+    ]
+
+
 def _compute_activity_multiplier(
     db,
     framework_sport: str,
     phase: str,
+    smet_bands: dict[tuple[str, int], float] | None = None,
 ) -> tuple[float, dict[str, Any], bool]:
     low, high = _load_phase_weekly_hours(db, framework_sport, phase)
     if low is None or high is None:
+        multiplier = (
+            smet_bands.get((phase, 1))  # tier_index 1 = mid = phase default
+            if smet_bands is not None
+            else None
+        ) or _PHASE_DEFAULT_MULTIPLIER[phase]
         return (
-            _PHASE_DEFAULT_MULTIPLIER[phase],
+            multiplier,
             {"fallback": "phase_default_no_pla_row", "phase": phase},
             True,
         )
     mid = (low + high) / 2.0
     idx = _volume_tier_index(mid)
-    multiplier = _MULTIPLIER_BANDS[phase][idx]
+    multiplier = (
+        smet_bands.get((phase, idx)) if smet_bands is not None else None
+    ) or _MULTIPLIER_BANDS[phase][idx]
     return (
         multiplier,
         {"weekly_hours_mid": mid, "phase": phase, "volume_tier_index": idx},
@@ -575,7 +696,12 @@ def _resolve_sport_profile(disciplines: list[Layer2ADiscipline]) -> str:
     return top_profile
 
 
-def _sport_modifier(sport_profile: str) -> float:
+def _sport_modifier(
+    sport_profile: str,
+    cho_mod_table: dict[str, float] | None = None,
+) -> float:
+    if cho_mod_table is not None:
+        return cho_mod_table.get(sport_profile, cho_mod_table.get("default", 1.0))
     return _SPORT_PROFILE_CHO_MOD.get(sport_profile, _SPORT_PROFILE_CHO_MOD["default"])
 
 
@@ -685,11 +811,13 @@ def _build_race_day_fueling(
     lifestyle: Layer1Lifestyle,
     body_weight_kg: float,
     sport_profile: str,
+    fueling_table: dict[str, dict[str, Any]] | None = None,
+    cho_mod_table: dict[str, float] | None = None,
 ) -> tuple[RaceDayFueling, list[str]]:
     tier = _classify_duration_tier(event.estimated_duration_hr)
-    band = _FUELING_BANDS[tier]
+    band = (fueling_table or {}).get(tier) or _FUELING_BANDS[tier]
 
-    sport_mod = _sport_modifier(sport_profile)
+    sport_mod = _sport_modifier(sport_profile, cho_mod_table)
     salt_mod, _salt_label = _salt_tolerance_modifier(lifestyle.salt_electrolyte_tolerance)
     # #257 V3-I-4 — fluid scales on sweat *rate*, sodium on salt *loss*. The v2
     # `salt_electrolyte_tolerance` enum drove both; they vary independently.
@@ -1008,12 +1136,33 @@ def _has_pattern(dietary_pattern: list[str], target: str) -> bool:
 
 def _dietary_pattern_adjustments(
     lifestyle: Layer1Lifestyle,
+    dpf_rules: list[dict[str, Any]] | None = None,
 ) -> list[DietaryPatternFlag]:
     # §5.6 — case-insensitive pattern matching against the deployed
     # free-form list. Supplement-presence checks intentionally not run
     # (see §5.5 stub) — flags surface unconditionally when a pattern is
     # present so plan-gen can render the deficiency-risk warning.
-    flags: list[DietaryPatternFlag] = []
+    #
+    # Table-driven path (post-migration 0036): when dpf_rules is provided,
+    # iterate over the table rows and emit a flag for each rule whose pattern
+    # appears in the athlete's dietary_pattern list.
+    if dpf_rules is not None:
+        flags: list[DietaryPatternFlag] = []
+        for rule in dpf_rules:
+            if _has_pattern(lifestyle.dietary_pattern, rule["pattern"]):
+                flags.append(DietaryPatternFlag(
+                    pattern=rule["pattern"],
+                    concern=rule["concern"],
+                    severity=rule["severity"],
+                    rationale=rule["rationale"],
+                    suggested_supplement_id=rule["suggested_supplement_id"],
+                    race_day_format_adjustment=rule["race_day_format_adjustment"],
+                    requires_medical_guidance=rule["requires_medical_guidance"],
+                ))
+        return flags
+
+    # Hardcoded fallback (pre-migration window or table absent).
+    flags = []
     if _has_pattern(lifestyle.dietary_pattern, "Vegan"):
         flags.append(DietaryPatternFlag(
             pattern="Vegan",
@@ -1400,10 +1549,10 @@ def q_layer2e_nutrition_baseline_payload(
 ) -> Layer2EPayload:
     """Build the per-athlete nutrition baseline payload.
 
-    Pure query node per `Layer2E_Spec.md` §3 — single SQL footprint is
-    one indexed SELECT per phase on `layer0.phase_load_weekly_totals`
-    (4 SELECTs total). All other paths are pure-Python math against
-    spec-internal constant tables.
+    Pure query node per `Layer2E_Spec.md` §3. After migration 0036: 4 SELECTs
+    on `layer0.phase_load_weekly_totals` (one per phase) + 4 nutrition-table
+    SELECTs loaded once at call start. Nutrition tables soft-fail to hardcoded
+    constants if absent. See module docstring for the full query map.
 
     Vertical-slice ship: §5.5 supplement integration ships race-day
     suggestions (B1) + non-blocking contraindication screening across all
@@ -1430,6 +1579,13 @@ def q_layer2e_nutrition_baseline_payload(
     today = today or date.today()
     body_weight_kg = float(performance.body_weight_kg)
 
+    # Pre-load nutrition tables once (post-0036). Each loader soft-fails to None
+    # when the table is absent; callers fall back to the hardcoded constants.
+    smet_bands = _load_all_sport_met_values(db)
+    fueling_table = _load_all_race_fueling_bands(db)
+    cho_mod_table = _load_all_sport_profile_cho_mods(db)
+    dpf_rules = _load_all_dietary_pattern_rules(db)
+
     # §5.2 BMR + per-phase activity multiplier.
     bmr_kcal, bmr_method = _compute_bmr(identity, performance, today)
 
@@ -1437,7 +1593,7 @@ def q_layer2e_nutrition_baseline_payload(
     pla_fallback_phases: list[str] = []
     for phase in _PHASES:
         multiplier, source, fallback = _compute_activity_multiplier(
-            db, framework_sport, phase
+            db, framework_sport, phase, smet_bands
         )
         if fallback:
             pla_fallback_phases.append(phase)
@@ -1458,7 +1614,8 @@ def q_layer2e_nutrition_baseline_payload(
     race_day: list[RaceDayFueling] = []
     for ev in target_events:
         rdf, _blocked = _build_race_day_fueling(
-            ev, lifestyle, body_weight_kg, sport_profile
+            ev, lifestyle, body_weight_kg, sport_profile,
+            fueling_table=fueling_table, cho_mod_table=cho_mod_table,
         )
         race_day.append(rdf)
 
@@ -1469,7 +1626,7 @@ def q_layer2e_nutrition_baseline_payload(
     )
 
     # §5.6 dietary pattern adjustments.
-    dietary_flags_dpf = _dietary_pattern_adjustments(lifestyle)
+    dietary_flags_dpf = _dietary_pattern_adjustments(lifestyle, dpf_rules)
 
     # §5.7 sleep-dep overlay.
     sleep_dep_overlay, sleep_dep_flags = _build_sleep_dep_overlay(

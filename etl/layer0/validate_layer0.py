@@ -45,6 +45,7 @@ from etl.layer0.validation.phase_load_allocation_aggregators import (
     run_phase_load_allocation_aggregators,
 )
 from etl.layer0.validation.primary_movement_check import run_primary_movement
+from etl.layer0.validation.sport_met_values import run_sport_met_values
 from etl.layer0.validation.terrain_types_check import run_terrain_types
 from etl.layer0.validation.sport_sub_format_map import run_sport_sub_format_map
 from etl.layer0.validation.sum_to_100 import run_sum_to_100
@@ -168,6 +169,10 @@ def _v_phase_load_allocation_aggregators(r: dict) -> list[Violation]:
     return [Violation(e["id"], e["detail"]) for e in r["errors"]]
 
 
+def _v_sport_met_values(r: dict) -> list[Violation]:
+    return [Violation(e["id"], e["detail"]) for e in r["errors"]]
+
+
 @dataclass(frozen=True)
 class Check:
     name: str
@@ -194,6 +199,7 @@ CHECKS: tuple[Check, ...] = (
     Check("phase_load_allocation_aggregators",
           run_phase_load_allocation_aggregators,
           _v_phase_load_allocation_aggregators),
+    Check("sport_met_values", run_sport_met_values, _v_sport_met_values),
 )
 
 

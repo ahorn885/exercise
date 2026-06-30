@@ -86,6 +86,16 @@ from layer4.hashing import compute_payload_hash
 
 # ─── Fakes (mirror tests/test_layer2b.py) ────────────────────────────────────
 
+# The 4 nutrition-table loaders fire at the START of
+# q_layer2e_nutrition_baseline_payload() — before the PLA SELECTs.  They must
+# not consume from the FIFO response queue or the PLA rows shift by 4.
+_NUTRITION_TABLES: frozenset[str] = frozenset({
+    "sport_met_values",
+    "race_fueling_bands",
+    "sport_profile_cho_mod",
+    "dietary_pattern_flags",
+})
+
 
 class _FakeRow(dict):
     def __getitem__(self, key):
@@ -110,6 +120,9 @@ class _FakeConn:
     def __init__(self):
         self.calls: list[tuple[str, tuple]] = []
         self.responses: list[dict | None] = []
+        # Keyed by table name; rows returned by nutrition-table queries without
+        # consuming from the FIFO queue (default: empty → soft-fail fallback).
+        self._nutrition_table_rows: dict[str, list] = {}
 
     def queue_pla_row(self, weekly_low_hours: float, weekly_high_hours: float):
         self.responses.append(
@@ -136,8 +149,17 @@ class _FakeConn:
             for sid, name, contra in rows
         ])
 
+    def queue_nutrition_table(self, table_name: str, rows: list[dict]) -> None:
+        """Pre-configure rows for a nutrition table (bypasses FIFO queue)."""
+        self._nutrition_table_rows[table_name] = rows
+
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        # Nutrition table queries return configured rows (default []) without
+        # consuming from the FIFO queue so PLA/supp responses stay in order.
+        for table in _NUTRITION_TABLES:
+            if table in sql:
+                return _FakeCursor(rows=self._nutrition_table_rows.get(table, []))
         resp = self.responses.pop(0) if self.responses else None
         if isinstance(resp, list):
             return _FakeCursor(rows=resp)
@@ -1237,3 +1259,200 @@ class TestMacroBandsEvidenceBased:
         )
         peak = payload.daily_nutrition_baseline.per_phase["Peak"].macros
         assert peak.protein_g_per_kg == 2.2
+
+
+# ─── Phase-4 table-driven parity (#229 + #233) ──────────────────────────────
+# Verify that when the DB tables contain the same values as the hardcoded
+# constants, the builder output is byte-for-byte identical to the no-table
+# (soft-fail) path. These guard against loader bugs and schema drift.
+
+
+class TestNutritionTableParity:
+    """Table rows == hardcoded constants → identical output."""
+
+    # ── sport_met_values (#233) ──────────────────────────────────────────────
+
+    def _smet_rows(self) -> list[dict]:
+        """16 rows matching _MULTIPLIER_BANDS in layer2e/builder.py."""
+        bands = {
+            "Base":  [1.40, 1.55, 1.70, 1.85],
+            "Build": [1.60, 1.75, 1.90, 2.05],
+            "Peak":  [1.75, 1.90, 2.10, 2.30],
+            "Taper": [1.55, 1.70, 1.85, 2.00],
+        }
+        rows = []
+        for phase, mults in bands.items():
+            for idx, mult in enumerate(mults):
+                rows.append({"phase": phase, "volume_tier_index": idx, "multiplier": mult})
+        return rows
+
+    def test_smet_table_multiplier_matches_hardcoded(self):
+        # Build phase, midpoint of 10-14 hr/wk → tier index 2 → 1.90.
+        # With the table loaded the result must equal the hardcoded path.
+        db = _FakeConn()
+        db.queue_pla_for_all_phases(
+            base=(8.0, 12.0), build=(10.0, 14.0),
+            peak=(12.0, 16.0), taper=(6.0, 10.0),
+        )
+        db.queue_nutrition_table("sport_met_values", self._smet_rows())
+
+        payload = _andy_baseline_call(db)
+        build = payload.daily_nutrition_baseline.per_phase["Build"]
+        assert build.activity_multiplier == 1.90
+
+        # Verify all 16 cells agree with the hardcoded bands.
+        db2 = _FakeConn()
+        db2.queue_pla_for_all_phases(
+            base=(8.0, 12.0), build=(10.0, 14.0),
+            peak=(12.0, 16.0), taper=(6.0, 10.0),
+        )
+        ref = _andy_baseline_call(db2)
+        for phase in ("Base", "Build", "Peak", "Taper"):
+            assert (
+                payload.daily_nutrition_baseline.per_phase[phase].activity_multiplier
+                == ref.daily_nutrition_baseline.per_phase[phase].activity_multiplier
+            ), f"Parity failed for phase={phase}"
+
+    # ── race_fueling_bands + sport_profile_cho_mod (#229) ───────────────────
+
+    def _fueling_rows(self) -> list[dict]:
+        """5 rows matching _FUELING_BANDS in layer2e/builder.py."""
+        tiers = [
+            ("tier_short",              60.0, 90.0, 500.0,  800.0,  500.0, 750.0, None, None, None),
+            ("tier_mid",                60.0, 90.0, 600.0, 1000.0,  400.0, 700.0, None, None, None),
+            ("tier_long",               50.0, 80.0, 500.0,  800.0,  400.0, 700.0,    8,  5.0,  5.0),
+            ("tier_expedition",         40.0, 70.0, 400.0,  700.0,  None,  None,     8,  5.0, 10.0),
+            ("tier_extended_expedition",40.0, 70.0, 400.0,  700.0,  None,  None,     8,  5.0, 10.0),
+        ]
+        rows = []
+        for t, cl, ch, nl, nh, fl, fh, thr, flat, init in tiers:
+            rows.append({
+                "duration_tier": t,
+                "cho_low": cl, "cho_high": ch,
+                "na_low": nl, "na_high": nh,
+                "fluid_low": fl, "fluid_high": fh,
+                "protein_after_hr_threshold": thr,
+                "protein_g_per_hr_flat": flat,
+                "protein_g_initial": init,
+            })
+        return rows
+
+    def _cho_mod_rows(self) -> list[dict]:
+        """7 rows matching _SPORT_PROFILE_CHO_MOD in layer2e/builder.py."""
+        mods = [
+            ("running", 0.85), ("cycling", 1.0), ("swimming", 0.6),
+            ("paddling", 0.9), ("multi_sport", 0.95), ("skimo", 0.9), ("default", 1.0),
+        ]
+        return [{"sport_profile": p, "cho_modifier": m} for p, m in mods]
+
+    def test_fueling_table_output_matches_hardcoded(self):
+        # Marathon event (4 hr → tier_short, running sport profile → 0.85).
+        # Table rows == constants → output must match the no-table path exactly.
+        marathon_event = Layer2ETargetEvent(
+            event_id="m1", event_name="Marathon",
+            event_date=date(2026, 8, 1),
+            framework_sport="Marathon",
+            estimated_duration_hr=4.0,
+        )
+        running_only = [_ar_discipline("D-001", weight=1.0)]
+
+        def _run(with_tables: bool):
+            db = _FakeConn()
+            db.queue_pla_for_all_phases((4, 6), (6, 10), (8, 12), (3, 6))
+            if with_tables:
+                db.queue_nutrition_table("race_fueling_bands", self._fueling_rows())
+                db.queue_nutrition_table("sport_profile_cho_mod", self._cho_mod_rows())
+            return _andy_baseline_call(
+                db, target_events=[marathon_event], disciplines=running_only,
+                framework_sport="Marathon",
+            )
+
+        with_tbl = _run(True)
+        without  = _run(False)
+        rdf_t = with_tbl.race_day_fueling[0]
+        rdf_h = without.race_day_fueling[0]
+        assert rdf_t.duration_tier           == rdf_h.duration_tier
+        assert rdf_t.cho_g_per_hr_low        == rdf_h.cho_g_per_hr_low
+        assert rdf_t.cho_g_per_hr_high       == rdf_h.cho_g_per_hr_high
+        assert rdf_t.na_mg_per_hr_low        == rdf_h.na_mg_per_hr_low
+        assert rdf_t.na_mg_per_hr_high       == rdf_h.na_mg_per_hr_high
+        assert rdf_t.sport_modifier_applied  == rdf_h.sport_modifier_applied
+
+    # ── dietary_pattern_flags (#229) ─────────────────────────────────────────
+
+    def _dpf_rows(self) -> list[dict]:
+        """4 rows matching the hardcoded dietary_pattern logic."""
+        return [
+            {
+                "pattern": "Vegan", "concern": "b12_deficiency_risk",
+                "severity": "moderate",
+                "rationale": (
+                    "Vegan diet without B12 supplementation creates measurable "
+                    "deficiency risk within 6–18 months. Verify B12 in athlete's "
+                    "supplement protocol."
+                ),
+                "suggested_supplement_id": "vitamin_b12",
+                "race_day_format_adjustment": None,
+                "requires_medical_guidance": False,
+                "sort_order": 0,
+            },
+            {
+                "pattern": "Vegan", "concern": "iron_status_risk",
+                "severity": "low",
+                "rationale": (
+                    "Non-heme iron absorption is lower than heme; surveillance "
+                    "via periodic ferritin testing recommended for endurance "
+                    "athletes on plant-only diets."
+                ),
+                "suggested_supplement_id": "iron",
+                "race_day_format_adjustment": None,
+                "requires_medical_guidance": True,
+                "sort_order": 1,
+            },
+            {
+                "pattern": "Vegan", "concern": "epa_dha_conversion",
+                "severity": "low",
+                "rationale": (
+                    "ALA→EPA/DHA conversion is inefficient; algae-derived "
+                    "EPA/DHA supplementation closes the gap."
+                ),
+                "suggested_supplement_id": "omega_3",
+                "race_day_format_adjustment": None,
+                "requires_medical_guidance": False,
+                "sort_order": 2,
+            },
+            {
+                "pattern": "Low-FODMAP", "concern": "race_fueling_format_constraint",
+                "severity": "moderate",
+                "rationale": (
+                    "High-FODMAP gels (fructose-rich, polyol-containing) may "
+                    "trigger GI distress. Maltodextrin-dominant formats "
+                    "preferred for race-day fueling."
+                ),
+                "suggested_supplement_id": None,
+                "race_day_format_adjustment": "prefer_maltodextrin_dominant",
+                "requires_medical_guidance": False,
+                "sort_order": 0,
+            },
+        ]
+
+    def test_dpf_table_vegan_flags_match_hardcoded(self):
+        # Table-driven Vegan flags must produce the same 3 concerns as the
+        # hardcoded path.
+        def _run(with_tables: bool):
+            db = _FakeConn()
+            db.queue_pla_for_all_phases((4, 8), (6, 10), (8, 12), (3, 6))
+            if with_tables:
+                db.queue_nutrition_table("dietary_pattern_flags", self._dpf_rows())
+            ls = _andy_lifestyle().model_copy(update={"dietary_pattern": ["Vegan"]})
+            return _andy_baseline_call(db, target_events=[], lifestyle=ls)
+
+        with_tbl = _run(True)
+        without  = _run(False)
+        assert {f.concern for f in with_tbl.dietary_pattern_adjustments} == {
+            f.concern for f in without.dietary_pattern_adjustments
+        }
+        # The same 3 Vegan concerns must surface either way.
+        assert {f.concern for f in with_tbl.dietary_pattern_adjustments} == {
+            "b12_deficiency_risk", "iron_status_risk", "epa_dha_conversion",
+        }
