@@ -107,13 +107,19 @@ Exercisable on Vercel **once `BLOB_READ_WRITE_TOKEN` is set** (and ≥2 accounts
 
 ## 6. Next session pointers
 
-**#971 after this slice:** Slices 1 (name+geo dedup) + 2 (photos) + 3 (admin review) are all shipped. The **only remaining #971 piece** is the Slice-3 follow-up:
+**#971 after this slice:** Slices 1 (name+geo dedup) + 2 (photos) + 3 (admin review) are all shipped + merged. The **only remaining #971 piece** is the cross-layer plan-gen follow-up that descends from the Slice-3 design — **that is the committed next step (Andy 2026-06-29):**
 
-### 6.1 Approved for a later slice — plan-gen disputed-item treatment
-**Approved (Andy 2026-06-29): a disputed item should be treated as not-available for plan generation** (D-60 §5). A **Layer-2C slice** deriving disputed *tags* from open proposals' `removes` on a locale's shared profile and removing them from the equipment set Layer 2C resolves. It's a **cross-layer change (stop-and-ask trigger #3)** — its own slice, scoped + confirmed before building.
+### 6.1 THE COMMITTED NEXT STEP — plan-gen treats a disputed item as not-available (Layer 2C)
+**Approved (Andy 2026-06-29): a disputed item should be treated as not-available for plan generation** (D-60 §5). Build a **Layer-2C slice** that, for a locale's shared profile, derives the **disputed tags** from the open correction proposals on `gym_profiles.disputed_items` (the `removes` set Slice 3 records) and **removes them from the equipment set Layer 2C resolves** — so a tag a peer flagged as wrong stops driving plan prescriptions while it's under review. It is a **cross-layer change (stop-and-ask trigger #3)** — scope it, surface options/tradeoffs, and get Andy's explicit confirmation before building.
+
+Concrete starting points:
+- Slice 3's `_parse_profile_edits` / `_load_profile_edits` (`routes/locales.py`) already parse the proposal objects `{by, adds, removes, at}` — the disputed-tag set for a profile is the union of open proposals' `removes`.
+- Layer 2C equipment resolution flows through `_shared_equipment_set` + the overrides cascade; the disputed-tag subtraction is the new step. Confirm the exact resolution seam in `layer2c/` (and whether to subtract pre- or post-override) as part of scoping.
+- Decide the semantics with Andy: subtract disputed tags for **all** athletes inheriting that shared profile (every inheritor), and whether an *approved* correction (already folded into `equipment`) needs any further handling (it shouldn't — approval mutates the shared set directly).
+- It touches Layer 2C's input contract → spec the change (14-section depth standard) before code; likely a `Layer2C_Spec` cross-ref and an invalidation/eviction touch when `disputed_items` changes.
 
 ### 6.2 Operating notes for next session
-(1) Rule #13 read order: `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`. (2) **Andy owes `BLOB_READ_WRITE_TOKEN`** in the Vercel project (Storage → Blob) for photo upload to work in prod; the unit tests stub the Blob call so CI doesn't need it. (3) Postgres-only repo; the `_FakeConn` substrate in `tests/test_locales.py` and `_Conn`/`_GymPhotoConn` in `tests/test_redesign_admin_render.py` unit-test route/helper logic without a live DB. (4) `gym_profile_photos` is a public-schema migration (auto-applies on deploy) — **no layer0-apply owed.** (5) Admin moderation covers approve/reject of *pending* photos; removing an *already-approved* photo is uploader-only today — admin-removes-approved would be a small follow-up if needed.
+(1) Rule #13 read order: `CLAUDE.md` → `CURRENT_STATE.md` → `CARRY_FORWARD.md` → this handoff → `./scripts/verify-handoff.sh`. (2) **`BLOB_READ_WRITE_TOKEN` is DEPLOYED** as a Vercel env var (Andy 2026-06-29; manually added after the auto-connect was disrupted by an accidental first token) — photo upload is live in prod; no longer owed. (3) Postgres-only repo; the `_FakeConn` substrate in `tests/test_locales.py` and `_Conn`/`_GymPhotoConn` in `tests/test_redesign_admin_render.py` unit-test route/helper logic without a live DB. (4) `gym_profile_photos` is a public-schema migration (auto-applies on deploy) — **no layer0-apply owed.** (5) Admin moderation covers approve/reject of *pending* photos; removing an *already-approved* photo is uploader-only today — admin-removes-approved would be a small follow-up if needed.
 
 ---
 
