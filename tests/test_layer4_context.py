@@ -460,9 +460,7 @@ def _layer2a_payload() -> Layer2APayload:
         discipline_name="Trail Running",
         inclusion="included",
         role="Primary",
-        is_conditional=False,
         load_weight=WeightResult(value=0.4, source="system_default", system_default=0.4),
-        sleep_deprivation_relevant=False,
         rationale="primary endurance discipline for the target event",
         phase_load=PhaseLoadBands(
             base_low=0.3,
@@ -483,14 +481,12 @@ def _layer2a_payload() -> Layer2APayload:
         disciplines=[disc],
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+            generated_at="2026-05-17T10:00:00Z"
         ),
     )
 

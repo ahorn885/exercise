@@ -193,8 +193,6 @@ class TrainingGap(_Base):
 
 class TrainingGapsSummary(_Base):
     flagged_count: int = Field(ge=0)
-    any_no_substitute: bool
-    any_multi_substitute_candidate: bool
 
 
 class UnresolvedFlag(_Base):
@@ -211,7 +209,6 @@ class Layer2ACoachingFlag(_Base):
 
 
 class RationaleMetadata(_Base):
-    template_version: str
     generated_at: str  # ISO timestamp string per spec
 
 
@@ -228,15 +225,8 @@ class Layer2ADiscipline(_Base):
     # profile + protein band. Both may be NULL for legacy rows.
     endurance_profile: str | None = None
     primary_movement: str | None = None
-    is_conditional: bool
-    conditional_resolution: Literal["athlete_opt_in"] | None = None
     load_weight: WeightResult
-    race_time_pct_low: float | None = None
-    race_time_pct_high: float | None = None
-    sport_specific_context: str | None = None
     phase_load: PhaseLoadBands | None = None
-    sleep_deprivation_relevant: bool
-    training_gap: TrainingGap | None = None
     rationale: str
 
 
