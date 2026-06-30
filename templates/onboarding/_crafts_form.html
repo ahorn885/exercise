@@ -1,49 +1,43 @@
-{# Shared owned-craft picker (bike + paddle) — 2c.2b (#540).
+{# Shared owned-gear picker — 2c.2b (#540) + #884 slice 6c-2.
 
-   Used by the profile Athlete tab (wrapped in its own /profile/crafts form)
-   and the onboarding Skills step (saved with the skills form). The field names
-   `bike_types` / `paddle_crafts` are read by
-   athlete_crafts_repo.replace_athlete_crafts; the slugs double as
-   layer0.craft_discipline_aliases keys.
+   The onboarding Skills step's gear capture, generalized from the craft-only
+   catalog to the full unified gear registry (all kinds: bike/paddle/ski/snow/
+   climb/alpine), so onboarding and the profile Gear tab capture identically
+   (mirrors the 6a `save_gear` surface in profile/edit.html). Saved with the
+   skills form by `onboarding.skills_save`, which splits by kind: crafts →
+   `replace_athlete_crafts`, gear toggles → `replace_owned_gear_for_kinds`.
+
+   The per-row field name `gear__<gear_id>` carries the own/have-access value
+   and is read by `athlete_gear_repo.parse_gear_registry_form`.
 
    Inputs:
-     craft_catalog (dict)  — load_craft_catalog(): {'cycling': [...], 'paddling': [...]}
-                             each item {slug, label}.
-     athlete_crafts (dict) — get_athlete_crafts(): {'bike_types': [...],
-                             'paddle_crafts': [...]} (the currently-owned slugs).
-
-   Kept authoritative in one place so slug/label/help-text edits don't drift
-   between the two surfaces (mirrors _skills_form.html / _schedule_form.html).
+     gear_registry (list) — load_gear_registry_grouped(): [{group_kind, label,
+                            rows: [{gear_id, label, source}]}], grouped + ordered.
+     gear_access (dict)   — get_gear_access_map(): {gear_id: 'own'|'access'} for
+                            the currently-owned gear (drives the selected option).
 #}
 <div class="card card-pad stack">
   <div>
-    <p class="eyebrow">● Gear you own</p>
-    <p class="pf-hint">Check the bikes and paddle craft you have access to. The coach trains each
-      discipline on the closest craft you own — so a race leg that wants a mountain bike becomes
-      road-bike work if that's what you've got. Leave blank where it doesn't apply.</p>
+    <p class="eyebrow">● Your gear</p>
+    <p class="pf-hint">For each item, say whether you <strong>own</strong> it or just
+      <strong>have access</strong> (a gym, a rental, a friend's). The coach trains each discipline
+      on the closest gear you can use — so a ski leg can be trained on rollerskis, or a mountain-bike
+      leg on a road bike. Leave anything you can't use unset.</p>
   </div>
-  <div class="pf-grid">
-    <fieldset class="field field-wide">
-      <span class="lbl">Bikes</span>
-      {% for c in craft_catalog.cycling %}
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" id="bike_{{ c.slug }}"
-               name="bike_types" value="{{ c.slug }}"
-               {% if c.slug in athlete_crafts.bike_types %}checked{% endif %}>
-        <label class="form-check-label" for="bike_{{ c.slug }}">{{ c.label }}</label>
-      </div>
-      {% endfor %}
-    </fieldset>
-    <fieldset class="field field-wide">
-      <span class="lbl">Paddle craft</span>
-      {% for c in craft_catalog.paddling %}
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" id="paddle_{{ c.slug }}"
-               name="paddle_crafts" value="{{ c.slug }}"
-               {% if c.slug in athlete_crafts.paddle_crafts %}checked{% endif %}>
-        <label class="form-check-label" for="paddle_{{ c.slug }}">{{ c.label }}</label>
-      </div>
-      {% endfor %}
-    </fieldset>
-  </div>
+  {% for grp in gear_registry %}
+  <fieldset class="field field-wide gear-group">
+    <span class="lbl">{{ grp.label }}</span>
+    {% for item in grp.rows %}
+    <div class="gear-row">
+      <label class="gear-row-label" for="gear__{{ item.gear_id }}">{{ item.label }}</label>
+      <select class="form-select form-select-sm gear-row-access"
+              id="gear__{{ item.gear_id }}" name="gear__{{ item.gear_id }}">
+        <option value="">Don't have</option>
+        <option value="own" {% if gear_access.get(item.gear_id) == 'own' %}selected{% endif %}>Own</option>
+        <option value="access" {% if gear_access.get(item.gear_id) == 'access' %}selected{% endif %}>Have access</option>
+      </select>
+    </div>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
 </div>
