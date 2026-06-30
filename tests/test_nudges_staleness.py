@@ -41,18 +41,21 @@ from routes.nudges import (  # noqa: E402
     NUDGE_REGISTRY,
     PLAN_REVIEW_RUNGS,
     RAIN_PROB_PCT,
+    SCREENING_REASSESS_LEAD_DAYS,
     _STALENESS_RECONCILE,
     get_active_nudges,
 )
 
 STALENESS_TYPES = ['log_reminder', 'body_metric_stale', 'injury_review']
 # All types the reconcile cron arms/clears — the staleness three plus the
-# plan-attention nudge, the race-week reminder, and the conditions advisory (each
-# covered on its own below; `plan_needs_review` / `conditions_advisory` are
+# plan-attention nudge, the race-week reminder, the conditions advisory, and
+# the health-screening reassessment reminder (each covered on its own below;
+# `plan_needs_review` / `conditions_advisory` / `health_screening_due` are
 # `warning`, so they're excluded from the `info`-asserting parametrized tests
 # above).
 RECONCILE_TYPES = STALENESS_TYPES + [
-    'plan_needs_review', 'race_week_plan_due', 'conditions_advisory']
+    'plan_needs_review', 'race_week_plan_due', 'conditions_advisory',
+    'health_screening_due']
 
 
 # ─── Shared fake conn (mirrors tests/test_nudges.py) ────────────────────────
@@ -203,6 +206,27 @@ class TestConditionsAdvisoryWiring:
         assert np.default_enabled('conditions_advisory', 'push') is True
         # Email non-applicable — no nudge→email path (same posture as staleness).
         assert np.is_applicable('conditions_advisory', 'email') is False
+
+
+class TestHealthScreeningDueWiring:
+    """#394 D-83 — the annual reassessment reminder. `warning` category (same
+    liability-relevant class as `conditions_advisory`), but unlike the other
+    #964-era staleness types it has no dedicated `notification_type` — it
+    rolls up under the 'account_reminders' catch-all like the onboarding
+    nudges, rather than claiming an independently-mutable settings toggle."""
+
+    def test_registry_entry(self):
+        entry = NUDGE_REGISTRY['health_screening_due']
+        assert entry['message']
+        assert entry['cta_label']
+        assert entry['cta_endpoint'] == 'onboarding.health_screening'
+        assert entry['category'] == 'warning'
+        assert entry.get('display_delay_days', 0) == 0
+
+    def test_rolls_up_to_account_reminders(self):
+        # No dedicated `notification_type` key ⇒ get_active_nudges' .get()
+        # default applies.
+        assert 'notification_type' not in NUDGE_REGISTRY['health_screening_due']
 
 
 # ─── 2. Preference gating in get_active_nudges ──────────────────────────────
@@ -359,6 +383,25 @@ class TestReconcileSpec:
         assert 'DELETE FROM account_nudges an' in dele
         assert 'NOT EXISTS' in dele
         assert 'uc.user_id = an.user_id' in dele
+
+    def test_health_screening_due_spec_targets_reassessment_due_window(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'health_screening_due')
+        ins = ' '.join(spec['insert'].split())
+        dele = ' '.join(spec['delete'].split())
+        # No escalation ladder — one persistent reminder until reassessed.
+        assert 'resurface' not in spec
+        # `reassessment_due_at` is a real TIMESTAMP (unlike the ISO-text `date`
+        # columns the other staleness types compare via TO_CHAR) — both arm and
+        # clear compare it directly against NOW() + the lead-day interval.
+        assert 'FROM health_screening hs' in ins
+        assert "INTERVAL '%d days'" % SCREENING_REASSESS_LEAD_DAYS in ins
+        assert "INTERVAL '%d days'" % SCREENING_REASSESS_LEAD_DAYS in dele
+        assert 'hs.reassessment_due_at <= NOW()' in ins
+        # Clears once a voluntary reassessment pushes the due date back out
+        # (the opposite comparison, correlated to the nudge's own user).
+        assert 'hs.reassessment_due_at > NOW()' in dele
+        assert 'hs.user_id = an.user_id' in dele
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):

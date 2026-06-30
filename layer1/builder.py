@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Any
 
 from athlete_event_windows_repo import load_event_windows
+from health_screening_repo import PREGNANCY_FLAG
 from layer4.context import (
     AthleteNetworkLink,
     AthleteSupplementRecord,
@@ -111,6 +112,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     supplements = _load_supplements(db, user_id)
     travel_constraint = _summarize_travel_constraint(db, user_id)
     coaching_preferences = _load_coaching_preferences(db, user_id)
+    pregnancy_status = _load_pregnancy_status(db, user_id)
 
     health_status = Layer1HealthStatus(
         current_injuries=current_injuries,
@@ -120,6 +122,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         medications_active=medications_active,
         medications_history=medications_history,
         resting_hr_bpm=resting_hr_bpm,
+        pregnancy_status=pregnancy_status,
     )
     training_history = Layer1TrainingHistory(
         **training_scalars,
@@ -624,6 +627,23 @@ def _load_medications(
         else:
             history.append(record)
     return active, history
+
+
+# ─── health_screening — pregnancy flag ───────────────────────────────────────
+
+
+def _load_pregnancy_status(db, user_id: int) -> bool | None:
+    """True/False/None = pregnant / not-pregnant / no-screening-row (#223)."""
+    row = db.execute(
+        "SELECT flags FROM health_screening WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    flags = row["flags"] or []
+    status = PREGNANCY_FLAG in flags
+    print(f"[layer1 pregnancy-status] user_id={user_id} pregnancy_status={status} records={len(flags)}")
+    return status
 
 
 # ─── athlete_secondary_sports ────────────────────────────────────────────────

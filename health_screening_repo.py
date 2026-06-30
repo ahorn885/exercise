@@ -160,3 +160,52 @@ def save_screening(db, user_id, *, flags, details, details_optin) -> None:
             bool(details_optin),
         ),
     )
+
+
+def get_pregnancy_flag(db, user_id) -> bool | None:
+    """True/False/None = pregnant / not-pregnant / no-screening-row.
+
+    Reads from any health_screening row (acknowledged or not) so the
+    profile-edit toggle reflects the current flag immediately.
+    """
+    if user_id is None:
+        return None
+    row = db.execute(
+        "SELECT flags FROM health_screening WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    flags = row["flags"] or []
+    if isinstance(flags, str):
+        flags = json.loads(flags)
+    return PREGNANCY_FLAG in flags
+
+
+def set_pregnancy_flag(db, user_id, is_pregnant: bool) -> None:
+    """Add or remove the PREGNANCY flag on the screening row.
+
+    Creates a bare unacknowledged row if none exists. Caller commits.
+    """
+    row = db.execute(
+        "SELECT flags FROM health_screening WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        flags: list[str] = [PREGNANCY_FLAG] if is_pregnant else []
+        db.execute(
+            "INSERT INTO health_screening (user_id, screening_version, flags, details) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, SCREENING_VERSION, json.dumps(flags), json.dumps({})),
+        )
+        return
+    raw = row["flags"] or []
+    flags = list(raw if isinstance(raw, list) else json.loads(raw))
+    if is_pregnant and PREGNANCY_FLAG not in flags:
+        flags.append(PREGNANCY_FLAG)
+    elif not is_pregnant:
+        flags = [f for f in flags if f != PREGNANCY_FLAG]
+    db.execute(
+        "UPDATE health_screening SET flags = ?, updated_at = NOW() WHERE user_id = ?",
+        (json.dumps(flags), user_id),
+    )
