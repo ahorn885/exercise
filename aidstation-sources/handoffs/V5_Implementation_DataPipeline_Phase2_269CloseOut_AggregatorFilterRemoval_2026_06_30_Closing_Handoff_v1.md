@@ -67,8 +67,8 @@ Per the campaign kickoff (decision already locked, no stop-and-ask owed):
 
 | Claim | File | Anchor / check |
 |---|---|---|
-| D-05 filter gone from PLA join | `layer2a/builder.py` | `grep -c "WEEKLY TOTAL" layer2a/builder.py` → 1 (the docstring mention only; no `NOT LIKE`) |
-| aggregator exemption gone | `etl/layer0/validation/default_inclusion.py` | `grep -c "WEEKLY TOTAL TARGET" default_inclusion.py` → 1 (docstring only; no `if … continue`) |
+| D-05 filter gone from PLA join | `layer2a/builder.py` | `grep -n "NOT LIKE" layer2a/builder.py` → only the line-20 docstring reference; the `_load_disciplines` SQL has no `NOT LIKE` clause |
+| aggregator exemption gone | `etl/layer0/validation/default_inclusion.py` | `grep -c "WEEKLY TOTAL TARGET" default_inclusion.py` → 1 (docstring only; the loop has no `if … continue` skip) |
 | filter test removed | `tests/test_layer2a.py` | `grep -c "WEEKLY TOTAL\|PercentEscape" tests/test_layer2a.py` → 0 |
 | D-05 resolved in spec | `specs/Layer2A_Spec.md` | `grep "Resolved (#269)" specs/Layer2A_Spec.md` present |
 | standing rule withdrawn | `specs/Control_Spec_v8.md` | §8.2 D-05 bullet contains "RESOLVED (#269" / "withdrawn" |
