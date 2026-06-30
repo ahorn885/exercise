@@ -177,6 +177,7 @@ class _RegisterDB:
         self.verified = []
         self.accepted = []
         self.committed = 0
+        self.rolled_back = 0
 
     def execute(self, sql, params=()):
         s = ' '.join(sql.split())
@@ -202,6 +203,12 @@ class _RegisterDB:
 
     def commit(self):
         self.committed += 1
+
+    def rollback(self):
+        # register() rolls back the standalone rx-seed transaction when the seed
+        # raises (here the stub raises AssertionError on the seed SQL), leaving
+        # the already-committed user intact. Mirrors _PgConn.rollback.
+        self.rolled_back += 1
 
 
 def _auth_app():
