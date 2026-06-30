@@ -110,11 +110,14 @@ class TestMathConsumersReadFeed:
 
     def test_coaching_recent_cardio_reads_feed(self):
         src = _read("coaching.py")
+        # get_coaching_context's recent-cardio read (Slice 4a).
         assert "FROM canonical_cardio_feed" in src
-        # _get_performance_delta is intentionally left on raw cardio_log — it is
-        # already Postgres-broken (GROUP_CONCAT + non-aggregated GROUP BY), a
-        # pre-existing bug flagged separately, not repointed in Slice 4a.
-        assert "LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id" in src
+        # _get_performance_delta's cardio join — repointed once #920's
+        # Postgres-incompatible SQL was fixed (Slice 4a's compliance repoint
+        # for this query was gated on that fix landing first).
+        assert "LEFT JOIN canonical_cardio_feed cl ON cl.plan_item_id = pi.id" in src
+        # the old raw-table join is gone (would double-count a cross-source ride)
+        assert "LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id" not in src
 
 
 class TestDisplayConsumersReadFeed:
