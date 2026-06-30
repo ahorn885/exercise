@@ -16,6 +16,38 @@
 {% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> · <b>Event windows</b>{% endblock %}
 
 {% block content %}
+{# One window row, shared by the upcoming list and the collapsed past-windows
+   section (#1057). #889 — for a multi-day reduced-volume window the per-day
+   editor is surfaced as a prominent action, not a buried inline link. #}
+{% macro window_row(w, locale_names, return_to) %}
+<tr>
+  <td class="mono">{% if w.start_date == w.end_date %}{{ w.start_date.isoformat() }} <span class="dim">(1 day)</span>{% else %}{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}{% endif %}</td>
+  <td>
+    {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
+    {% elif w.override_type == 'locale_unavailable' %}“{{ locale_names.get(w.unavailable_locale, w.unavailable_locale) }}” unavailable
+    {% elif w.override_type == 'away' %}Away at “{{ locale_names.get(w.away_locale, w.away_locale) }}”
+      {% if w.brought_gear %}<span class="dim">· with {{ w.brought_gear | join(', ') | replace('_', ' ') }}</span>{% endif %}
+    {% elif w.override_type == 'reduced_volume' %}Reduced volume
+      {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
+      {% else %}<span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day — every day)</span>{% endif %}
+      {% if w.start_date != w.end_date %}<div class="pf-perday"><a class="btn btn-ghost btn-sm" href="{{ url_for('profile.event_window_volume_days', window_id=w.id, return_to=return_to or none) }}">Set per-day levels →</a></div>{% endif %}
+    {% elif w.override_type == 'no_training' %}No training <span class="dim">(in transit · travel day)</span>
+    {% else %}{{ w.override_type }}{% endif %}
+  </td>
+  <td class="dim">{{ w.notes or '—' }}</td>
+  <td>
+    {# #237 — per-date restrictions (locale-lock / excluded disciplines /
+       indoor-only / time cap) for any window. #}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('profile.event_window_restrictions', window_id=w.id, return_to=return_to or none) }}">Per-day rules</a>
+    <form method="post"
+          action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+    </form>
+  </td>
+</tr>
+{% endmacro %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Training · event windows</p>
@@ -44,36 +76,27 @@
         <tr><th>Dates</th><th>Constraint</th><th>Notes</th><th></th></tr>
       </thead>
       <tbody>
-        {% for w in windows %}
-        <tr>
-          <td class="mono">{% if w.start_date == w.end_date %}{{ w.start_date.isoformat() }} <span class="dim">(1 day)</span>{% else %}{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}{% endif %}</td>
-          <td>
-            {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
-            {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
-            {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
-              {% if w.brought_gear %}<span class="dim">· with {{ w.brought_gear | join(', ') | replace('_', ' ') }}</span>{% endif %}
-            {% elif w.override_type == 'reduced_volume' %}Reduced volume
-              {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
-              {% else %}<span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day)</span>{% endif %}
-              {% if w.start_date != w.end_date %}<span class="dim">· <a href="{{ url_for('profile.event_window_volume_days', window_id=w.id, return_to=return_to or none) }}">Per-day levels</a></span>{% endif %}
-            {% elif w.override_type == 'no_training' %}No training <span class="dim">(in transit · travel day)</span>
-            {% else %}{{ w.override_type }}{% endif %}
-          </td>
-          <td class="dim">{{ w.notes or '—' }}</td>
-          <td>
-            <form method="post"
-                  action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="return_to" value="{{ return_to or '' }}">
-              <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
+        {% for w in windows %}{{ window_row(w, locale_names, return_to) }}{% endfor %}
       </tbody>
     </table>
     {% else %}
-    <p class="acct-hint">No event windows declared. Your plan resolves entirely against your home cluster.</p>
+    <p class="acct-hint">No upcoming event windows. Your plan resolves entirely against your home cluster.</p>
+    {% endif %}
+
+    {# #1057 — past windows are collapsed (not hidden) so the list stays relevant
+       but they remain reachable for review/removal. #}
+    {% if past_windows %}
+    <details class="pf-past-windows">
+      <summary>Past windows ({{ past_windows | length }})</summary>
+      <table class="table">
+        <thead>
+          <tr><th>Dates</th><th>Constraint</th><th>Notes</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for w in past_windows %}{{ window_row(w, locale_names, return_to) }}{% endfor %}
+        </tbody>
+      </table>
+    </details>
     {% endif %}
   </div>
 
@@ -112,13 +135,13 @@
           {% set ul = d.get('unavailable_locale', '') %}
           <select name="unavailable_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == ul else '' }}>{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == ul else '' }}>{{ loc.label }}</option>{% endfor %}
           </select></label>
         <label class="field field-full"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
           {% set al = d.get('away_locale', '') %}
           <select name="away_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == al else '' }}>{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == al else '' }}>{{ loc.label }}</option>{% endfor %}
           </select>
           <span class="dim">Destination not saved yet?
             <button type="submit" formnovalidate
@@ -149,8 +172,9 @@
             <option value="50"{{ ' selected' if vp == '50' or not vp else '' }}>50% — half day</option>
             <option value="75"{{ ' selected' if vp == '75' else '' }}>75% — slightly reduced</option>
           </select>
-          <span class="dim">Applies to <b>every</b> day in the window. For one reduced day inside a longer
-            trip, add it as its own one-day window (blank end date) so the rest isn't scaled too.</span></label>
+          <span class="dim">Sets a starting level for every day in the window. After you add a multi-day
+            window, use <b>Set per-day levels</b> on it to dial each day independently (e.g. a hard
+            travel day at 25% and the rest at 75%).</span></label>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
                  value="{{ d.get('notes', '') }}"

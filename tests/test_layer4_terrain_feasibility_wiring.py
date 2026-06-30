@@ -252,6 +252,78 @@ def test_build_craft_strength_when_no_bike_owned(monkeypatch):
     assert res.locale_id == "Gym"
 
 
+# ─── owned-gear is location-scoped (#1062 / #1066) ───────────────────────────
+
+
+def _patch_gear_locales(monkeypatch, mapping):
+    """Stub the per-locale gear store (`athlete_gear_locale`) the home cone reads."""
+    monkeypatch.setattr(orchestrator, "load_gear_locales", lambda db, uid: mapping)
+
+
+def _kayak_cone():
+    return _cone(
+        exercises=[],
+        flags=[],
+        disciplines=[
+            SimpleNamespace(discipline_id="D-010", discipline_name="Kayaking", inclusion="included"),
+        ],
+        paddle_crafts=["kayak"],  # owned in the global athlete_gear store
+    )
+
+
+def _patch_kayak(monkeypatch, *, cluster, terrain):
+    _patch_cluster(
+        monkeypatch, cluster=cluster, terrain=terrain,
+        equipment={loc: set() for loc in cluster}, gaps={},
+    )
+    _patch_craft(
+        monkeypatch,
+        craft_disc={"kayak": ["D-010"]},
+        craft_kind={"kayak": "paddle"},
+        disc_groups={"D-010": ["paddle_flatwater"]},
+        craft_terrain={"kayak": {"TRN-009"}},  # kayak rides flat water
+    )
+
+
+def _kayak_feasible_as_paddle(feas):
+    """Kayaking resolved by riding the owned kayak on the required water terrain
+    (craft owned outright → no swap/strength; exact on TRN-009)."""
+    res = feas.get("D-010")
+    return bool(res) and res.craft_tier == "" and res.tier == "exact"
+
+
+def test_owned_kayak_unplaced_is_feasible_at_home(monkeypatch):
+    # #1062 — own a kayak pinned to NO locale → "default to home cluster":
+    # kayaking is feasible on the home cluster's flat water (the regression: it
+    # used to read "not available at any of your locations").
+    cone = _kayak_cone()
+    _patch_kayak(monkeypatch, cluster=["Home"], terrain={"Home": {"TRN-009"}})
+    _patch_gear_locales(monkeypatch, {})  # unplaced
+    feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
+    assert _kayak_feasible_as_paddle(feas)
+
+
+def test_owned_kayak_kept_in_home_cluster_is_feasible(monkeypatch):
+    # #1062 — kayak explicitly kept at a home-cluster locale (rules a+b).
+    cone = _kayak_cone()
+    _patch_kayak(monkeypatch, cluster=["Home"], terrain={"Home": {"TRN-009"}})
+    _patch_gear_locales(monkeypatch, {"Home": ["kayak"]})
+    feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
+    assert _kayak_feasible_as_paddle(feas)
+
+
+def test_owned_kayak_kept_only_out_of_cluster_is_not_feasible(monkeypatch):
+    # #1062 / #1066 — kayak stored ONLY at an out-of-home-cluster locale and not
+    # brought → NOT available on the home plan. The craft is absent from the home
+    # cone, so the cascade can't ride it (it drops through to strength/reallocate,
+    # never a craft-owned paddle on water).
+    cone = _kayak_cone()
+    _patch_kayak(monkeypatch, cluster=["Home"], terrain={"Home": {"TRN-009"}})
+    _patch_gear_locales(monkeypatch, {"LakeHouse": ["kayak"]})  # not in the cluster
+    feas = orchestrator._build_terrain_feasibility(_FakeDb([]), 1, cone)
+    assert not _kayak_feasible_as_paddle(feas)
+
+
 def test_build_terrain_feasibility_climbing_no_gym_to_strength(monkeypatch):
     # Cluster has road + strength gear but no climbing terrain → climbing
     # resolves STRENGTH from its own mapped pool, ranked Critical→High→Medium.
@@ -544,3 +616,33 @@ def test_climbing_no_gym_resolution_surfaces_in_rendered_prompt():
     text = "\n".join(per_phase._format_session_feasibility(feas, l2a, l2c))
     assert "Weighted Pull-up" in text and "Hangboard Repeaters" in text
     assert "compose as strength" in text
+
+
+# ─── #237 — orchestrator builds PerDateRestriction from windows ───────────────
+
+
+def test_build_per_date_restrictions_flattens_windows():
+    """#237 — each window's restrictions_by_date becomes one PerDateRestriction
+    per restricted date, carrying all four fields into the validator's shape."""
+    from datetime import date as _date
+    w = SimpleNamespace(restrictions_by_date={
+        _date(2026, 6, 10): {
+            "locale_lock": "home", "discipline_exclusions": ["D-012"],
+            "indoor_only": True, "max_total_minutes": 60,
+        },
+    })
+    out = orchestrator._build_per_date_restrictions([w])
+    assert len(out) == 1
+    r = out[0]
+    assert r.date.date() == _date(2026, 6, 10)
+    assert r.locale_lock == "home"
+    assert r.discipline_exclusions == ["D-012"]
+    assert r.indoor_only is True
+    assert r.max_total_minutes == 60
+
+
+def test_build_per_date_restrictions_empty():
+    """No windows / empty maps → empty tuple, so the validator branches no-op."""
+    assert orchestrator._build_per_date_restrictions(None) == ()
+    assert orchestrator._build_per_date_restrictions(
+        [SimpleNamespace(restrictions_by_date={})]) == ()

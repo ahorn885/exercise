@@ -811,6 +811,7 @@ def _build_validator_context(
     layer3b_payload: Layer3BPayload,
     capacity_hours: float | None = None,
     owned_gear: frozenset[str] = frozenset(),
+    per_date_restrictions: tuple = (),
 ) -> ValidatorContext:
     """Bundle Layer2Bundle + 3A + 3B into a ValidatorContext for the §5.4
     rule harness. Per `Layer4_RefreshT1_v1.md` §6 + `Layer4_RefreshT2_v1.md`
@@ -829,6 +830,7 @@ def _build_validator_context(
         layer3b_payload=layer3b_payload,
         capacity_hours=capacity_hours,
         owned_gear=owned_gear,
+        per_date_restrictions=tuple(per_date_restrictions or ()),
     )
 
 
@@ -854,6 +856,7 @@ def llm_layer4_plan_refresh(
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
     terrain_feasibility: dict[str, Any] | None = None,
     event_window_segments: list[Any] | None = None,
+    per_date_restrictions: tuple = (),
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
     temperature: float = 0.4,
@@ -953,6 +956,7 @@ def llm_layer4_plan_refresh(
                 etl_version_set=etl_version_set,
                 terrain_feasibility=terrain_feasibility,
                 event_window_segments=event_window_segments,
+                per_date_restrictions=per_date_restrictions,
                 model_synthesizer=model_synthesizer,
                 model_seam_reviewer=(
                     model_seam_reviewer or "claude-sonnet-4-6"
@@ -1247,6 +1251,7 @@ def llm_layer4_plan_refresh(
             layer3b_payload,
             capacity_hours=weekly_capacity_hours(layer1_payload),
             owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
+            per_date_restrictions=per_date_restrictions,
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=retries_used
@@ -1332,6 +1337,7 @@ def _route_t3_cross_phase_to_pattern_a(
     etl_version_set: dict[str, str],
     terrain_feasibility: dict[str, Any] | None = None,
     event_window_segments: list[Any] | None = None,
+    per_date_restrictions: tuple = (),
     model_synthesizer: str,
     model_seam_reviewer: str,
     temperature: float,
@@ -1396,6 +1402,7 @@ def _route_t3_cross_phase_to_pattern_a(
         etl_version_set=etl_version_set,
         terrain_feasibility=terrain_feasibility,
         event_window_segments=event_window_segments,
+        per_date_restrictions=per_date_restrictions,
         model_synthesizer=model_synthesizer,
         model_seam_reviewer=model_seam_reviewer,
         temperature=temperature,

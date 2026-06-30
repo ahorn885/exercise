@@ -3630,6 +3630,10 @@ def synthesize_phase(
     # segments rendered into the per-phase overlay. Default None preserves
     # legacy call sites + athletes with no windows.
     event_window_segments: list[EventWindowSegment] | None = None,
+    # #237 — per-date restrictions (locale-lock / discipline-exclusions /
+    # indoor-only / time-cap) enforced by the validator's D-67-aware branches.
+    # Empty default keeps those branches no-ops (pre-#237 behaviour).
+    per_date_restrictions: tuple = (),
     # D-77: when set, scope this call to an inclusive `week_in_phase` range
     # (the per-week synthesis unit). None = whole phase (seam re-synth path).
     week_range: tuple[int, int] | None = None,
@@ -4108,6 +4112,7 @@ def synthesize_phase(
             capacity_hours=weekly_capacity_hours(layer1_payload),
             daily_availability_windows=daily_windows_from_layer1(layer1_payload),
             owned_gear=frozenset((layer1_payload or {}).get("owned_gear") or []),
+            per_date_restrictions=tuple(per_date_restrictions or ()),
         )
         validator_result = validate_layer4_payload(
             payload_attempt, ctx, pass_index=current_pass

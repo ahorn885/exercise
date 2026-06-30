@@ -113,6 +113,7 @@ from layer4.context import (
     Layer3APayload,
     Layer3BPayload,
     ParsedIntent,
+    PerDateRestriction,
     PlanManagementState,
     RaceEventPayload,
     TrainingSubstitutionPayload,
@@ -581,7 +582,27 @@ def _gather_feasibility_inputs(
 
     # Unified craft/terrain cascade (#586 WS-I) maps — craft disciplines walk
     # resolve_craft_terrain_feasibility; non-craft fall back to the terrain-only one.
-    owned_crafts = _collect_athlete_crafts(cone.layer1_payload)
+    # #1062 / #1066 — owned gear is LOCATION-SCOPED, not global. The home cone sees
+    # the crafts kept at any home-cluster locale (`athlete_gear_locale` ∩ cluster —
+    # rules a+b), PLUS owned crafts the athlete hasn't pinned to ANY locale (Andy's
+    # "default to home cluster": unplaced owned gear is treated as kept at home).
+    # A craft kept ONLY at an out-of-cluster locale (a kayak at a far lake house)
+    # is excluded here — it re-enters through the away overlay's brought∪standing
+    # union (rule c) when the athlete travels with it. This mirrors the away branch
+    # (`_build_event_window_overlay`: brought ∪ standing-at-destination) and replaces
+    # the old global `_collect_athlete_crafts`, which made every owned craft feasible
+    # at every locale and so never scoped a discipline (e.g. kayaking) to where the
+    # craft actually is.
+    gear_locale_map = load_gear_locales(db, user_id)
+    placed_anywhere = {g for gears in gear_locale_map.values() for g in gears}
+    kept_in_home_cluster = {
+        g for loc in cluster for g in gear_locale_map.get(loc, ())
+    }
+    unplaced_owned = set(cone.layer1_payload.owned_gear) - placed_anywhere
+    owned_crafts = sorted(
+        g for g in (kept_in_home_cluster | unplaced_owned)
+        if GEAR_REGISTRY.get(g) in _CRAFT_ALIAS_GROUP_KINDS
+    )
     craft_disciplines = _q_craft_discipline_aliases(db)
     craft_kind = _q_craft_group_kind(db)
     craft_terrain = _q_craft_terrain_compatibility(db)
@@ -1108,6 +1129,31 @@ def _build_event_window_overlay(
                 )
             )
     return segments, overlapping
+
+
+def _build_per_date_restrictions(
+    windows: "list | None",
+) -> tuple[PerDateRestriction, ...]:
+    """#237 — flatten each event window's `restrictions_by_date` into the
+    validator's `PerDateRestriction` list (one entry per restricted date). The
+    Layer 4 validator's D-67-aware branches enforce each restriction on its date;
+    an empty result keeps those branches no-ops (the pre-#237 behaviour). Built
+    once from the overlapping windows and threaded into both ValidatorContext
+    build sites (per_phase.synthesize_phase + plan_refresh._build_validator_context).
+    """
+    out: list[PerDateRestriction] = []
+    for w in windows or []:
+        for d, spec in (getattr(w, "restrictions_by_date", None) or {}).items():
+            out.append(
+                PerDateRestriction(
+                    date=datetime(d.year, d.month, d.day),
+                    locale_lock=spec.get("locale_lock"),
+                    discipline_exclusions=list(spec.get("discipline_exclusions") or []),
+                    indoor_only=bool(spec.get("indoor_only")),
+                    max_total_minutes=spec.get("max_total_minutes"),
+                )
+            )
+    return tuple(out)
 
 
 def _upstream_full_cone(
@@ -1899,6 +1945,9 @@ def orchestrate_plan_refresh(
     event_windows_hash = (
         compute_event_windows_hash(overlapping_windows) if overlapping_windows else None
     )
+    # #237 — per-date restrictions flattened from the overlapping windows, enforced
+    # by the validator's D-67-aware branches (empty → no-op).
+    per_date_restrictions = _build_per_date_restrictions(overlapping_windows)
 
     payload = llm_layer4_plan_refresh_cached(
         user_id=user_id,
@@ -1925,6 +1974,7 @@ def orchestrate_plan_refresh(
         # Event Windows (#581 WS-H) — date-scoped reduced-environment segments
         # (refresh overlay) + the declared-window digest (cache key).
         event_window_segments=event_window_segments,
+        per_date_restrictions=per_date_restrictions,
         event_windows_hash=event_windows_hash,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2_bundle.c)
@@ -2017,6 +2067,9 @@ def orchestrate_plan_create(
     event_windows_hash = (
         compute_event_windows_hash(overlapping_windows) if overlapping_windows else None
     )
+    # #237 — per-date restrictions flattened from the overlapping windows, enforced
+    # by the validator's D-67-aware branches (empty → no-op).
+    per_date_restrictions = _build_per_date_restrictions(overlapping_windows)
     # Layer 3D HITL gate (#213) — pre-synthesis, deterministic, no LLM. Aggregate
     # the upstream review items the nodes already emit (2A/2D/2E/3B) + apply the
     # athlete's prior resolutions (loaded from the persisted gate, so a re-run
@@ -2118,6 +2171,7 @@ def orchestrate_plan_create(
         # Event Windows Slice 1 — date-scoped reduced-environment segments
         # (synthesis overlay) + the declared-window digest (cache key).
         event_window_segments=event_window_segments,
+        per_date_restrictions=per_date_restrictions,
         event_windows_hash=event_windows_hash,
     )
     payload = _apply_locale_assign(db, user_id, payload, layer2c_payloads)

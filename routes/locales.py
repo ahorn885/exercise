@@ -39,11 +39,17 @@ def _stash_return_to():
         session[_LOCALE_RETURN_TO] = rt
 
 
-def _locale_flow_redirect():
+def _locale_flow_redirect(new_slug: str | None = None):
     """Terminal redirect after saving a locale: bounce back to the stashed
-    host-step path (consumed once) or fall back to the locale list."""
+    host-step path (consumed once) or fall back to the locale list. #1058:
+    when `new_slug` is supplied, tag the return URL with `new_locale=<slug>` so
+    the host step (e.g. the event-window form) can pre-select the location the
+    athlete just created — instead of leaving them to find and pick it again."""
     target = session.pop(_LOCALE_RETURN_TO, None)
     if target and target.startswith('/') and not target.startswith('//'):
+        if new_slug:
+            sep = '&' if '?' in target else '?'
+            target = f'{target}{sep}new_locale={new_slug}'
         return redirect(target)
     return redirect(url_for('locales.list_profiles'))
 
@@ -231,12 +237,16 @@ RESIDENTIAL_CATEGORIES = frozenset({'home_gym', 'other_residence'})
 
 
 def _category_default_private(category) -> bool:
-    """The category-derived privacy default (Track 1 §6). Residential
-    categories default private; everything else defaults shareable. A
-    categoryless locale (legacy enum slug / un-categorized manual entry)
-    falls back to the residential default — matching `_create_gym_profile`,
-    where `category or 'home_gym'` keeps the NOT-NULL column populated."""
-    return (category or 'home_gym') in RESIDENTIAL_CATEGORIES
+    """The category-derived privacy default (Track 1 §6). Only the explicit
+    residential categories default private; everything else — including a
+    categoryless locale (Mapbox returned no gym/fitness hint, a legacy enum
+    slug, an un-categorized manual entry) — defaults shareable. #1064: a
+    missing category must NOT force private. The athlete's opt-out toggle is
+    the only other way a shareable-category locale becomes private, and
+    `_create_gym_profile` now fills the NOT-NULL column with the non-residential
+    `'uncategorized'` sentinel (not `'home_gym'`) so this stays consistent on a
+    later re-read."""
+    return category in RESIDENTIAL_CATEGORIES
 
 
 def _resolve_private(category, sharing_opt_out) -> bool:
@@ -501,9 +511,14 @@ def _create_gym_profile(db, uid: int, profile_row, equipment_tags: set,
     display = profile_row['locale_name'] if _row_has(profile_row, 'locale_name') else None
     category = profile_row['category'] if _row_has(profile_row, 'category') else None
     # gym_profiles.category is NOT NULL. A categoryless locale (a legacy enum
-    # slug like 'home', or a manual entry the athlete didn't categorize)
-    # defaults to a private residential profile.
-    category = category or 'home_gym'
+    # slug like 'home', or a Mapbox/manual entry with no detected category)
+    # fills the column with the non-residential `'uncategorized'` sentinel.
+    # #1064: the old `'home_gym'` fallback was residential, so every locale
+    # Mapbox didn't tag as a gym was force-privatized even with the toggle off.
+    # `'uncategorized'` keeps the column populated AND stays shareable, so a
+    # later own-edit (which recomputes `private` from the stored category) does
+    # not silently re-privatize the locale.
+    category = category or 'uncategorized'
     mapbox_id = profile_row['mapbox_id'] if _row_has(profile_row, 'mapbox_id') else None
     opt_out = bool(sharing_opt_out) or bool(
         _row_has(profile_row, 'sharing_opt_out') and profile_row['sharing_opt_out']
@@ -537,6 +552,48 @@ def _link_gym_profile(db, uid: int, locale: str, gym_profile_id: int) -> None:
         '''UPDATE locale_profiles SET gym_profile_id = ?
            WHERE user_id = ? AND locale = ?''',
         (gym_profile_id, uid, locale),
+    )
+
+
+# #1065 — the assume-equipment choices offered on the new-location form. Each
+# maps to a `layer0.location_category_equipment_baseline` key (locations.
+# _BASELINE_DISPLAY); '' = "I'll specify" (the no-seed default). Restricted to the
+# two kits the issue calls out; the table also carries climbing/pool baselines if
+# we widen the picker later.
+ASSUME_EQUIPMENT_BASELINES = {
+    'hotel': 'general hotel-gym kit',
+    'commercial': 'general commercial-gym kit',
+}
+
+
+def _seed_locale_equipment_from_baseline(
+    db, uid: int, slug: str, baseline_key: str, *,
+    locale_name, category, mapbox_id, lat, lng, opt_out,
+) -> None:
+    """#1065 — seed a just-created locale's backing gym_profile from a category
+    equipment baseline ('hotel' / 'commercial'), so an athlete who picks "assume
+    hotel kit" at add-time starts from a sensible set instead of an empty editor
+    (they can still edit/remove afterwards). No-op when the key isn't a known
+    baseline or the baseline carries no equipment."""
+    if baseline_key not in ASSUME_EQUIPMENT_BASELINES:
+        return
+    baseline = locations.load_category_baselines(db).get(baseline_key, {})
+    equip = baseline.get('equipment') or set()
+    if not equip:
+        return
+    _categories, valid_names = _layer0_equipment(db)
+    profile_row = {
+        'locale_name': locale_name, 'category': category, 'mapbox_id': mapbox_id,
+        'lat': lat, 'lng': lng, 'sharing_opt_out': opt_out,
+    }
+    new_id = _create_gym_profile(
+        db, uid, profile_row, set(equip), valid_names, sharing_opt_out=opt_out,
+    )
+    if new_id:
+        _link_gym_profile(db, uid, slug, new_id)
+    print(  # Rule #15 — which kit the athlete assumed + how many items seeded.
+        f"[assume-equipment] uid={uid} locale={slug!r} kit={baseline_key!r} "
+        f"seeded={len(set(equip) & valid_names)}"
     )
 
 
@@ -1475,6 +1532,9 @@ def _save_mapbox_anchored(db, uid: int):
     # #446 — per-result opt-out: force this locale private even when Mapbox
     # returned a shareable category (e.g. a residence geocoded as a gym).
     opt_out = request.form.get('private') == '1'
+    # #1065 — optional "assume equipment kit" choice ('' / 'hotel' / 'commercial');
+    # seeds the new locale's equipment from the category baseline at add-time.
+    assume_kit = (request.form.get('assume_equipment') or '').strip()
     try:
         lng = float(request.form.get('lng') or '')
         lat = float(request.form.get('lat') or '')
@@ -1557,12 +1617,22 @@ def _save_mapbox_anchored(db, uid: int):
         (uid, slug, locale_name, mapbox_id, lat, lng,
          chain_id, chain_name, category, opt_out, raw_payload or place_name),
     )
+    # #1065 — if the athlete chose "assume hotel/commercial-gym kit", seed the
+    # locale's equipment from that category baseline now (before the commit) so
+    # the editor opens pre-filled instead of empty. A chain locale inherits the
+    # shared chain profile instead, so skip the seed there.
+    if assume_kit and not chain_id:
+        _seed_locale_equipment_from_baseline(
+            db, uid, slug, assume_kit,
+            locale_name=locale_name, category=category, mapbox_id=mapbox_id,
+            lat=lat, lng=lng, opt_out=opt_out,
+        )
     _ensure_home(db, uid, slug)  # first-locale-auto-home (Track 1 §10)
     db.commit()
     flash(f'Saved {locale_name}.', 'success')
     if chain_id:
         return redirect(url_for('locales.nearby_instances', locale=slug))
-    return _locale_flow_redirect()
+    return _locale_flow_redirect(new_slug=slug)
 
 
 # #941 — the coordinate-less manual-entry create path (`/locales/new/manual`,

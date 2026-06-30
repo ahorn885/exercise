@@ -51,6 +51,7 @@ from routes.locales import (
     _resolve_shared_profile,
     _review_profile_edit,
     _review_profile_photo,
+    _seed_locale_equipment_from_baseline,
     _terrain_choices,
     delete_locale,
 )
@@ -603,11 +604,13 @@ class TestEditLocaleTerrainPersists:
         # typing — production rows landed empty without it.
         assert '::text[]' in sql
 
-    def test_build_path_categoryless_defaults_private_residential(self, monkeypatch):
+    def test_build_path_categoryless_defaults_shareable(self, monkeypatch):
         """gym_profiles.category is NOT NULL — a categoryless locale (legacy
         enum slug, or a Mapbox/manual locale with no detected category) must
-        build a profile with a non-null category, defaulting to private
-        residential. Regression: NULL category 500'd /locales/<l>/edit."""
+        build a profile with a non-null category. #1064: that fallback is now
+        the non-residential `'uncategorized'` sentinel and the locale defaults
+        SHAREABLE (private=False) when the athlete didn't opt out. Regression:
+        NULL category 500'd /locales/<l>/edit."""
         app = _make_app()
         conn = _FakeConn()
         _seed_edit_layer0_equipment(conn, names=('Barbell',))
@@ -640,8 +643,8 @@ class TestEditLocaleTerrainPersists:
         assert gym_insert, 'expected a gym_profiles INSERT on the build path'
         # params = (mapbox_id, display, category, equipment_json, uid, uid, private)
         category, private = gym_insert[0][2], gym_insert[0][6]
-        assert category == 'home_gym', f'category must be non-null; got {category!r}'
-        assert private is True, 'categoryless residential build must be private'
+        assert category == 'uncategorized', f'category must be non-null; got {category!r}'
+        assert private is False, 'categoryless build must default shareable (#1064)'
 
     def test_inherit_path_writes_overrides_and_terrain(self, monkeypatch):
         app = _make_app()
@@ -791,11 +794,14 @@ class TestResolvePrivate:
         assert _category_default_private('home_gym') is True
         assert _category_default_private('other_residence') is True
 
-    def test_categoryless_defaults_private(self):
-        # gym_profiles defaults a category-less locale to home_gym, so the
-        # privacy default must match (private).
-        assert _category_default_private(None) is True
-        assert _category_default_private('') is True
+    def test_categoryless_defaults_shareable(self):
+        # #1064: a category-less locale (no Mapbox gym hint, legacy slug) now
+        # defaults SHAREABLE, not private. The build path fills the NOT-NULL
+        # column with the non-residential `'uncategorized'` sentinel, which is
+        # likewise shareable. Privacy then comes only from the opt-out toggle.
+        assert _category_default_private(None) is False
+        assert _category_default_private('') is False
+        assert _category_default_private('uncategorized') is False
 
     def test_shareable_categories_default_shared(self):
         assert _category_default_private('commercial_chain_gym') is False
@@ -1367,3 +1373,46 @@ class TestReviewProfilePhoto:
         conn = _FakeConn()
         conn.queue_response(row=None)
         assert _review_profile_photo(conn, 7, approve=True) is None
+
+
+class TestAssumeEquipmentBaseline:
+    """#1065 — picking "assume hotel/commercial-gym kit" at add-time seeds the
+    new locale's backing gym_profile from the category equipment baseline."""
+
+    def _patch_baselines(self, monkeypatch, mapping):
+        import routes.locales as locales_mod
+        monkeypatch.setattr(
+            locales_mod.locations, 'load_category_baselines', lambda db: mapping)
+        monkeypatch.setattr(
+            locales_mod, '_layer0_equipment',
+            lambda db: ([], {'Dumbbell', 'Treadmill', 'Bench', 'Barbell'}))
+
+    def test_hotel_kit_seeds_profile_with_baseline_equipment(self, monkeypatch):
+        self._patch_baselines(monkeypatch, {
+            'hotel': {'equipment': {'Dumbbell', 'Treadmill', 'Bench'}, 'terrain': set()},
+        })
+        conn = _FakeConn()
+        conn.queue_response(row={'id': 9})  # _create_gym_profile RETURNING id
+        _seed_locale_equipment_from_baseline(
+            conn, 1, 'hotel_x', 'hotel',
+            locale_name='Hotel X', category='hotel_gym', mapbox_id='mbx.1',
+            lat=1.0, lng=2.0, opt_out=False,
+        )
+        gym_insert = [p for sql, p in conn.calls if 'INSERT INTO gym_profiles' in sql]
+        assert gym_insert, 'expected a gym_profiles INSERT seeded from the baseline'
+        # params = (mapbox_id, display, category, equipment_json, ...) — the JSON
+        # array carries exactly the baseline's items (sorted canonical names).
+        equip_json = gym_insert[0][3]
+        assert '"Bench"' in equip_json and '"Dumbbell"' in equip_json
+        assert '"Treadmill"' in equip_json and 'Barbell' not in equip_json
+        assert _calls_matching(conn, 'SET gym_profile_id')  # linked to the locale
+
+    def test_specify_choice_is_noop(self, monkeypatch):
+        # '' (the "I'll specify" default) and any unknown key seed nothing.
+        self._patch_baselines(monkeypatch, {'hotel': {'equipment': {'Dumbbell'}}})
+        conn = _FakeConn()
+        _seed_locale_equipment_from_baseline(
+            conn, 1, 'x', '', locale_name='X', category=None, mapbox_id=None,
+            lat=None, lng=None, opt_out=False,
+        )
+        assert not any('INSERT INTO gym_profiles' in sql for sql, _ in conn.calls)

@@ -186,3 +186,183 @@ def test_volume_days_rejects_non_reduced_window(monkeypatch):
     with app.test_request_context('/event-windows/5/volume-days'):
         response = pf_mod.event_window_volume_days(5)
     assert response.status_code == 302  # redirected, not rendered
+
+
+# ─── location picker display names (#1049) + pre-select new locale (#1058) ────
+
+
+class _FakeLocaleCur:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeLocaleConn:
+    """Minimal conn whose only `execute` answers the event_windows() locale
+    SELECT with the supplied rows."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, sql, params=()):
+        return _FakeLocaleCur(self._rows)
+
+
+def _render_event_windows(monkeypatch, *, rows, url, draft=None, current_row=None,
+                          windows=None):
+    import os
+    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
+    os.environ.setdefault('DATABASE_URL', '')
+    import flask
+    import app as _appmod
+    import routes.profile as pf_mod
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_windows', lambda db, uid: windows or [])
+    monkeypatch.setattr(pf_mod, 'load_gear_registry_grouped', lambda: [])
+    with _appmod.app.test_request_context(url):
+        flask.g.current_user_row = current_row or {
+            'id': 7, 'username': 'o', 'display_name': 'O'}
+        if draft is not None:
+            flask.session['event_window_draft'] = draft
+        return pf_mod.event_windows()
+
+
+def test_event_windows_picker_shows_display_names(monkeypatch):
+    """#1049 — the location pickers render the refined display name
+    (`locale_name`), keeping the slug only as the option value."""
+    rows = [{'locale': 'horn_s_house', 'locale_name': "Horn's House"}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows')
+    assert 'value="horn_s_house"' in html              # slug stays the value
+    assert 'Horn&#39;s House' in html                  # display name is shown
+    assert '>horn_s_house<' not in html                # slug is never the label
+
+
+def test_event_windows_preselects_new_locale(monkeypatch):
+    """#1058 — returning from an inline /locales/new with ?new_locale=<slug>
+    pre-selects that location in the away field of the repopulated draft."""
+    rows = [{'locale': 'lake_house', 'locale_name': 'Lake House'}]
+    draft = {
+        'start_date': '', 'end_date': '', 'override_type': '',
+        'unavailable_locale': '', 'away_locale': '', 'brought_gear': [],
+        'volume_pct': '', 'notes': '',
+    }
+    html = _render_event_windows(
+        monkeypatch, rows=rows, draft=draft,
+        url='/profile/event-windows?new_locale=lake_house')
+    assert '<option value="lake_house" selected>Lake House</option>' in html
+
+
+def test_event_windows_ignores_unknown_new_locale(monkeypatch):
+    """#1058 — a `new_locale` the athlete doesn't own is not pre-selected."""
+    rows = [{'locale': 'lake_house', 'locale_name': 'Lake House'}]
+    draft = {
+        'start_date': '', 'end_date': '', 'override_type': '',
+        'unavailable_locale': '', 'away_locale': '', 'brought_gear': [],
+        'volume_pct': '', 'notes': '',
+    }
+    html = _render_event_windows(
+        monkeypatch, rows=rows, draft=draft,
+        url='/profile/event-windows?new_locale=someone_elses_place')
+    assert 'selected' not in html.split('name="away_locale"')[1].split('</select>')[0]
+
+
+# ─── collapse past windows (#1057) + surface per-day editor (#889) ────────────
+
+
+def test_event_windows_collapses_past_windows(monkeypatch):
+    """#1057 — fully-elapsed windows render in a collapsed "Past windows"
+    section, while upcoming ones stay in the main list."""
+    past = _reduced_window(start='2020-01-01', end='2020-01-03')
+    future = _reduced_window(start='2030-01-01', end='2030-01-03')
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows',
+        windows=[past, future])
+    main, sep, past_section = html.partition('<details')
+    assert sep, 'expected a <details> collapsed past-windows section'
+    assert 'Past windows (1)' in past_section
+    assert '2030-01-01' in main          # upcoming window in the main list
+    assert '2020-01-01' in past_section  # elapsed window collapsed away
+
+
+def test_add_form_hint_promotes_per_day_levels(monkeypatch):
+    """#889 — the reduced-volume hint points at the per-day editor instead of the
+    old "add a separate one-day window" misdirection."""
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(monkeypatch, rows=rows, url='/profile/event-windows')
+    assert 'Set per-day levels' in html
+    assert 'add it as its own one-day window' not in html
+
+
+def test_multiday_reduced_window_shows_per_day_cta(monkeypatch):
+    """#889 — a multi-day reduced-volume window surfaces a prominent link to the
+    per-day editor so the per-day schedule is actually discoverable."""
+    multiday = _reduced_window(start='2030-01-01', end='2030-01-05')
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows', windows=[multiday])
+    assert 'Set per-day levels' in html
+    assert 'volume-days' in html  # links to event_window_volume_days
+
+
+# ─── per-date restrictions editor (#237) ─────────────────────────────────────
+
+
+def test_event_window_restrictions_editor_renders(monkeypatch):
+    """#237 — the per-date restrictions editor renders a locale-lock, minutes cap,
+    and indoor-only control per covered date."""
+    import os
+    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
+    os.environ.setdefault('DATABASE_URL', '')
+    import flask
+    import app as _appmod
+    import routes.profile as pf_mod
+    win = _reduced_window(start='2026-07-03', end='2026-07-04',
+                          restrictions_by_date={})
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
+    with _appmod.app.test_request_context('/profile/event-windows/5/restrictions'):
+        flask.g.current_user_row = {'id': 7, 'username': 'o', 'display_name': 'O'}
+        html = pf_mod.event_window_restrictions(5)
+    assert 'name="lock_2026-07-03"' in html
+    assert 'name="mins_2026-07-03"' in html
+    assert 'name="indoor_2026-07-03"' in html
+    assert 'name="lock_2026-07-04"' in html  # one control set per covered day
+
+
+def test_event_window_restrictions_post_builds_map(monkeypatch):
+    """#237 — the POST collects per-date locale-lock / minutes / indoor into the
+    {date: spec} map and writes via the repo, then evicts the synthesis."""
+    from datetime import date
+    app = _make_profile_app()
+    conn = _FakeConn()
+    import routes.profile as pf_mod
+    win = _reduced_window(start='2026-07-03', end='2026-07-04',
+                          restrictions_by_date={})
+    captured, evicted = {}, []
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
+    monkeypatch.setattr(
+        pf_mod, 'update_event_window_restrictions_by_date',
+        lambda db, uid, wid, by_date: captured.update({'by_date': by_date}))
+    monkeypatch.setattr(
+        pf_mod, 'evict_plan_caches_on_event_windows_change',
+        lambda db, uid: evicted.append(uid))
+    with app.test_request_context(
+        '/event-windows/5/restrictions', method='POST',
+        data={'lock_2026-07-03': 'home', 'mins_2026-07-03': '60',
+              'indoor_2026-07-04': '1'},
+    ):
+        resp = pf_mod.save_event_window_restrictions(5)
+    bd = captured['by_date']
+    assert bd[date(2026, 7, 3)]['locale_lock'] == 'home'
+    assert bd[date(2026, 7, 3)]['max_total_minutes'] == '60'
+    assert bd[date(2026, 7, 4)]['indoor_only'] is True
+    assert evicted == [7] and resp.status_code == 302

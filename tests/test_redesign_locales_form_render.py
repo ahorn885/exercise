@@ -278,7 +278,9 @@ def test_event_windows_capture_renders_away_create_link():
     ]
     html = _render('profile/event_windows.html',
                    windows=[],
-                   locales=['home', 'belfast-hotel'],
+                   locales=[{'slug': 'home', 'label': 'home'},
+                            {'slug': 'belfast-hotel', 'label': 'belfast-hotel'}],
+                   locale_names={'home': 'home', 'belfast-hotel': 'belfast-hotel'},
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
                    gear_registry=registry)
     assert 'app-shell' in html
@@ -347,7 +349,9 @@ def test_event_windows_form_repopulates_from_draft():
     so the athlete doesn't re-enter what the strict-CSP reload would have wiped."""
     html = _render('profile/event_windows.html',
                    windows=[],
-                   locales=['home', 'belfast-hotel'],
+                   locales=[{'slug': 'home', 'label': 'home'},
+                            {'slug': 'belfast-hotel', 'label': 'belfast-hotel'}],
+                   locale_names={'home': 'home', 'belfast-hotel': 'belfast-hotel'},
                    override_types=('indoor_only', 'locale_unavailable', 'away'),
                    gear_registry=[{'group_kind': 'paddle', 'label': 'Paddle craft',
                                    'rows': [{'gear_id': 'packraft', 'label': 'Packraft'}]}],
@@ -521,11 +525,13 @@ def test_event_windows_list_renders_volume_labels():
 
 
 def test_event_windows_form_makes_single_day_ergonomic(monkeypatch):
-    """#889 — the end date is optional (blank = single day) and the form spells
-    out that a volume % blankets every covered day, so one reduced day inside a
-    longer trip is captured as its own one-day window."""
+    """#889 — the end date is optional (blank = single day) and the reduced-volume
+    hint points athletes at the per-day editor (not the old "make a separate
+    one-day window" misdirection) for fine-tuning each day."""
     html = _render('profile/event_windows.html',
-                   windows=[], locales=['home'],
+                   windows=[],
+                   locales=[{'slug': 'home', 'label': 'home'}],
+                   locale_names={'home': 'home'},
                    override_types=('indoor_only', 'locale_unavailable', 'away',
                                    'reduced_volume', 'no_training'),
                    craft_catalog={}, return_to=None, return_to_label=None,
@@ -535,16 +541,17 @@ def test_event_windows_form_makes_single_day_ergonomic(monkeypatch):
     end_input_end = end_field.index('>')
     assert 'required' not in end_field[:end_input_end]
     assert 'leave blank for a single day' in html
-    # The reduced-volume control names its per-day scope so the athlete knows to
-    # split a single reduced day out of a longer trip.
-    assert 'Applies to' in html and 'every' in html
-    assert 'one-day window' in html
+    # #889 — the hint promotes the per-day editor; the old "add a one-day window"
+    # misdirection (which masked per-day levels) is gone.
+    assert 'Set per-day levels' in html
+    assert 'one-day window' not in html
     assert 'style="' not in html and 'onclick=' not in html  # strict CSP
 
 
 def test_event_windows_list_links_to_per_day_editor_for_multiday_reduced():
-    """#889 — a MULTI-day reduced_volume window offers a 'Per-day levels' link to
-    the per-date editor; a single-day one doesn't (nothing to spread)."""
+    """#889 — a MULTI-day reduced_volume window offers a prominent 'Set per-day
+    levels' action to the per-date editor; a single-day one doesn't (nothing to
+    spread)."""
     html = _render('profile/event_windows.html',
                    windows=[
                        _ew('2026-07-03', '2026-07-07', 'reduced_volume',
@@ -552,11 +559,12 @@ def test_event_windows_list_links_to_per_day_editor_for_multiday_reduced():
                        _ew('2026-07-10', '2026-07-10', 'reduced_volume',
                            id=2, volume_pct=0.5),
                    ],
-                   locales=['home'],
+                   locales=[{'slug': 'home', 'label': 'home'}],
+                   locale_names={'home': 'home'},
                    override_types=('reduced_volume', 'no_training'),
                    craft_catalog={}, return_to=None, return_to_label=None,
                    draft=None)
-    assert 'Per-day levels' in html
+    assert 'Set per-day levels' in html
     assert '/event-windows/1/volume-days' in html
     assert '/event-windows/2/volume-days' not in html  # single day → no link
 

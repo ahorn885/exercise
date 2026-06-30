@@ -25,6 +25,7 @@ from athlete_event_windows_repo import (
     delete_event_window,
     load_event_window,
     load_event_windows,
+    update_event_window_restrictions_by_date,
     update_event_window_volume_by_date,
 )
 from layer4.context import (
@@ -1398,6 +1399,91 @@ class TestPerDateVolumeRepo:
             update_event_window_volume_by_date(
                 conn, 7, 99, {date(2026, 6, 11): 0.5}
             )
+
+
+class TestPerDateRestrictionsRepo:
+    """#237 — per-DATE restrictions: load round-trip + the writer's validation,
+    normalization, and persistence."""
+
+    def _row(self, **kw):
+        base = {
+            "id": 1, "user_id": 7, "start_date": "2026-06-10",
+            "end_date": "2026-06-12", "override_type": "indoor_only",
+            "unavailable_locale": None, "away_locale": None,
+            "brought_gear": None, "volume_pct": None, "volume_by_date": None,
+            "restrictions_by_date": None, "notes": "",
+        }
+        base.update(kw)
+        return base
+
+    def test_load_parses_restrictions_by_date_json(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row(restrictions_by_date=json.dumps({
+            "2026-06-10": {"locale_lock": "home", "discipline_exclusions": ["D-012"],
+                           "indoor_only": True, "max_total_minutes": 60},
+        }))])
+        w = load_event_window(conn, 7, 1)
+        assert w.restrictions_by_date == {
+            date(2026, 6, 10): {
+                "locale_lock": "home", "discipline_exclusions": ["D-012"],
+                "indoor_only": True, "max_total_minutes": 60,
+            }
+        }
+
+    def test_load_absent_column_is_empty(self):
+        # A driver row without the column (pre-migration / fake) → {} not a crash.
+        conn = _FakeConn()
+        row = self._row()
+        del row["restrictions_by_date"]
+        conn.queue_response(rows=[row])
+        assert load_event_window(conn, 7, 1).restrictions_by_date == {}
+
+    def test_writer_serializes_sorted_and_normalized(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])  # load_event_window SELECT
+        update_event_window_restrictions_by_date(conn, 7, 1, {
+            date(2026, 6, 12): {"indoor_only": True},
+            date(2026, 6, 10): {"max_total_minutes": 45,
+                                "discipline_exclusions": ["D-012", "D-012"]},
+        })
+        sql, params = conn.calls[-1]
+        assert "UPDATE athlete_event_windows" in sql
+        stored = json.loads(params[0])
+        assert list(stored.keys()) == ["2026-06-10", "2026-06-12"]  # sorted
+        assert stored["2026-06-10"]["max_total_minutes"] == 45
+        assert stored["2026-06-10"]["discipline_exclusions"] == ["D-012"]  # de-duped
+        assert stored["2026-06-12"]["indoor_only"] is True
+
+    def test_writer_drops_empty_day_and_clears_when_all_empty(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        update_event_window_restrictions_by_date(conn, 7, 1, {
+            date(2026, 6, 11): {"indoor_only": False, "discipline_exclusions": []},
+        })
+        _sql, params = conn.calls[-1]
+        assert params[0] is None  # no real restriction → cleared
+
+    def test_writer_validates_locale_lock_exists(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])     # load_event_window
+        conn.queue_response(rows=[])                # _locale_exists → not found
+        with pytest.raises(EventWindowError):
+            update_event_window_restrictions_by_date(
+                conn, 7, 1, {date(2026, 6, 11): {"locale_lock": "ghost"}})
+
+    def test_writer_rejects_date_outside_window(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        with pytest.raises(EventWindowError):
+            update_event_window_restrictions_by_date(
+                conn, 7, 1, {date(2026, 6, 20): {"indoor_only": True}})
+
+    def test_writer_rejects_negative_minutes(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        with pytest.raises(EventWindowError):
+            update_event_window_restrictions_by_date(
+                conn, 7, 1, {date(2026, 6, 11): {"max_total_minutes": -5}})
 
 
 class TestVolumeHash:

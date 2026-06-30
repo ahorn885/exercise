@@ -1,0 +1,72 @@
+{# Per-date restrictions editor (#237). Per covered DATE of an event window, set
+   a location lock, excluded disciplines, an indoor-only flag, and a minutes cap.
+   The Layer 4 validator's D-67-aware branches enforce each on its date. Reached
+   from the windows list; strict CSP forbids a JS-generated grid, so the per-day
+   rows are server-rendered. #}
+{% extends 'base.html' %}
+{% set nav_active = 'athlete' %}
+{% block title %}Per-day rules — AIDSTATION{% endblock %}
+{% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> ·
+  <a href="{{ url_for('profile.event_windows') }}">Event windows</a> ·
+  <b>Per-day rules</b>{% endblock %}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Training · event windows</p>
+    <h1 class="page-title">Per-day rules.</h1>
+    <p class="page-sub">This window runs
+      <b class="mono">{{ window.start_date.isoformat() }} → {{ window.end_date.isoformat() }}</b>.
+      For <b>each</b> day you can lock training to one location, rule out disciplines,
+      force indoor-only, or cap the minutes — the plan honors them on that day.
+      Leave a field blank to add no rule for that day.</p>
+  </div>
+</div>
+
+<div class="stack">
+  <div class="card card-pad">
+    <p class="eyebrow">● Day-by-day rules</p>
+    <form method="post"
+          action="{{ url_for('profile.save_event_window_restrictions', window_id=window.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      {% for day in days %}
+      <fieldset class="field field-wide pf-dayrule">
+        <span class="lbl mono">{{ day.iso }}</span>
+        <div class="pf-grid pf-windows">
+          <label class="field"><span class="lbl">Lock to location</span>
+            <select name="lock_{{ day.iso }}" class="form-control form-control-sm">
+              <option value="">— any of your locations —</option>
+              {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == day.r.get('locale_lock') else '' }}>{{ loc.label }}</option>{% endfor %}
+            </select></label>
+          <label class="field"><span class="lbl">Cap minutes <span class="dim">(blank = no cap)</span></span>
+            <input type="number" min="0" name="mins_{{ day.iso }}" class="form-control form-control-sm"
+                   value="{{ day.r.get('max_total_minutes') if day.r.get('max_total_minutes') is not none else '' }}"></label>
+          <label class="form-check field">
+            <input class="form-check-input" type="checkbox" name="indoor_{{ day.iso }}" value="1"{{ ' checked' if day.r.get('indoor_only') else '' }}>
+            <span class="form-check-label">Indoor only (no outdoor terrain)</span></label>
+        </div>
+        {% if disciplines %}
+        <fieldset class="field field-wide pf-craftset"><span class="lbl">Exclude disciplines <span class="dim">(don't train these this day)</span></span>
+          {% set excl = day.r.get('discipline_exclusions') or [] %}
+          {% for d in disciplines %}
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="excl_{{ day.iso }}_{{ d.id }}"
+                   name="excl_{{ day.iso }}" value="{{ d.id }}"{{ ' checked' if d.id in excl else '' }}>
+            <label class="form-check-label" for="excl_{{ day.iso }}_{{ d.id }}">{{ d.label }}</label>
+          </div>
+          {% endfor %}
+        </fieldset>
+        {% endif %}
+      </fieldset>
+      {% endfor %}
+      <div class="pf-save">
+        <span class="pf-saved mono">Each rule applies only to its own day · leave a day's fields blank for no rule</span>
+        <button type="submit" class="btn btn-primary">Save per-day rules</button>
+      </div>
+    </form>
+  </div>
+
+  <p class="acct-hint"><a href="{{ url_for('profile.event_windows', return_to=return_to or none) }}">← Back to event windows</a></p>
+</div>
+{% endblock %}

@@ -651,6 +651,7 @@ def _run_pattern_a_engine(
     training_substitution_payload: TrainingSubstitutionPayload | None = None,
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
     event_window_segments: list[EventWindowSegment] | None = None,
+    per_date_restrictions: tuple = (),
 ) -> _PatternAResult:
     """Run the Pattern A loop per `Layer4_Spec.md` §5.2.
 
@@ -774,6 +775,7 @@ def _run_pattern_a_engine(
                     training_substitution_payload=training_substitution_payload,
                     terrain_feasibility=terrain_feasibility,
                     event_window_segments=event_window_segments,
+                    per_date_restrictions=per_date_restrictions,
                     week_range=_wr,
                 )
 
@@ -1842,6 +1844,7 @@ def llm_layer4_plan_create(
     # Event Windows Slice 1 (#581 WS-H) — date-scoped reduced-environment
     # segments, threaded the same path into the per-phase overlay render.
     event_window_segments: list[EventWindowSegment] | None = None,
+    per_date_restrictions: tuple = (),
 ) -> Layer4Payload:
     """Pattern A plan-create entry point per `Layer4_Spec.md` §3.1.
 
@@ -1919,6 +1922,7 @@ def llm_layer4_plan_create(
         training_substitution_payload=training_substitution_payload,
         terrain_feasibility=terrain_feasibility,
         event_window_segments=event_window_segments,
+        per_date_restrictions=per_date_restrictions,
     )
 
     return _build_plan_create_payload(
@@ -1956,6 +1960,7 @@ def synthesize_pattern_a_for_refresh(
     etl_version_set: dict[str, str],
     terrain_feasibility: dict[str, TerrainResolution] | None = None,
     event_window_segments: list[EventWindowSegment] | None = None,
+    per_date_restrictions: tuple = (),
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
     temperature: float = 0.2,
@@ -2001,6 +2006,7 @@ def synthesize_pattern_a_for_refresh(
         etl_version_set=etl_version_set,
         terrain_feasibility=terrain_feasibility,
         event_window_segments=event_window_segments,
+        per_date_restrictions=per_date_restrictions,
         mode="plan_refresh",
         model_synthesizer=model_synthesizer,
         model_seam_reviewer=model_seam_reviewer,

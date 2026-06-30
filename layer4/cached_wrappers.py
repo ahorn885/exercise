@@ -206,6 +206,7 @@ def llm_layer4_plan_refresh_cached(
     # (refresh-side overlay, mirrors create) + the declared-window digest folded
     # into the refresh cache key. Default None preserves existing call sites.
     event_window_segments: list[EventWindowSegment] | None = None,
+    per_date_restrictions: tuple = (),
     event_windows_hash: str | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str | None = None,
@@ -294,6 +295,7 @@ def llm_layer4_plan_refresh_cached(
             training_substitution_payload=training_substitution_payload,
             terrain_feasibility=terrain_feasibility,
             event_window_segments=event_window_segments,
+            per_date_restrictions=per_date_restrictions,
             model_synthesizer=model_synthesizer,
             model_seam_reviewer=model_seam_reviewer,
             temperature=temperature,
@@ -350,6 +352,7 @@ def llm_layer4_plan_create_cached(
     # is over the windows, the segments are the render payload). Default None
     # leaves keys byte-identical for athletes with no windows + legacy callers.
     event_window_segments: list[EventWindowSegment] | None = None,
+    per_date_restrictions: tuple = (),
     event_windows_hash: str | None = None,
     model_synthesizer: str = "claude-sonnet-4-6",
     model_seam_reviewer: str = "claude-sonnet-4-6",
@@ -442,6 +445,7 @@ def llm_layer4_plan_create_cached(
             "training_substitution_payload": training_substitution_payload,
             "terrain_feasibility": terrain_feasibility,
             "event_window_segments": event_window_segments,
+            "per_date_restrictions": per_date_restrictions,
             "model_synthesizer": model_synthesizer,
             "model_seam_reviewer": model_seam_reviewer,
             "temperature": temperature,
