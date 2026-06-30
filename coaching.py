@@ -826,10 +826,10 @@ def _get_performance_delta(db, plan_id: int, lookback_days: int) -> list:
                   pi.target_duration_min, pi.target_distance_mi, pi.status,
                   SUM(tl.actual_sets) as actual_sets,
                   AVG(tl.rpe) as avg_rpe,
-                  GROUP_CONCAT(tl.outcome) as outcomes,
-                  cl.duration_min as actual_cardio_min,
-                  cl.distance_mi as actual_cardio_mi,
-                  cl.avg_hr, cl.aerobic_te
+                  STRING_AGG(tl.outcome, ',') as outcomes,
+                  MAX(cl.duration_min) as actual_cardio_min,
+                  MAX(cl.distance_mi) as actual_cardio_mi,
+                  MAX(cl.avg_hr) as avg_hr, MAX(cl.aerobic_te) as aerobic_te
            FROM plan_items pi
            LEFT JOIN training_log tl ON tl.plan_item_id = pi.id
            LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id
