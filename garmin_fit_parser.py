@@ -20,6 +20,12 @@ SPORT_MAP = {
     'indoor_cycling': 'Indoor Bike Trainer',
     'hiking': 'Hiking',
     'walking': 'Walking',
+    'mountaineering': 'Mountaineering',
+    'snowshoeing': 'Snowshoeing',
+    'alpine_skiing': 'Alpine Skiing',
+    'cross_country_skiing': 'Cross Country Skiing',
+    'rock_climbing': 'Rock Climbing',
+    'stand_up_paddleboarding': 'Stand Up Paddleboarding',
     'swimming': 'Swimming Pool',
     'open_water_swimming': 'Swimming Open',
     'yoga': 'Yoga',
@@ -40,9 +46,15 @@ _SPORT_NUM_MAP = {
     5:  'swimming',
     10: 'training',           # strength/fitness equipment
     11: 'walking',
+    12: 'cross_country_skiing',
+    13: 'alpine_skiing',
     15: 'rowing',
+    16: 'mountaineering',
     17: 'hiking',
     19: 'paddling',
+    31: 'rock_climbing',
+    35: 'snowshoeing',
+    37: 'stand_up_paddleboarding',
     41: 'kayaking',
     62: 'yoga',
 }
@@ -60,6 +72,7 @@ _SUB_SPORT_NUM_MAP = {
     17: 'gravel_cycling',
     19: 'lap_swimming',
     20: 'open_water',
+    37: 'backcountry',        # alpine/cross-country skiing sub_sport
     43: 'yoga',
 }
 
@@ -84,6 +97,10 @@ _SWIM_SUB = {
     'lap_swimming': 'Swimming Pool',
     'open_water': 'Swimming Open',
 }
+_SKI_SUB = {
+    'backcountry': 'Backcountry Skiing',
+}
+
 _SWIM_ACTIVITIES = {'Swimming Pool', 'Swimming Open'}
 
 # Garmin FIT ExerciseCategory enum → human-readable name
@@ -241,6 +258,8 @@ def _resolve_activity(sport: str, sub_sport: str):
         name = _CYCLING_SUB[sub_sport]
     elif sport == 'swimming' and sub_sport in _SWIM_SUB:
         name = _SWIM_SUB[sub_sport]
+    elif sport in ('alpine_skiing', 'cross_country_skiing') and sub_sport in _SKI_SUB:
+        name = _SKI_SUB[sub_sport]
     elif sub_sport in SPORT_MAP and SPORT_MAP[sub_sport] != '__strength__':
         # sub_sport overrides sport lookup (e.g. yoga stored under sport=training)
         name = SPORT_MAP[sub_sport]
