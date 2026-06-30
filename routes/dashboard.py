@@ -245,9 +245,13 @@ def index():
         # so the rest of the app keys off the ↑ arrow via substring/LIKE
         # (routes/rx.py, the rx list + recent-activity templates). Match that
         # convention here so a genuinely-progressing exercise actually counts.
+        # Bind the LIKE pattern as a parameter (not an inline literal): the DB
+        # layer rewrites `?` -> `%s` for psycopg2, so a literal `%` in the SQL
+        # would be misread as a parameter placeholder and 500 the dashboard.
+        # Matches the `LIKE ?` convention used everywhere else (routes/rx.py).
         'exercises_progress': db.execute(
-            "SELECT COUNT(*) FROM current_rx WHERE user_id = ? AND last_outcome LIKE '%↑%'",
-            (uid,)
+            "SELECT COUNT(*) FROM current_rx WHERE user_id = ? AND last_outcome LIKE ?",
+            (uid, '%↑%')
         ).fetchone()[0],
         'latest_weight': None,
     }
@@ -327,12 +331,16 @@ def index():
     # logged day (a training session), with how many exercises it covered and how
     # many progressed (↑), so the merged recent-activity table reads at the
     # session grain the rest of the app uses.
+    # `LIKE ?` with the pattern bound as a parameter — an inline `'%↑%'` literal
+    # would be mangled by the `?`->`%s` rewrite in the DB layer (see the
+    # `exercises_progress` stat above). The pattern param precedes `user_id`
+    # because the CASE expression appears before the WHERE clause.
     recent_strength = db.execute(
         "SELECT date, COUNT(*) AS exercises, "
-        "SUM(CASE WHEN outcome LIKE '%↑%' THEN 1 ELSE 0 END) AS progressed "
+        "SUM(CASE WHEN outcome LIKE ? THEN 1 ELSE 0 END) AS progressed "
         'FROM training_log WHERE user_id = ? '
         'GROUP BY date ORDER BY date DESC LIMIT 10',
-        (uid,)
+        ('%↑%', uid)
     ).fetchall()
 
     # canonical_cardio_feed (#196 Slice 4b): a ride synced from N providers shows
