@@ -1659,6 +1659,7 @@ class Layer1HealthStatus(_Base):
     medications_active: list[MedicationRecord] = Field(default_factory=list)
     medications_history: list[MedicationRecord] = Field(default_factory=list)
     resting_hr_bpm: int | None = None
+    pregnancy_status: bool | None = None
 
 
 # §C — training history sub-records

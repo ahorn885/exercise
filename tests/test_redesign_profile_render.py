@@ -43,11 +43,13 @@ class _Conn:
     misc-list shapes are served via keyword maps; everything else returns an
     empty cursor (the page tolerates empty schedule/skills/connection lists)."""
 
-    def __init__(self, profile=None, memory=(), user=None, pack_loads=()):
+    def __init__(self, profile=None, memory=(), user=None, pack_loads=(),
+                 pregnancy_flags=None):
         self._profile = profile or {}
         self._memory = list(memory)
         self._user = user
         self._pack_loads = list(pack_loads)
+        self._pregnancy_flags = pregnancy_flags  # list[str] | None
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
@@ -65,6 +67,10 @@ class _Conn:
             return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
         if 'pack_load_history' in s:
             return _Cursor([_FakeRow(r) for r in self._pack_loads])
+        if 'health_screening' in s:
+            if self._pregnancy_flags is None:
+                return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+            return _Cursor([], one=_FakeRow(flags=self._pregnancy_flags))
         if 'athlete_profile' in s:
             return _Cursor([], one=_FakeRow(self._profile) if self._profile else None)
         if 'discipline_baseline_' in s:
@@ -164,6 +170,28 @@ def test_profile_pack_load_form_collapses_once_filled(monkeypatch):
     assert 'Add another pack weight' in html
     assert '/profile/pack-load/7/delete' in html   # per-row delete reachable
     assert '/profile/pack-load/add' in html        # form still present, inside
+
+
+def test_profile_pregnancy_field_renders_on_health_tab(monkeypatch):
+    # #223 — the pregnancy checkbox is always visible on the health tab.
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.get('/profile/?tab=health')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'pf-pregnancy' in html
+    assert 'pf-pregnancy-check' in html
+    assert 'pregnancy_status' in html
+    assert 'pregnant' in html.lower()
+    assert '/profile/pregnancy' in html
+
+
+def test_profile_pregnancy_field_checked_when_flagged(monkeypatch):
+    # #223 — checkbox is checked when PREGNANCY flag is set in health_screening.
+    client = _client(monkeypatch, _Conn(profile={}, pregnancy_flags=["PREGNANCY"]))
+    resp = client.get('/profile/?tab=health')
+    html = resp.get_data(as_text=True)
+    assert 'pf-pregnancy' in html
+    assert 'checked' in html
 
 
 def test_profile_locations_tab_redirects_to_locales(monkeypatch):

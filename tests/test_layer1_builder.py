@@ -81,8 +81,9 @@ def _queue_empty_athlete(conn: _FakeConn) -> None:
     query; the dead `food_allergies` load was later removed; 2E-6 §I.1 added
     the `_load_supplements` query; #690 added the `_load_coaching_preferences`
     query; #884 slice 3b added the `_load_owned_gear` query; #304 Part B
-    removed the `_load_disclosures` query from the payload build.)"""
-    for _ in range(26):
+    removed the `_load_disclosures` query from the payload build; #223 added
+    the `_load_pregnancy_status` query.)"""
+    for _ in range(27):
         conn.queue_response()
 
 
@@ -171,7 +172,7 @@ class TestEmptyUser:
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
 
-    def test_26_selects_issued(self):
+    def test_27_selects_issued(self):
         conn = _FakeConn()
         _queue_empty_athlete(conn)
         build_layer1_payload(conn, user_id=1)
@@ -183,8 +184,9 @@ class TestEmptyUser:
         # `_load_coaching_preferences` SELECT — 26. #884 slice 3b added the
         # `_load_owned_gear` SELECT — 27. #304 Part B dropped the
         # `_load_disclosures` SELECT (disclosures removed from the payload;
-        # the `disclosure_acknowledgments` table is retained) — 26.
-        assert len(conn.calls) == 26
+        # the `disclosure_acknowledgments` table is retained) — 26. #223 added
+        # `_load_pregnancy_status` SELECT — 27.
+        assert len(conn.calls) == 27
 
     def test_user_id_required(self):
         conn = _FakeConn()
@@ -425,6 +427,8 @@ class TestFullyPopulated:
              "content": "No overhead pressing for now.",
              "permanent": 0},
         ])
+        # 27) health_screening — #223 pregnancy flag. Andy has no PREGNANCY flag.
+        conn.queue_response(row={"flags": []})
 
     def test_identity_populated(self):
         conn = _FakeConn()
@@ -699,10 +703,10 @@ class TestOwnedGear:
         (absent from dict) at the consumer if it cares. Layer 2B/2C
         currently treat both as OFF so the semantics collapse."""
         conn = _FakeConn()
-        # Queue 21 empty + 1 populated for the toggle SELECT (#22 of 26 after
-        # #304 Part B removed the disclosure_acknowledgments SELECT from the
-        # payload build); gear + supplements + event-windows SELECTs trail it
-        # and read empty.
+        # Queue 21 empty + 1 populated for the toggle SELECT (#22 of 27 after
+        # #223 added the _load_pregnancy_status SELECT); gear + supplements +
+        # event-windows + coaching_preferences + health_screening trail it and
+        # read empty from the fallback.
         for _ in range(21):
             conn.queue_response()
         conn.queue_response(rows=[
@@ -770,6 +774,46 @@ class TestWeightingSumInvariant:
         _queue_empty_athlete(conn)
         payload = build_layer1_payload(conn, user_id=1)
         assert payload.training_history.discipline_weighting == []
+
+
+# ─── #223 pregnancy status ───────────────────────────────────────────────────
+
+
+class TestPregnancyStatus:
+    """_load_pregnancy_status reads health_screening.flags (SELECT #27)."""
+
+    def _build(self, flags_row=None):
+        conn = _FakeConn()
+        _queue_empty_athlete(conn)
+        if flags_row is not None:
+            conn.responses[-1] = (flags_row, [])
+        return build_layer1_payload(conn, user_id=1)
+
+    def test_no_screening_row_returns_none(self):
+        payload = self._build()
+        assert payload.health_status.pregnancy_status is None
+
+    def test_empty_flags_returns_false(self):
+        payload = self._build({"flags": []})
+        assert payload.health_status.pregnancy_status is False
+
+    def test_pregnancy_flag_returns_true(self):
+        payload = self._build({"flags": ["PREGNANCY"]})
+        assert payload.health_status.pregnancy_status is True
+
+    def test_pregnancy_flag_among_others_returns_true(self):
+        payload = self._build({"flags": ["CARDIO_CHEST_PAIN", "PREGNANCY"]})
+        assert payload.health_status.pregnancy_status is True
+
+    def test_other_flags_only_returns_false(self):
+        payload = self._build({"flags": ["CARDIO_CONDITION", "MSK_CONDITION"]})
+        assert payload.health_status.pregnancy_status is False
+
+    def test_andy_fixture_has_no_pregnancy_flag(self):
+        conn = _FakeConn()
+        TestFullyPopulated()._queue_andy(conn)
+        payload = build_layer1_payload(conn, user_id=1)
+        assert payload.health_status.pregnancy_status is False
 
 
 # Helper: full athlete_profile column list (mirrors layer1.builder._PROFILE_COLS).

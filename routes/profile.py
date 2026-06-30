@@ -105,6 +105,7 @@ from health_inputs_repo import (
 from pack_load_repo import (
     list_pack_loads, add_pack_load, delete_pack_load,
 )
+from health_screening_repo import get_pregnancy_flag, set_pregnancy_flag
 from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
@@ -534,6 +535,8 @@ def edit():
     ).fetchall()
     # §C pack-load history — load-carriage base, summarized into Layer 3B.
     pack_loads = list_pack_loads(db, uid)
+    # #223 — pregnancy status from screening Q8 / PREGNANCY flag.
+    pregnancy_status = get_pregnancy_flag(db, uid)
 
     from datetime import datetime as _dt
     return render_template(
@@ -548,6 +551,7 @@ def edit():
         injuries=injuries,
         medications=medications,
         pack_loads=pack_loads,
+        pregnancy_status=pregnancy_status,
         system_category_choices=SYSTEM_CATEGORY_CHOICES,
         conditions_by_category=CONDITIONS_BY_CATEGORY,
         medication_class_choices=MEDICATION_CLASS_CHOICES,
@@ -1510,6 +1514,18 @@ def delete_pack_load_route(pack_load_id):
     db.commit()
     flash('Pack-load record removed.', 'info')
     return redirect(url_for('profile.edit', tab='gear'))
+
+
+@bp.route('/pregnancy', methods=['POST'])
+def save_pregnancy():
+    """Toggle the PREGNANCY screening flag from the profile health tab (#223)."""
+    db = get_db()
+    uid = current_user_id()
+    is_pregnant = request.form.get('pregnancy_status') == 'yes'
+    print(f"[profile pregnancy] user_id={uid} is_pregnant={is_pregnant}")
+    set_pregnancy_flag(db, uid, is_pregnant)
+    db.commit()
+    return redirect(url_for('profile.edit', tab='health'))
 
 
 @bp.route('/feedback/<int:fb_id>')

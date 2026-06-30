@@ -324,6 +324,26 @@
   </div>
 </form>
 
+{# #223 — pregnancy status. Source of truth: health_screening.flags / PREGNANCY
+   flag. Toggled here without re-running the full screening flow so athletes
+   can update mid-plan. Layer 2E HITL-gate wiring deferred (#518). #}
+<form method="post" action="{{ url_for('profile.save_pregnancy') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad stack pf-nutrition">
+    <div>
+      <p class="eyebrow">● Reproductive health</p>
+      <p class="pf-hint">Affects nutrition safety reviews. All optional.</p>
+    </div>
+    <label class="pf-chip pf-pregnancy">
+      <input type="checkbox" name="pregnancy_status" value="yes"
+             id="pf-pregnancy-check"
+             {% if pregnancy_status %}checked{% endif %}>
+      <span>Currently pregnant or within 6 months postpartum</span>
+    </label>
+    <div><button type="submit" class="btn btn-primary btn-sm">Save</button></div>
+  </div>
+</form>
+
 {# Structured supplements · health conditions · medications (#619). #}
 {% include 'profile/_health_tab.html' %}
 
