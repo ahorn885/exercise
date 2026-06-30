@@ -207,13 +207,20 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
     overlapping the plan span.
 
     Each window contributes `(override_type, start_date, end_date,
-    unavailable_locale, away_locale, brought_craft)` — the declared inputs, NOT
+    unavailable_locale, away_locale, brought_gear)` — the declared inputs, NOT
     the derived resolutions (the cluster terrain/equipment that resolution
     depends on is already keyed via `compute_terrain_feasibility_hash`; an away
     destination's equipment edit evicts the plan caches via the locale-edit
-    path). `brought_craft` (Slice 4, the (c) surface) is a declared window field,
-    so it belongs here; the standing craft↔locale (b) surface is athlete-level
-    data covered by `evict_plan_caches_on_craft_locale_change`, not this hash.
+    path). The brought-gear set (Slice 4, the (c) surface) is a declared window
+    field, so it belongs here; the standing gear↔locale (b) surface is
+    athlete-level data covered by `evict_plan_caches_on_craft_locale_change`, not
+    this hash. **The fold dict key is deliberately kept as the legacy string
+    `"brought_craft"` even though the `EventWindow` attribute renamed to
+    `brought_gear` in 6c-1: `canonical_json` serializes dict *keys* into the
+    digest (`sort_keys=True`), so renaming the key would change
+    `compute_event_windows_hash` for every athlete with an overlapping window — a
+    one-time plan-cache invalidation for zero behavioural gain (the data is
+    byte-identical). Keeping the key string stable keeps the digest stable.**
     Sorted for a stable digest. Folds into `plan_create_key` / `plan_refresh_key`;
     the caller passes None when no window overlaps the span so the key collapses
     to '' and stays byte-identical to the pre-Slice-1 key (the no-windows
@@ -227,7 +234,9 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                 "end_date": w.end_date,
                 "unavailable_locale": w.unavailable_locale,
                 "away_locale": getattr(w, "away_locale", None),
-                "brought_craft": sorted(getattr(w, "brought_craft", ()) or ()),
+                # Key kept as the legacy "brought_craft" for digest stability
+                # (see docstring); value reads the renamed `brought_gear` attr.
+                "brought_craft": sorted(getattr(w, "brought_gear", ()) or ()),
                 # Slice 6 (#593) — the per-window volume slider; a change must
                 # invalidate the overlapping synthesis. None on non-volume types
                 # → no effect on the existing no-windows / feasibility-only keys.

@@ -844,10 +844,11 @@ class EventWindowOverride:
     ]
     unavailable_locale: str | None = None
     away_locale: str | None = None
-    # Slice 4 (#581 WS-H) — craft brought to this `away` window (the (c) surface);
-    # unioned with the standing craft↔locale set for the destination cluster to
-    # form the away segment's `owned_crafts`. Empty on non-away overrides.
-    brought_craft: tuple[str, ...] = ()
+    # Slice 4 (#581 WS-H) — gear brought to this `away` window (the (c) surface);
+    # unioned with the standing gear↔locale set for the destination cluster to
+    # form the away segment's `owned_crafts`. Empty on non-away overrides. #884
+    # slice 6c-1 — renamed `brought_craft`→`brought_gear` (legacy-craft retirement).
+    brought_gear: tuple[str, ...] = ()
     # Slice 6 (#593) — retained capacity fraction for a `reduced_volume` override
     # (0 < pct < 1). None on every other type; `no_training` is the discrete 0%
     # type. Volume overrides change capacity, not feasibility — they carry no

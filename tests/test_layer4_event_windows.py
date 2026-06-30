@@ -570,10 +570,10 @@ class TestAwayCraft:
     def _away_win(self, dest, brought=()):
         return EventWindow(
             1, 7, date(2026, 6, 10), date(2026, 6, 12), "away", None, dest, "",
-            brought_craft=tuple(brought),
+            brought_gear=tuple(brought),
         )
 
-    def test_brought_craft_passed_as_owned_crafts(self, monkeypatch):
+    def test_brought_gear_passed_as_owned_crafts(self, monkeypatch):
         got = self._captured_owned_crafts(
             monkeypatch, [self._away_win("belfast", ("packraft",))],
             cluster=["belfast"],
@@ -848,12 +848,12 @@ class TestHashAndKey:
         chamonix = self._win("away", away="chamonix")
         assert compute_event_windows_hash([belfast]) != compute_event_windows_hash([chamonix])
 
-    def test_hash_changes_with_brought_craft(self):
-        # Slice 4 (c): brought-craft is a declared window field → in the digest.
+    def test_hash_changes_with_brought_gear(self):
+        # Slice 4 (c): brought-gear is a declared window field → in the digest.
         bare = self._win("away", away="belfast")
         packraft = EventWindow(
             1, 7, date(2026, 6, 10), date(2026, 6, 12), "away", None, "belfast", "",
-            brought_craft=("packraft",),
+            brought_gear=("packraft",),
         )
         assert compute_event_windows_hash([bare]) != compute_event_windows_hash([packraft])
 
@@ -909,7 +909,7 @@ class TestRepo:
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "indoor_only",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": None, "volume_pct": None, "volume_by_date": None,
+             "brought_gear": None, "volume_pct": None, "volume_by_date": None,
              "notes": ""},
         ])
         windows = load_event_windows(conn, 7)
@@ -998,15 +998,15 @@ class TestRepo:
         assert conn.calls[0][1] == (3, 7)
         assert "user_id = ?" in conn.calls[0][0]
 
-    def test_away_stores_brought_craft_in_enum_order(self):
+    def test_away_stores_brought_gear_in_enum_order(self):
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="away", away_locale="belfast",
-            brought_craft=["packraft", "road_bike"],
+            brought_gear=["packraft", "road_bike"],
         )
-        # index 6 = brought_craft CSV, emitted in BIKE+PADDLE enum order.
+        # index 6 = brought_gear CSV, emitted in BIKE+PADDLE enum order.
         assert conn.calls[-1][1][6] == "road_bike,packraft"
 
     def test_away_stores_brought_toggle_gear_in_registry_order(self):
@@ -1018,26 +1018,26 @@ class TestRepo:
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
             override_type="away", away_locale="belfast",
-            brought_craft=["climbing_gear", "mountain_bike"],
+            brought_gear=["climbing_gear", "mountain_bike"],
         )
         assert conn.calls[-1][1][6] == "mountain_bike,climbing_gear"
 
-    def test_away_rejects_unknown_brought_craft(self):
+    def test_away_rejects_unknown_brought_gear(self):
         conn = _FakeConn()
         conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
         with pytest.raises(EventWindowError):
             add_event_window(
                 conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
-                override_type="away", away_locale="belfast", brought_craft=["jetpack"],
+                override_type="away", away_locale="belfast", brought_gear=["jetpack"],
             )
 
-    def test_non_away_window_clears_brought_craft(self):
+    def test_non_away_window_clears_brought_gear(self):
         conn = _FakeConn()
         add_event_window(
             conn, 7, start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
-            override_type="indoor_only", brought_craft=["packraft"],
+            override_type="indoor_only", brought_gear=["packraft"],
         )
-        assert conn.calls[-1][1][6] is None  # brought-craft only on 'away'
+        assert conn.calls[-1][1][6] is None  # brought-gear only on 'away'
 
 
 # ─── craft↔locale repo (Slice 4, the (b) surface) ────────────────────────────
@@ -1195,7 +1195,7 @@ class TestVolumeRepo:
             unavailable_locale="park",  # must be cleared (volume carries no locale)
         )
         params = conn.calls[-1][1]
-        # (..., unavail, away, brought_craft, volume_pct, notes)
+        # (..., unavail, away, brought_gear, volume_pct, notes)
         assert params[4] is None and params[5] is None  # locale fields cleared
         assert params[7] == 0.5
 
@@ -1215,7 +1215,7 @@ class TestVolumeRepo:
             {"id": 1, "user_id": 7, "start_date": "2026-06-10",
              "end_date": "2026-06-12", "override_type": "reduced_volume",
              "unavailable_locale": None, "away_locale": None,
-             "brought_craft": None, "volume_pct": 0.5, "volume_by_date": None,
+             "brought_gear": None, "volume_pct": 0.5, "volume_by_date": None,
              "notes": ""},
         ])
         w = load_event_windows(conn, 7)[0]
@@ -1233,7 +1233,7 @@ class TestPerDateVolumeRepo:
             "id": 1, "user_id": 7, "start_date": "2026-06-10",
             "end_date": "2026-06-12", "override_type": "reduced_volume",
             "unavailable_locale": None, "away_locale": None,
-            "brought_craft": None, "volume_pct": 0.5, "volume_by_date": None,
+            "brought_gear": None, "volume_pct": 0.5, "volume_by_date": None,
             "notes": "",
         }
         base.update(kw)

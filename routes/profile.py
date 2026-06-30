@@ -912,7 +912,7 @@ def _stash_event_window_draft(form):
         'override_type': (form.get('override_type') or '').strip(),
         'unavailable_locale': (form.get('unavailable_locale') or '').strip(),
         'away_locale': (form.get('away_locale') or '').strip(),
-        'brought_craft': form.getlist('brought_craft'),
+        'brought_gear': form.getlist('brought_gear'),
         'volume_pct': (form.get('volume_pct') or '').strip(),
         'notes': (form.get('notes') or '').strip(),
     }
@@ -1001,7 +1001,7 @@ def add_event_window_route():
             override_type=(request.form.get('override_type') or '').strip(),
             unavailable_locale=(request.form.get('unavailable_locale') or None),
             away_locale=(request.form.get('away_locale') or None),
-            brought_craft=request.form.getlist('brought_craft'),
+            brought_gear=request.form.getlist('brought_gear'),
             volume_pct=volume_pct,
             notes=(request.form.get('notes') or '').strip(),
         )

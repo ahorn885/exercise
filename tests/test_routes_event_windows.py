@@ -113,7 +113,7 @@ def _reduced_window(start='2026-07-03', end='2026-07-05', **kw):
         id=5, user_id=7,
         start_date=_date.fromisoformat(start), end_date=_date.fromisoformat(end),
         override_type='reduced_volume', unavailable_locale=None, away_locale=None,
-        brought_craft=(), volume_pct=0.5, volume_by_date={}, notes='',
+        brought_gear=(), volume_pct=0.5, volume_by_date={}, notes='',
     )
     base.update(kw)
     return types.SimpleNamespace(**base)
