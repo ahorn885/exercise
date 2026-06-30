@@ -36,6 +36,7 @@ from layer3b.builder import (
     _check_periodization_sanity,
     _clamp_confidence,
     _enforce_hitl_auto_emit,
+    _pack_load_readiness,
     _periodization_fallback_to_standard,
     _render_user_prompt,
     _time_to_event_phase_band,
@@ -69,6 +70,7 @@ from layer4.context import (
     Layer2APayload,
     Layer3APayload,
     Layer3Observation,
+    PackLoadRecord,
     RaceEventPayload,
     RationaleMetadata,
     RecentTrajectory,
@@ -1981,3 +1983,60 @@ class TestCacheWrapper:
         p1 = llm_layer3b_goal_timeline_viability_cached(**kwargs)
         p2 = llm_layer3b_goal_timeline_viability_cached(**kwargs)
         assert p1.model_dump() == p2.model_dump()
+
+
+class TestPackLoadReadiness:
+    """#1067 / D1 — deterministic load-carriage readiness. A prior long carry
+    (time-under-load) outranks recent training frequency; weight coverage is
+    judged against the race's pack demand."""
+
+    @staticmethod
+    def _rec(weight, *, sessions=None, longest=None):
+        return PackLoadRecord(
+            pack_weight_kg=weight, session_count_4wk=sessions,
+            longest_session_hrs=longest,
+        )
+
+    def test_long_prior_carry_at_race_weight_is_established(self):
+        # A deep prior carry (8 h) at race-relevant load → established, even with
+        # zero recent training frequency (experience > frequency, D1).
+        plh = [self._rec(15.0, sessions=0, longest=8.0)]
+        tier, heaviest, longest, sessions, covered = _pack_load_readiness(plh, 15.0)
+        assert tier == "established"
+        assert (heaviest, longest, sessions, covered) == (15.0, 8.0, 0, True)
+
+    def test_frequent_recent_training_without_long_carry_is_only_developing(self):
+        # High recent frequency but no long carry stays "developing" — frequency
+        # never substitutes for time-under-load.
+        plh = [self._rec(15.0, sessions=12, longest=1.0)]
+        tier, _, longest, sessions, _ = _pack_load_readiness(plh, 15.0)
+        assert tier == "developing"
+        assert (longest, sessions) == (1.0, 12)
+
+    def test_long_carry_but_underweight_is_not_established(self):
+        # An 8 h carry but only at 8 kg for a 20 kg race → not weight-covered, so
+        # it caps below established.
+        plh = [self._rec(8.0, sessions=4, longest=8.0)]
+        tier, _, _, _, covered = _pack_load_readiness(plh, 20.0)
+        assert covered is False
+        assert tier == "developing"   # longest >= 2.0 → developing
+
+    def test_minimal_base_is_limited(self):
+        plh = [self._rec(6.0, sessions=2, longest=1.0)]
+        tier, _, _, _, _ = _pack_load_readiness(plh, 20.0)
+        assert tier == "limited"
+
+    def test_unknown_race_pack_weight_treated_as_covered(self):
+        plh = [self._rec(10.0, sessions=0, longest=6.0)]
+        tier, _, _, _, covered = _pack_load_readiness(plh, None)
+        assert covered is True
+        assert tier == "established"
+
+    def test_aggregates_across_records(self):
+        # heaviest = max weight, longest = max carry, sessions = sum frequency.
+        plh = [
+            self._rec(10.0, sessions=2, longest=1.0),
+            self._rec(18.0, sessions=3, longest=7.0),
+        ]
+        _, heaviest, longest, sessions, _ = _pack_load_readiness(plh, 16.0)
+        assert (heaviest, longest, sessions) == (18.0, 7.0, 5)
