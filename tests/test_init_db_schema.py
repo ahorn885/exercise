@@ -42,3 +42,29 @@ def test_provider_tables_present_in_schema():
     frags = _fragments()
     assert any('CREATE TABLE IF NOT EXISTS provider_value_map' in f for f in frags)
     assert any('CREATE TABLE IF NOT EXISTS provider_raw_record' in f for f in frags)
+
+
+def test_pg_schema_no_semicolon_in_line_comments():
+    """Direct lint for the #681 §4 root cause: a ';' inside a `-- line comment`.
+
+    `init_postgres` splits the schema on ';' (a char-based split that does not
+    understand SQL), so any ';' inside a comment breaks that comment mid-line
+    into a bare-prose fragment and raises a syntax error. The fragment-shape
+    check above catches the *downstream* symptom; this one forbids the cause
+    outright and points straight at the offending line, so the splitter staying
+    char-based (the #747 residual) can never silently re-break.
+
+    If a future statement legitimately needs a ';' that is not a terminator,
+    swap `init_postgres` to a SQL-aware splitter and relax this lint — don't
+    smuggle the ';' into a comment."""
+    offenders = []
+    for lineno, line in enumerate(init_db.PG_SCHEMA.splitlines(), start=1):
+        marker = line.find('--')
+        if marker != -1 and ';' in line[marker:]:
+            offenders.append(f'line {lineno}: {line.strip()!r}')
+    assert not offenders, (
+        "PG_SCHEMA has a ';' inside a SQL line comment — init_postgres's "
+        "split(';') will break this comment into a non-statement fragment "
+        '(the #681 §4 prod incident). Remove or reword the comment:\n'
+        + '\n'.join(offenders)
+    )
