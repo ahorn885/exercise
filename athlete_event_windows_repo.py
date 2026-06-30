@@ -67,8 +67,8 @@ class EventWindow:
     # slice 6b — generalized from craft-only to all gear kinds (ski/snow/climb/
     # alpine), so the stored gear_ids may be any registry kind. #884 slice 6c-1 —
     # attribute + storage column renamed `brought_craft`→`brought_gear` (the
-    # legacy-craft naming retirement; the `brought_craft` column drop is the 6c-1
-    # redump-fold follow-up).
+    # legacy-craft naming retirement); the legacy `brought_craft` column was
+    # dropped in the 6c column-cleanup follow-up.
     brought_gear: tuple[str, ...] = ()
     # Slice 6 (#593) — the retained capacity fraction for a 'reduced_volume'
     # window (0 < pct < 1), athlete-set per window. None on every other type
@@ -179,6 +179,45 @@ def resolve_weather_location(db, user_id: int, on_date: date) -> str:
         f"source={source} location={location!r}"
     )
     return location
+
+
+def resolve_away_location(
+    db, user_id: int, on_date: date
+) -> tuple[str, float, float] | None:
+    """Away-destination forecast point for ``on_date`` — the #1036 producer hook.
+
+    Returns ``(away_locale, lat, lng)`` when an ``away`` event window covers the
+    date and its destination locale carries Mapbox coordinates; otherwise
+    ``None``. This is the *away-only* branch of `resolve_weather_location`: the
+    upcoming-conditions producer must override the session's locale **only** for
+    travel days — away-day plan sessions routinely still carry the *home* locale
+    (#1036 confirmed against real data), so without this the advisory would warn
+    about home weather. On a non-away day the session's own locale (not the
+    generic preferred-home) is the right forecast point, so unlike
+    `resolve_weather_location` there is deliberately no home/none fallthrough
+    here — `None` tells the caller to keep its per-session resolution.
+
+    Event windows are athlete-scoped, so the answer never varies by plan.
+    """
+    row = db.execute(
+        "SELECT w.away_locale AS slug, lp.lat AS lat, lp.lng AS lng "
+        "FROM athlete_event_windows w "
+        "JOIN locale_profiles lp "
+        "  ON lp.user_id = w.user_id AND lp.locale = w.away_locale "
+        "WHERE w.user_id = ? AND w.override_type = 'away' "
+        "  AND w.start_date <= ? AND w.end_date >= ? "
+        "  AND lp.lat IS NOT NULL AND lp.lng IS NOT NULL "
+        "ORDER BY w.start_date, w.id LIMIT 1",
+        (user_id, on_date, on_date),
+    ).fetchone()
+    if row is None:
+        return None
+    slug, lat, lng = row["slug"], float(row["lat"]), float(row["lng"])
+    print(  # Rule #15 — the away override decided this date's forecast point.
+        f"[conditions-away] user={user_id} date={on_date.isoformat()} "
+        f"away_locale={slug!r} coords={lat:.4f},{lng:.4f}"
+    )
+    return slug, lat, lng
 
 
 def _latlng_token(lat, lng) -> str:

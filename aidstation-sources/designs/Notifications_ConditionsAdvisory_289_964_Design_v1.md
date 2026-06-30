@@ -197,7 +197,7 @@ _CONDITIONS_CROSSES = f'''
         'check conditions and adjust your kit or timing.'
     ),
     'cta_label': 'View your plan',
-    'cta_endpoint': 'plans.list_plans',    # see Open item 11.2 (a live-conditions surface)
+    'cta_endpoint': 'plans.list_plans',    # live-conditions surface now folded into the plan view (§11.2, #1035 shipped)
     'category': 'warning',
     'notification_type': 'conditions_advisory',
 }
@@ -226,6 +226,12 @@ After Slice 1 the live signal populates daily; **nothing fires yet** (no consume
 
 Both landed → the full build Andy chose.
 
+**Slice 3 — follow-ups (#1035 live-conditions surface + #1036 away-window locale). ✅ SHIPPED 2026-06-30** (branch `claude/notification-triggers-conditions-pbcz11`; full suite 3963 passed / 30 skipped; ruff clean; no Neon/layer0 apply owed). The two §11 enhancements, built as one cohesive follow-up (separable into two PRs — they share no code):
+1. **#1035** — `upcoming_conditions_repo.load_upcoming_for_user` (read) + `routes/nudges.select_upcoming_extremes` (classifier, shares `_CONDITIONS_CROSSES` thresholds) + `routes/plan_create.view_plan` load/pass + `templates/plan_create/view.html` `cond-card` render. Surface folded into the plan view per Andy's placement call; CTA unchanged.
+2. **#1036** — `athlete_event_windows_repo.resolve_away_location` (away-only branch) folded into `layer5/upcoming_conditions.refresh_upcoming_conditions_for_user`; gate cleared by the Rule #14 `neon-query` data pull (gap confirmed real).
+
+See §11.2 / §11.3 for the detail.
+
 ---
 
 ## 6. Producer↔consumer ordering & freshness
@@ -241,7 +247,7 @@ Both landed → the full build Andy chose.
 - **No active plan / no located sessions in the window** → producer writes nothing for that user → no advisory. Correct (nothing to advise about).
 - **Locale with no coordinates** (legacy manual row pre-#941) → skipped (no coords → no forecast), same best-effort degrade as Layer 5B.
 - **Open-Meteo down / malformed** → empty dict → that user's rows untouched this run; advisory rides the last good rows. No exception escapes (`refresh_all` per-user try/except).
-- **Away/travel windows** → v1 keys the forecast off the **session's own `locale_id`**. If plan sessions already carry the travel locale for away days, this is already correct; if away-day sessions still carry the home locale, the forecast is for home. The post-#941 `resolve_weather_location` (away-destination coords win) is the **refinement** to fold in if §11.1 shows the gap matters — noted, not built v1.
+- **Away/travel windows** → **RESOLVED 2026-06-30 (#1036).** v1 keyed the forecast off the **session's own `locale_id`**; the Rule #14 data pull showed away-day sessions carry the *home* locale, so the producer now folds `athlete_event_windows_repo.resolve_away_location` (away-destination coords win) into its per-date resolution — away days advise on the destination, home days keep the session locale. See §11.3.
 - **Forecast horizon vs. plan length** → only the next 7 days are advised; a hot day 3 weeks out is silent until it enters the window. Intended (live forecast only).
 - **Athlete mutes the type** (`disabled_in_app_types`) → display suppressed at read time (`get_active_nudges`), reconciliation-agnostic — same as every other type.
 - **DST / half-hour tz** → not applicable; the producer keys on calendar `forecast_date` with Open-Meteo `timezone=auto`, no clock-hour matching.
@@ -279,8 +285,8 @@ Both landed → the full build Andy chose.
 ## 11. Open items (decide before/at build)
 
 1. **Threshold calibration — RESOLVED (Andy 2026-06-29).** Heat lands at **32.2 °C / 90 °F** (the "90°F recommendation set" — a heat-*management* heads-up, not record-heat), freeze at `temp_min ≤ 0 °C / 32 °F`, rain at `precip_prob ≥ 60%`. Constants in §4; baked into Slice 2. *(User impact: too-high a bar = the advisory rarely fires; too-low = it nags. No infra impact.)*
-2. **Live-conditions surface for the CTA.** The advisory deep-links to the plan, which renders **normals**, not this live forecast. A small surface that renders `upcoming_conditions` (or folding it into the dashboard/plan-view conditions block beside the normals) would make the CTA land on the actual forecast that triggered the nudge. Deferred enhancement — not a v1 blocker, but the most natural follow-up.
-3. **Away-window locale resolution** (§7) — fold `resolve_weather_location` (away-destination coords win) into the producer if travel-day sessions don't already carry the travel locale. Confirm against real plan-session data before building (Rule #14 — don't infer).
+2. **Live-conditions surface for the CTA — ✅ SHIPPED 2026-06-30 (#1035).** The advisory deep-linked to the plan, which renders **normals**, not this live forecast. **Resolved** by folding the live `upcoming_conditions` extremes into the plan-view Conditions card beside the normals (Andy's placement call 2026-06-30: fold into the plan view, not a standalone page). The CTA stays `plans.list_plans` (no re-point needed — the surface lives where the CTA already lands). New repo read `upcoming_conditions_repo.load_upcoming_for_user` + classifier `routes/nudges.select_upcoming_extremes` (shares the `_CONDITIONS_CROSSES` thresholds, so surface and arm/clear can't drift) + the `cond-card` render in `templates/plan_create/view.html`. Read-only; no schema.
+3. **Away-window locale resolution** (§7) — ✅ **SHIPPED 2026-06-30 (#1036).** Rule #14 data pull (`neon-query`, 2026-06-30) **confirmed the gap is real**: the one away window on record (Scottsdale, 2026-06-22→26) had every covered session carrying a *home* locale (`home` / `509_williams_avenue`), never the destination — so the producer would have advised on home weather for a trip. **Resolved** by `athlete_event_windows_repo.resolve_away_location` (away-only branch — slug + coords, no home fallthrough) folded into the producer's per-date resolution; away wins, else the session locale, memoized one fetch per distinct coordinate. Producer-only; no schema, no consumer change.
 
 ---
 
