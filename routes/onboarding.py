@@ -1376,7 +1376,7 @@ def route_locales_add():
     if errors:
         for msg in errors:
             flash(msg, 'danger')
-        return redirect(url_for('onboarding.route_locales'))
+        return redirect(url_for('onboarding.route_locales') + '#add-locale')
 
     try:
         add_route_locale(
@@ -1395,7 +1395,9 @@ def route_locales_add():
         # Most likely UNIQUE (race_event_id, sequence_idx) collision.
         flash(f'Could not add route locale: {e}', 'danger')
 
-    return redirect(url_for('onboarding.route_locales'))
+    # Anchors back to the add form instead of the top of the page — athletes
+    # adding several stops in a row want to stay where they were (#1054).
+    return redirect(url_for('onboarding.route_locales') + '#add-locale')
 
 
 @bp.route('/route-locales/<int:route_locale_id>/delete', methods=['POST'])

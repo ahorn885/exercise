@@ -53,7 +53,7 @@
   </div>
   {% endif %}
 
-  <section class="card card-pad">
+  <section class="card card-pad" id="add-locale">
     <p class="eyebrow accent">● Add a route locale</p>
     <form method="post" action="{{ url_for('onboarding.route_locales_add') }}" class="onb-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

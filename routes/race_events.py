@@ -1439,6 +1439,13 @@ def set_target(race_event_id: int):
 # ─── Route-locale CRUD ──────────────────────────────────────────────────────
 
 
+def _route_details_redirect(race_event_id: int):
+    # Anchors back to the Route details section instead of the top of the
+    # page — these forms live far down `edit_race`, and athletes adding or
+    # editing several stops in a row want to stay where they were (#1054).
+    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id) + '#route-details')
+
+
 @bp.route('/<int:race_event_id>/locales/add', methods=['POST'])
 def add_locale(race_event_id: int):
     db = get_db()
@@ -1453,13 +1460,13 @@ def add_locale(race_event_id: int):
 
     if not name:
         flash('Locale name is required.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
     if role not in VALID_ROUTE_LOCALE_ROLES:
         flash('Pick a route-locale role.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
     if sequence_idx is None or sequence_idx < 1:
         flash('Sequence number must be 1 or greater.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
 
     try:
         add_route_locale(
@@ -1482,7 +1489,7 @@ def add_locale(race_event_id: int):
         # can pick a different sequence number rather than 500.
         flash(f'Could not add route locale: {e}', 'danger')
 
-    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    return _route_details_redirect(race_event_id)
 
 
 @bp.route('/<int:race_event_id>/locales/<int:route_locale_id>/update', methods=['POST'])
@@ -1499,13 +1506,13 @@ def update_locale(race_event_id: int, route_locale_id: int):
 
     if not name:
         flash('Locale name is required.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
     if role not in VALID_ROUTE_LOCALE_ROLES:
         flash('Pick a route-locale role.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
     if sequence_idx is None or sequence_idx < 1:
         flash('Sequence number must be 1 or greater.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
 
     try:
         update_route_locale(
@@ -1525,7 +1532,7 @@ def update_locale(race_event_id: int, route_locale_id: int):
     except Exception as e:
         flash(f'Could not update route locale: {e}', 'danger')
 
-    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    return _route_details_redirect(race_event_id)
 
 
 @bp.route('/<int:race_event_id>/locales/<int:route_locale_id>/delete', methods=['POST'])
@@ -1540,7 +1547,7 @@ def delete_locale(race_event_id: int, route_locale_id: int):
     if race['is_target_event']:
         evict_on_target_event_brief_field_change(db, uid)
     flash('Route locale deleted.', 'info')
-    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    return _route_details_redirect(race_event_id)
 
 
 # ─── Route-locale equipment CRUD ────────────────────────────────────────────
@@ -1557,7 +1564,7 @@ def add_equipment(race_event_id: int, route_locale_id: int):
     equipment_name = _parse_str(request.form, 'equipment_name')
     if not equipment_name:
         flash('Equipment name is required.', 'danger')
-        return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+        return _route_details_redirect(race_event_id)
 
     add_route_locale_equipment(
         db, route_locale_id,
@@ -1568,7 +1575,7 @@ def add_equipment(race_event_id: int, route_locale_id: int):
     if race['is_target_event']:
         evict_on_target_event_brief_field_change(db, uid)
     flash(f'Equipment "{equipment_name}" added.', 'success')
-    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    return _route_details_redirect(race_event_id)
 
 
 @bp.route(
@@ -1586,4 +1593,4 @@ def delete_equipment(race_event_id: int, route_locale_id: int, equipment_id: int
     if race['is_target_event']:
         evict_on_target_event_brief_field_change(db, uid)
     flash('Equipment removed.', 'info')
-    return redirect(url_for('race_events.edit_race', race_event_id=race_event_id))
+    return _route_details_redirect(race_event_id)
