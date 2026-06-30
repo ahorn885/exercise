@@ -80,6 +80,11 @@
               {% if tag in adds %}<span class="chip good" title="Added on top of the shared profile">+ override</span>
               {% elif tag in removes %}<span class="chip bad" title="Removed from the shared profile">– override</span>
               {% elif tag in shared_tags %}<span class="chip" title="Inherited from shared profile">shared</span>{% endif %}
+              {# #971 follow-up A — a peer flagged this as wrong; it's under admin
+                 review and excluded from plan-gen while you can still see it.
+                 Suppressed when you removed it yourself (the – override already
+                 says it's gone for you). #}
+              {% if tag in disputed and tag not in removes %}<span class="chip warn" title="A peer flagged this as wrong; it's under admin review and won't drive your plan meanwhile">under review</span>{% endif %}
             {% endif %}
           </label>
         </div>

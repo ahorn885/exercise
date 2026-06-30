@@ -170,7 +170,8 @@ class _GymEditConn(_Conn):
     other SQL (login hydration, etc.) falls back to the base conn."""
 
     def execute(self, sql, *a, **k):
-        if 'FROM gym_profiles' in ' '.join(sql.split()):
+        s = ' '.join(sql.split())
+        if 'FROM gym_profiles' in s:
             return _Cursor(rows=[{
                 'id': 77, 'display_name': 'Hilton Downtown',
                 'category': 'hotel_gym', 'equipment': '["Barbell"]',
@@ -178,6 +179,9 @@ class _GymEditConn(_Conn):
                     '[{"by": 2, "adds": ["Treadmill"], '
                     '"removes": ["Barbell"], "at": "2026-06-29T12:00:00"}]'),
             }])
+        # #971 follow-up B — the per-profile inheritor-count grouped query.
+        if 'COUNT(DISTINCT user_id)' in s and 'FROM locale_profiles' in s:
+            return _Cursor(rows=[{'gym_profile_id': 77, 'n': 5}])
         return super().execute(sql, *a, **k)
 
 
@@ -194,6 +198,8 @@ def test_gym_profile_edits_renders(monkeypatch):
     assert 'Treadmill' in html  # proposed add
     assert '/admin/gym-profile-edits/77/review' in html
     assert 'User #2' in html
+    # #971 follow-up B — the dispute's blast radius (distinct inheritors).
+    assert '5 inheritors' in html
 
 
 def test_dashboard_links_to_gym_profile_edits(monkeypatch):
