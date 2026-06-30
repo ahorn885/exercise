@@ -41,6 +41,9 @@ from etl.layer0.validation.fk_checks import (
     run_training_gap_fks,
 )
 from etl.layer0.validation.modality_group_orphan import run_modality_group_orphan
+from etl.layer0.validation.phase_load_allocation_aggregators import (
+    run_phase_load_allocation_aggregators,
+)
 from etl.layer0.validation.primary_movement_check import run_primary_movement
 from etl.layer0.validation.terrain_types_check import run_terrain_types
 from etl.layer0.validation.sport_sub_format_map import run_sport_sub_format_map
@@ -161,6 +164,10 @@ def _v_sport_sub_format_map(r: dict) -> list[Violation]:
     return [Violation(e["id"], e["detail"]) for e in r["errors"]]
 
 
+def _v_phase_load_allocation_aggregators(r: dict) -> list[Violation]:
+    return [Violation(e["id"], e["detail"]) for e in r["errors"]]
+
+
 @dataclass(frozen=True)
 class Check:
     name: str
@@ -184,6 +191,9 @@ CHECKS: tuple[Check, ...] = (
     Check("contraindicated_conditions", run_contraindicated_conditions, _v_contraindicated),
     Check("default_inclusion", run_default_inclusion, _v_default_inclusion),
     Check("sport_sub_format_map", run_sport_sub_format_map, _v_sport_sub_format_map),
+    Check("phase_load_allocation_aggregators",
+          run_phase_load_allocation_aggregators,
+          _v_phase_load_allocation_aggregators),
 )
 
 
