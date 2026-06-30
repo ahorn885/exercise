@@ -73,11 +73,9 @@ Inputs all available: `etl_version_set`, `layer2d_payload`, `layer1_payload`, `l
 2. In the away branch, populate it from `away_l2c.coaching_flags` filtered to `flag_type == "toggle_off_for_discipline"` (the destination-unavailable disciplines).
 3. In `_format_event_window_overlay` (`per_phase.py:1661`), render the away toggle flags into the segment's overlay block.
 
-**DRAFT prompt copy (per away segment, when away toggle flags exist):**
+**Prompt copy — APPROVED (Andy 2026-06-30), shipped.** Rendered per away segment when away toggle flags exist, appended to the segment label in `_event_window_label` (each flag expanded inline as `{discipline} (no {gear} on hand)`, comma-joined):
 
-> _At this destination you won't have: {discipline names} (no {gear} on hand). Substitute per the feasibility lines below; don't program these disciplines for these dates._
-
-(Coaching-voice, direct, no hedging — matches the existing overlay brief. Exact wording is the trigger-#1 decision; this is a starting point.)
+> _[At this destination you won't have: {discipline} (no {gear} on hand)[, …]. Substitute per the feasibility lines below; don't program these disciplines for these dates.]_
 
 **Files (PR-2):** `layer4/session_feasibility.py` (segment field + populate) + `layer4/per_phase.py` (render) + `tests/test_layer4_event_windows.py` (overlay-render assertions). ~2 substantive + 1 test.
 
@@ -96,7 +94,7 @@ The away 2C build folds into the away feasibility that's already part of the seg
 - **No away window** → `overlapping == []`, early return, untouched.
 - **Away destination is "cold" (no logged equipment)** → `locale_effective_tags` returns the assumed-baseline pool (same as the existing `assumed_baseline` path at :979); the away 2C resolves against it, and the existing "log actuals on arrival" marker still fires.
 - **Empty brought ∪ standing** → `away_gear_states == {}` (every toggle OFF) — the destination 2C suppresses no toggles; strength pool reflects venue equipment only. Consistent with slice-5's empty-union byte-identical path.
-- **Destination 2C build fails** (DB hiccup) → wrap in the away branch's existing try/except posture (advisory; fall back to `fi.pool_by_discipline` with a Rule #15 log) so a 2C glitch never fails plan generation.
+- **Destination 2C build fails** (DB hiccup) → **not specially handled** — the away 2C build is left un-wrapped, matching the home cone build's posture (`_upstream_full_cone` doesn't wrap its `q_layer2c_equipment_mapper_payload` calls either). A genuine 2C failure surfaces as a plan-gen error rather than being silently masked; adding away-only try/except would be speculative error handling the home path doesn't have.
 
 ## 9. Test scenarios
 
@@ -108,7 +106,7 @@ The away 2C build folds into the away feasibility that's already part of the seg
 
 ## 10. Gut check
 
-- **Risk / best argument against:** this is the only place we *reverse* a documented #780 decision. If Andy considers "strength substitutions are always a home activity (the athlete drives home to lift)" the intended product semantics even during an away week, then PR-1 is wrong and we should defer. The away-week framing (multi-day expedition AR, the athlete is at the destination) says the destination gym is correct — but it's worth one explicit confirmation, since the #780 comment is deliberate, not accidental.
+- **Risk / best argument against:** this is the only place we *reverse* a documented #780 decision. **Resolved (Andy 2026-06-30): "using the away location is correct"** — for an away week the athlete is at the destination, so the destination gym is the right strength pool. The #780 default stays for home + subtractive segments.
 - **What might be missing:** the away 2C build adds one more `q_layer2c_equipment_mapper_payload` call per away segment at plan-gen time (two SQL queries each). Negligible vs. the LLM synthesis cost (Rule #16), and only on plans that actually have an away window. Flagged, not a concern.
 - **Confidence:** high on the mechanism (every input confirmed in-scope; mirrors the home build exactly). The only genuine open question is the #780 semantic reversal — surfaced for Andy.
 
