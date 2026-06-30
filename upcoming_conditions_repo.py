@@ -56,3 +56,25 @@ def prune_past(db: Any, user_id: int, today: date) -> None:
         "DELETE FROM upcoming_conditions WHERE user_id = ? AND forecast_date < ?",
         (user_id, today),
     )
+
+
+def load_upcoming_for_user(db: Any, user_id: int) -> list[dict[str, Any]]:
+    """The user's upcoming-forecast rows from today forward, ordered by date.
+
+    Backs the #1035 plan-view "upcoming conditions" surface — the live forecast
+    the conditions-advisory nudge fires on, rendered beside the Layer-5B climate
+    normals so the advisory's CTA lands on the forecast that triggered it. The
+    producer prunes elapsed rows and writes only in-horizon days, so a plain
+    `forecast_date >= CURRENT_DATE` filter returns exactly the live window. Rows
+    are normalised to plain dicts (`forecast_date`, `locale_id`, `temp_max_c`,
+    `temp_min_c`, `precip_prob_pct`) so callers can `.get(...)` uniformly.
+    """
+    rows = db.execute(
+        """SELECT forecast_date, locale_id,
+                  temp_max_c, temp_min_c, precip_prob_pct
+             FROM upcoming_conditions
+            WHERE user_id = ? AND forecast_date >= CURRENT_DATE
+            ORDER BY forecast_date""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]

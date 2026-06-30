@@ -70,7 +70,7 @@ def _conditions(ec: ExpectedConditions):
     )
 
 
-def _render(conditions):
+def _render(conditions, upcoming_extremes=None):
     session = _session()
     plan_version = {
         "id": 1, "pattern": "A", "created_via": "plan_create",
@@ -90,6 +90,7 @@ def _render(conditions):
         nutrition_by_date={},
         conditions=conditions,
         conditions_by_date=conditions_by_date,
+        upcoming_extremes=upcoming_extremes or [],
     )
 
 
@@ -125,6 +126,31 @@ def test_renders_generate_affordance_without_conditions():
     assert "Generate" in html
     assert "need at least one session at a locale with coordinates" in html
     assert "Running" in html  # the session list still renders
+
+
+def test_renders_upcoming_extremes_block_with_flags():
+    # #1035 — the live-forecast extremes surface (distinct from the normals).
+    extremes = [
+        {"date": date(2026, 7, 2), "temp_max_c": 34.0, "temp_min_c": 22.0,
+         "precip_prob_pct": 10, "flags": ["heat"]},
+        {"date": date(2026, 7, 3), "temp_max_c": 8.0, "temp_min_c": -3.0,
+         "precip_prob_pct": 80, "flags": ["freeze", "rain"]},
+    ]
+    html = _render(None, upcoming_extremes=extremes)
+    assert "Extreme weather in the next 7 days" in html
+    assert "live forecast, not typical conditions" in html
+    assert "34° / 22°C" in html        # heat day, no rain readout (10%)
+    assert "🔥 heat" in html
+    assert "🥶 freeze" in html
+    assert "🌧️ rain" in html
+    assert "💧 80%" in html             # rain day shows precip probability
+
+
+def test_no_extremes_block_when_window_is_calm():
+    # Empty extremes → the block is absent (graceful), plan still renders.
+    html = _render(None, upcoming_extremes=[])
+    assert "Extreme weather in the next 7 days" not in html
+    assert "Running" in html
 
 
 def test_hot_day_uses_heat_flag_and_band():

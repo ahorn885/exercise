@@ -24,7 +24,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from athlete_event_windows_repo import resolve_weather_location
+from athlete_event_windows_repo import (
+    resolve_away_location,
+    resolve_weather_location,
+)
 
 UID = 7
 TODAY = date(2026, 6, 20)
@@ -80,11 +83,15 @@ class _FakeDB:
                 # mirrors the AND lp.lat IS NOT NULL AND lp.lng IS NOT NULL filter
                 if lp is None or lp.get("lat") is None or lp.get("lng") is None:
                     continue
-                cands.append((w["start_date"], w.get("id", 0), lp["lat"], lp["lng"]))
+                cands.append((w["start_date"], w.get("id", 0),
+                              w["away_locale"], lp["lat"], lp["lng"]))
             cands.sort(key=lambda c: (c[0], c[1]))  # ORDER BY start_date, id
             if not cands:
                 return _Cursor(None)
-            return _Cursor(_Row({"lat": cands[0][2], "lng": cands[0][3]}))
+            # `slug` is read by resolve_away_location; resolve_weather_location
+            # uses only lat/lng (the extra key is harmless to it).
+            return _Cursor(_Row(
+                {"slug": cands[0][2], "lat": cands[0][3], "lng": cands[0][4]}))
         if "FROM locale_profiles WHERE preferred AND user_id" in s:
             (user_id,) = params
             pref = next(
@@ -192,3 +199,27 @@ def test_other_users_window_is_not_visible():
         ],
     )
     assert resolve_weather_location(db, UID, TODAY) == HOME_TOKEN
+
+
+# ─── #1036 resolve_away_location (away-only branch for the producer) ──────────
+
+
+def test_resolve_away_location_returns_slug_and_coords():
+    db = _FakeDB(windows=[_away_window()], profiles=[_home(), _locale("moab", MOAB)])
+    assert resolve_away_location(db, UID, TODAY) == ("moab", MOAB[0], MOAB[1])
+
+
+def test_resolve_away_location_none_when_no_window():
+    # No away window covering the date → None (the producer keeps its session
+    # locale; deliberately NO home fallthrough, unlike resolve_weather_location).
+    db = _FakeDB(windows=[], profiles=[_home()])
+    assert resolve_away_location(db, UID, TODAY) is None
+
+
+def test_resolve_away_location_none_when_destination_unanchored():
+    db = _FakeDB(
+        windows=[_away_window()],
+        profiles=[_home(), {"user_id": UID, "locale": "moab",
+                            "lat": None, "lng": None}],
+    )
+    assert resolve_away_location(db, UID, TODAY) is None
