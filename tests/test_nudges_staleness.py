@@ -35,18 +35,24 @@ os.environ['DATABASE_URL'] = ''
 
 import notification_prefs as np  # noqa: E402
 from routes.nudges import (  # noqa: E402
+    CONDITIONS_HORIZON_DAYS,
+    FREEZE_TMIN_C,
+    HEAT_TMAX_C,
     NUDGE_REGISTRY,
     PLAN_REVIEW_RUNGS,
+    RAIN_PROB_PCT,
     _STALENESS_RECONCILE,
     get_active_nudges,
 )
 
 STALENESS_TYPES = ['log_reminder', 'body_metric_stale', 'injury_review']
 # All types the reconcile cron arms/clears — the staleness three plus the
-# plan-attention nudge and the race-week reminder (both covered on their own
-# below; `plan_needs_review` is `warning`, so it's excluded from the
-# `info`-asserting parametrized tests above).
-RECONCILE_TYPES = STALENESS_TYPES + ['plan_needs_review', 'race_week_plan_due']
+# plan-attention nudge, the race-week reminder, and the conditions advisory (each
+# covered on its own below; `plan_needs_review` / `conditions_advisory` are
+# `warning`, so they're excluded from the `info`-asserting parametrized tests
+# above).
+RECONCILE_TYPES = STALENESS_TYPES + [
+    'plan_needs_review', 'race_week_plan_due', 'conditions_advisory']
 
 
 # ─── Shared fake conn (mirrors tests/test_nudges.py) ────────────────────────
@@ -174,6 +180,31 @@ class TestRaceWeekPlanDueWiring:
         assert np.is_applicable('race_week_plan_due', 'email') is False
 
 
+class TestConditionsAdvisoryWiring:
+    """The conditions advisory (#964 × #289) fires when extreme weather sits in
+    the live 7-day forecast for an upcoming training day. `warning` category (a
+    safety-relevant heads-up) with its own mutable notification type."""
+
+    def test_registry_entry(self):
+        entry = NUDGE_REGISTRY['conditions_advisory']
+        assert entry['message']
+        assert entry['cta_label']
+        # CTA deep-links to the plan (the live-conditions surface is a follow-up).
+        assert entry['cta_endpoint'] == 'plans.list_plans'
+        assert entry['category'] == 'warning'
+        assert entry['notification_type'] == 'conditions_advisory'
+        assert entry.get('display_delay_days', 0) == 0
+
+    def test_notification_type_registered_in_app_and_push(self):
+        t = np.TYPES_BY_KEY['conditions_advisory']
+        assert t['channels'] == ['in_app', 'push']
+        assert t['category'] == 'warning'
+        assert np.default_enabled('conditions_advisory', 'in_app') is True
+        assert np.default_enabled('conditions_advisory', 'push') is True
+        # Email non-applicable — no nudge→email path (same posture as staleness).
+        assert np.is_applicable('conditions_advisory', 'email') is False
+
+
 # ─── 2. Preference gating in get_active_nudges ──────────────────────────────
 
 
@@ -296,6 +327,38 @@ class TestReconcileSpec:
                        'archived_at IS NULL', 'completed_at IS NULL'):
             assert clause in ins
             assert clause in dele
+
+    def test_conditions_advisory_spec_crosses_heat_freeze_rain_in_window(self):
+        spec = next(s for s in _STALENESS_RECONCILE
+                    if s['nudge_type'] == 'conditions_advisory')
+        ins = ' '.join(spec['insert'].split())
+        dele = ' '.join(spec['delete'].split())
+        # No escalation ladder — a weather heads-up shouldn't nag.
+        assert 'resurface' not in spec
+        # Reads the live #289 signal, deduped per user (DISTINCT — a user can
+        # have several crossing days in the window but one standing advisory).
+        assert 'FROM upcoming_conditions uc' in ins
+        assert 'SELECT DISTINCT uc.user_id' in ins
+        # Both arm and clear off the SAME crossing predicate: any forecast day in
+        # the 7-day horizon at/over the heat, at/under the freeze, or at/over the
+        # rain threshold. The thresholds are interpolated from the constants, so
+        # assert against those (a retune updates both sides + this test together).
+        for clause in (
+            'uc.forecast_date >= CURRENT_DATE',
+            'CURRENT_DATE + %d' % CONDITIONS_HORIZON_DAYS,
+            'uc.temp_max_c >= %s' % HEAT_TMAX_C,
+            'uc.temp_min_c <= %s' % FREEZE_TMIN_C,
+            'uc.precip_prob_pct >= %d' % RAIN_PROB_PCT,
+        ):
+            assert clause in ins
+            assert clause in dele
+        # The three extremes are OR'd — heat-only / freeze-only / rain-only each
+        # fire on their own.
+        assert ' OR ' in ins
+        # Clears via a correlated NOT EXISTS — gone once no crossing day remains.
+        assert 'DELETE FROM account_nudges an' in dele
+        assert 'NOT EXISTS' in dele
+        assert 'uc.user_id = an.user_id' in dele
 
     @pytest.mark.parametrize('spec', _STALENESS_RECONCILE)
     def test_each_spec_has_insert_and_delete(self, spec):
