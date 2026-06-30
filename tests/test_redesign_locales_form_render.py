@@ -105,6 +105,32 @@ def test_form_deletable_shows_delete():
     assert 'style="' not in html
 
 
+def test_form_offers_photo_upload_when_profile_backed():
+    """#971 Slice 2 — once a backing shared profile exists, the editor offers a
+    multipart photo upload and renders approved/own-pending photos."""
+    html = _render('locales/form.html', **_form_ctx(
+        photo_profile_id=77,
+        photos=[
+            {'id': 1, 'url': 'https://blob/a.jpg', 'is_own': False, 'pending': False},
+            {'id': 2, 'url': 'https://blob/b.jpg', 'is_own': True, 'pending': True},
+        ],
+    ))
+    assert 'enctype="multipart/form-data"' in html
+    assert 'name="photo"' in html
+    assert '/locales/home/photos' in html         # upload route
+    assert 'https://blob/a.jpg' in html
+    assert 'Pending review' in html               # the own pending photo
+    assert '/locales/home/photos/2/delete' in html  # own photo deletable
+    assert '/locales/home/photos/1/delete' not in html  # peer's not deletable
+    assert 'style="' not in html
+
+
+def test_form_hides_photos_without_backing_profile():
+    """No backing profile yet → no photo affordance (save equipment first)."""
+    html = _render('locales/form.html', **_form_ctx())
+    assert 'name="photo"' not in html
+
+
 def test_form_renders_gear_kept_here():
     """#953 — the (b) standing gear↔locale capture (WS-H #581 Slice 5) is now
     folded into the single equipment editor form: one Save covers equipment +

@@ -196,6 +196,44 @@
     </div>
   </form>
 
+  {# #971 Slice 2 — crowd-sourced location photos. Only offered once a backing
+     shared profile exists (save the equipment first on a brand-new locale).
+     Upload posts to its own multipart route so the equipment save flow is
+     untouched; an admin approves each photo before peers see it. The strip
+     shows approved photos plus this athlete's own pending uploads. #}
+  {% if photo_profile_id %}
+  <section class="card card-pad loc-photos">
+    <h2 class="loc-photos-title">Photos</h2>
+    <p class="loc-hint">Add photos of the equipment or space — they help other athletes
+      at this location know what to expect. An admin reviews each photo before it's shown
+      to others. JPEG, PNG, or WebP · up to 8 MB.</p>
+    {% if photos %}
+    <div class="loc-photo-strip">
+      {% for ph in photos %}
+      <figure class="loc-photo">
+        <img src="{{ ph.url }}" alt="Location photo" loading="lazy">
+        {% if ph.pending %}<figcaption><span class="chip">Pending review</span></figcaption>{% endif %}
+        {% if ph.is_own %}
+        <form method="post" action="{{ url_for('locales.delete_locale_photo', locale=locale, photo_id=ph.id) }}"
+              class="loc-photo-del" data-confirm="Remove this photo?">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+        </form>
+        {% endif %}
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <form method="post" action="{{ url_for('locales.upload_locale_photo', locale=locale) }}"
+          enctype="multipart/form-data" class="loc-photo-upload">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"
+             class="form-control form-control-sm">
+      <button type="submit" class="btn btn-ghost btn-sm">Upload photo</button>
+    </form>
+  </section>
+  {% endif %}
+
   {% if is_deletable %}
   <form method="post" action="{{ url_for('locales.delete_locale', locale=locale) }}"
         class="loc-delete"

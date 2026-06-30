@@ -1247,6 +1247,28 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS gym_profiles_mapbox_idx ON gym_profiles (mapbox_id) WHERE mapbox_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS gym_profiles_address_idx ON gym_profiles (address_fingerprint) WHERE address_fingerprint IS NOT NULL",
+    # #971 Slice 2 — crowd-sourced gym/hotel photos. Each photo attaches to a
+    # shared gym_profiles row (so every inheritor sees it, matching the
+    # equipment-sharing model), uploaded by one athlete, stored in Vercel Blob
+    # (`blob_url` = the public URL, `blob_pathname` = the store key for delete).
+    # `status` gates peer visibility: a photo is `pending` until an admin
+    # approves it (the same review step #971 Slice 3 added for equipment
+    # corrections); the uploader sees their own pending photos, peers don't.
+    # Rejected photos are deleted outright (row + blob), so only 'pending' /
+    # 'approved' ever persist. ON DELETE CASCADE: photos vanish with the profile.
+    """CREATE TABLE IF NOT EXISTS gym_profile_photos (
+        id SERIAL PRIMARY KEY,
+        gym_profile_id INTEGER NOT NULL REFERENCES gym_profiles(id) ON DELETE CASCADE,
+        uploaded_by_user_id INTEGER REFERENCES users(id),
+        blob_url TEXT NOT NULL,
+        blob_pathname TEXT,
+        content_type TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved')),
+        created_at TIMESTAMP DEFAULT NOW(),
+        reviewed_by_user_id INTEGER REFERENCES users(id),
+        reviewed_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS gym_profile_photos_profile_idx ON gym_profile_photos (gym_profile_id, status)",
     # PR2's original D-60 batch declared these tables with
     # `locale_id INTEGER NOT NULL REFERENCES locale_profiles(id)`, but
     # locale_profiles' PK is composite (user_id, locale) — there is no `id`
@@ -3256,6 +3278,26 @@ _PG_MIGRATIONS = [
     # cron). NULL ⇒ schedules never fire (fail-safe — can't localize the clock
     # without it). Nullable so existing users need no backfill.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT",
+    # ── upcoming_conditions (#289 Layer-5 producer / #964 conditions advisory) ──
+    # Live near-term forecast for each upcoming TRAINING day, per user. Refreshed
+    # daily by the producer cron (/cron/conditions/refresh) and pruned as days
+    # pass. Distinct from plan_conditions (climate normals baked per plan_version
+    # as opaque JSONB) — this is the plain, (user, date)-queryable signal the
+    # conditions-advisory reconcile fires on. temp_*_c are DOUBLE PRECISION (avoid
+    # the REAL round-trip drift fixed in #196 Slice 2.3); precip_prob_pct is
+    # 0–100. Canonical °C (Open-Meteo native); any rendering uses the units
+    # toggle. Public-schema, so it auto-applies on each Vercel deploy (no
+    # layer0-apply). PG-only; SQLite dev never reaches the cron that writes it.
+    """CREATE TABLE IF NOT EXISTS upcoming_conditions (
+        user_id         INTEGER  NOT NULL REFERENCES users(id),
+        forecast_date   DATE     NOT NULL,
+        locale_id       TEXT,
+        temp_max_c      DOUBLE PRECISION,
+        temp_min_c      DOUBLE PRECISION,
+        precip_prob_pct SMALLINT,
+        refreshed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, forecast_date)
+    )""",
     # #254 / D-17 slice B — sport SUB-format capture (two-column model, D1′).
     # `framework_sport` stays the top-level bridge key; this new column holds the
     # athlete's chosen full PLA sub-format name for the five sub-format-parent

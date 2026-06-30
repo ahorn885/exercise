@@ -203,6 +203,43 @@ def test_dashboard_links_to_gym_profile_edits(monkeypatch):
     assert '/admin/gym-profile-edits' in resp.get_data(as_text=True)
 
 
+class _GymPhotoConn(_Conn):
+    """Routes the #971 Slice 2 pending-photo query to a controlled row; all
+    other SQL (login hydration, etc.) falls back to the base conn."""
+
+    def execute(self, sql, *a, **k):
+        if 'FROM gym_profile_photos' in ' '.join(sql.split()):
+            return _Cursor(rows=[{
+                'id': 7, 'gym_profile_id': 77, 'uploaded_by_user_id': 2,
+                'blob_url': 'https://blob.example/p.jpg',
+                'created_at': '2026-06-29T12:00:00',
+                'display_name': 'Hilton Downtown', 'category': 'hotel_gym',
+            }])
+        return super().execute(sql, *a, **k)
+
+
+def test_gym_profile_photos_renders(monkeypatch):
+    """#971 Slice 2 — the photo review queue renders the pending photo with
+    approve/reject actions wired to the review route."""
+    client = _client(monkeypatch, _GymPhotoConn())
+    resp = client.get('/admin/gym-profile-photos')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'app-shell' in html
+    assert 'Crowd-sourced location photos.' in html
+    assert 'Hilton Downtown' in html
+    assert 'https://blob.example/p.jpg' in html
+    assert '/admin/gym-profile-photos/7/review' in html
+    assert 'User #2' in html
+
+
+def test_dashboard_links_to_gym_profile_photos(monkeypatch):
+    client = _client(monkeypatch, _Conn())
+    resp = client.get('/admin/')
+    assert resp.status_code == 200
+    assert '/admin/gym-profile-photos' in resp.get_data(as_text=True)
+
+
 def test_dashboard_links_to_fit_inspect(monkeypatch):
     """The relocated FIT inspector (issue #473) is reachable from the admin
     dashboard, not the user-facing Connections/Data hub."""
