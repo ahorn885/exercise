@@ -930,6 +930,13 @@ def event_windows():
     db = get_db()
     uid = current_user_id()
     windows = load_event_windows(db, uid)
+    # #1057 — split off windows that have fully elapsed so the list shows what's
+    # relevant. Mirrors plan_create's `w.end_date >= today` filter; the template
+    # collapses `past_windows` into an expandable section (kept reachable, not
+    # hard-hidden, so an athlete can still review/remove them).
+    today = date.today()
+    upcoming_windows = [w for w in windows if w.end_date >= today]
+    past_windows = [w for w in windows if w.end_date < today]
     # #1049 — carry the refined display name (`locale_name`), not the raw slug,
     # so the pickers and the window list read like the location's own page. The
     # slug stays the option *value* (and the stored window key); `label` is the
@@ -961,7 +968,8 @@ def event_windows():
             draft['override_type'] = 'away'
     return render_template(
         'profile/event_windows.html',
-        windows=windows,
+        windows=upcoming_windows,
+        past_windows=past_windows,
         locales=locales,
         locale_names=locale_names,
         override_types=OVERRIDE_TYPES,

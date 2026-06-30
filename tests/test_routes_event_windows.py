@@ -210,7 +210,8 @@ class _FakeLocaleConn:
         return _FakeLocaleCur(self._rows)
 
 
-def _render_event_windows(monkeypatch, *, rows, url, draft=None, current_row=None):
+def _render_event_windows(monkeypatch, *, rows, url, draft=None, current_row=None,
+                          windows=None):
     import os
     os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
     os.environ.setdefault('DATABASE_URL', '')
@@ -219,7 +220,7 @@ def _render_event_windows(monkeypatch, *, rows, url, draft=None, current_row=Non
     import routes.profile as pf_mod
     monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
     monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
-    monkeypatch.setattr(pf_mod, 'load_event_windows', lambda db, uid: [])
+    monkeypatch.setattr(pf_mod, 'load_event_windows', lambda db, uid: windows or [])
     monkeypatch.setattr(pf_mod, 'load_gear_registry_grouped', lambda: [])
     with _appmod.app.test_request_context(url):
         flask.g.current_user_row = current_row or {
@@ -267,3 +268,42 @@ def test_event_windows_ignores_unknown_new_locale(monkeypatch):
         monkeypatch, rows=rows, draft=draft,
         url='/profile/event-windows?new_locale=someone_elses_place')
     assert 'selected' not in html.split('name="away_locale"')[1].split('</select>')[0]
+
+
+# ─── collapse past windows (#1057) + surface per-day editor (#889) ────────────
+
+
+def test_event_windows_collapses_past_windows(monkeypatch):
+    """#1057 — fully-elapsed windows render in a collapsed "Past windows"
+    section, while upcoming ones stay in the main list."""
+    past = _reduced_window(start='2020-01-01', end='2020-01-03')
+    future = _reduced_window(start='2030-01-01', end='2030-01-03')
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows',
+        windows=[past, future])
+    main, sep, past_section = html.partition('<details')
+    assert sep, 'expected a <details> collapsed past-windows section'
+    assert 'Past windows (1)' in past_section
+    assert '2030-01-01' in main          # upcoming window in the main list
+    assert '2020-01-01' in past_section  # elapsed window collapsed away
+
+
+def test_add_form_hint_promotes_per_day_levels(monkeypatch):
+    """#889 — the reduced-volume hint points at the per-day editor instead of the
+    old "add a separate one-day window" misdirection."""
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(monkeypatch, rows=rows, url='/profile/event-windows')
+    assert 'Set per-day levels' in html
+    assert 'add it as its own one-day window' not in html
+
+
+def test_multiday_reduced_window_shows_per_day_cta(monkeypatch):
+    """#889 — a multi-day reduced-volume window surfaces a prominent link to the
+    per-day editor so the per-day schedule is actually discoverable."""
+    multiday = _reduced_window(start='2030-01-01', end='2030-01-05')
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows', windows=[multiday])
+    assert 'Set per-day levels' in html
+    assert 'volume-days' in html  # links to event_window_volume_days
