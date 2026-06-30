@@ -34,6 +34,7 @@ def _clean_results() -> dict[str, dict]:
         "default_inclusion": {"errors": []},
         "sport_sub_format_map": {"errors": []},
         "phase_load_allocation_aggregators": {"errors": []},
+        "sport_met_values": {"errors": []},
     }
 
 
@@ -45,11 +46,11 @@ def test_clean_results_pass() -> None:
 
 
 def test_registry_has_all_logical_checks() -> None:
-    # fk_checks splits into two runners → 13 entries (12 logical checks: the
+    # fk_checks splits into two runners → 14 entries (13 logical checks: the
     # original 7 + terrain_types, primary_movement, exercises_fk, all added with
-    # the DB-source-of-truth model, plus sport_sub_format_map for #254/D-17 and
-    # phase_load_allocation_aggregators for #269).
-    assert len(v.CHECKS) == 13
+    # the DB-source-of-truth model, plus sport_sub_format_map for #254/D-17,
+    # phase_load_allocation_aggregators for #269, and sport_met_values for #233).
+    assert len(v.CHECKS) == 14
     names = [c.name for c in v.CHECKS]
     assert names.count("substitution_fks") == 1
     assert names.count("training_gap_fks") == 1
@@ -57,6 +58,7 @@ def test_registry_has_all_logical_checks() -> None:
     assert "primary_movement" in names
     assert "exercises_fk" in names
     assert "phase_load_allocation_aggregators" in names
+    assert "sport_met_values" in names
 
 
 def test_fk_violation_fails_the_gate() -> None:
@@ -247,6 +249,20 @@ def test_shipped_registry_matches_policy() -> None:
     # The five by-design sub-100 sports the gate's first DB run enumerated.
     assert "Swimrun" in waivers["sum_to_100"]
     assert len(waivers["sum_to_100"]) == 5
+
+
+def test_sport_met_values_missing_row_fails_the_gate() -> None:
+    # #233 — a missing phase/tier combination must fail the gate (fix-not-waive).
+    results = _clean_results()
+    results["sport_met_values"] = {
+        "errors": [{"id": "Peak/tier_2",
+                    "detail": "sport_met_values missing active row for phase='Peak' volume_tier_index=2"}],
+    }
+    outcomes = v.evaluate(results, {})
+    assert v.gate_failed(outcomes)
+    smv = next(o for o in outcomes if o.name == "sport_met_values")
+    assert smv.failed
+    assert smv.unwaived[0].id == "Peak/tier_2"
 
 
 def test_format_report_json_shape() -> None:

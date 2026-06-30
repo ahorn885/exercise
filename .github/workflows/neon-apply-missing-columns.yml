@@ -1,0 +1,140 @@
+name: Rebuild athlete_profile + apply missing columns to prod Neon
+
+# One-shot fix for the UndefinedColumn 500 on GET / (req_9933dc32c5).
+#
+# Diagnosis (confirmed via pg_attribute on live Neon):
+#   athlete_profile had 47 LIVE columns + 1553 DROPPED-column tombstones = 1600,
+#   hitting Postgres's hard 1600-column-per-table limit. Dropped columns leave
+#   permanent slots in pg_attribute that count against the limit and are NEVER
+#   reclaimed by VACUUM/VACUUM FULL — only by physically rebuilding the table.
+#   With the table full, even `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` fails
+#   ("tables can have at most 1600 columns"), so the four v3 columns added in
+#   commit 8bc0385 (sweat_rate_level, daily_hydration_baseline, sleep_consistency,
+#   body_weight_trend) never landed — producing UndefinedColumn on every GET /.
+#
+#   The 1553 tombstones were NOT created by the committed migrations (whose entire
+#   history is 51 adds / 11 drops on this table). They came from an out-of-band
+#   process that repeatedly added a uniquely-named TEXT column and dropped it.
+#   That process is not present in the current code; the merged advisory-lock +
+#   logging change (PR #1079) makes any future migration failure visible.
+#
+# This workflow rebuilds athlete_profile so the dead slots are reclaimed, then
+# adds the four columns — all in ONE atomic transaction. Dependency check on live
+# Neon confirmed the rebuild is safe: no inbound FKs, no dependent views, no
+# triggers, 1 data row; the only dependency is the outbound FK user_id -> users(id),
+# which `LIKE` does not copy and is re-added explicitly below. Runs under the
+# `production` environment gate.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    name: Rebuild athlete_profile -> prod Neon
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PGSSLMODE: require
+    steps:
+      - name: Install psql 17 (match prod Neon)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Rebuild table + add columns (single atomic transaction)
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${NEON_DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret unset"; exit 1; }
+
+          # The entire rebuild + swap + column-add runs in one transaction.
+          # ON_ERROR_STOP=1 + a single BEGIN/COMMIT means any failure rolls back
+          # the whole thing and leaves athlete_profile untouched.
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+            BEGIN;
+
+            -- Serialise against concurrent Lambda cold-start init_postgres() runs,
+            -- which take this same advisory lock before their migration loop.
+            SELECT pg_advisory_xact_lock(7361925174);
+
+            -- 1. Fresh table with only the LIVE columns. LIKE ... INCLUDING ALL
+            --    copies columns (dropped tombstones are NOT reproduced), defaults,
+            --    NOT NULL, CHECK constraints, indexes and the primary key. It does
+            --    NOT copy foreign keys (re-added in step 4).
+            CREATE TABLE athlete_profile_rebuild (LIKE athlete_profile INCLUDING ALL);
+
+            -- 2. Copy data. SELECT * returns the live columns in the same order
+            --    LIKE produced them, so the positional INSERT lines up 1:1.
+            INSERT INTO athlete_profile_rebuild SELECT * FROM athlete_profile;
+
+            -- 3. Swap. Verified safe: no inbound FKs, no dependent views/matviews,
+            --    no triggers reference athlete_profile.
+            DROP TABLE athlete_profile;
+            ALTER TABLE athlete_profile_rebuild RENAME TO athlete_profile;
+            -- (The PK index/constraint keep LIKE's auto-generated
+            -- athlete_profile_rebuild_pkey names — purely cosmetic; nothing in the
+            -- app references them by name, only by column.)
+
+            -- 4. Re-add the one outbound FK that LIKE did not copy.
+            ALTER TABLE athlete_profile
+              ADD CONSTRAINT athlete_profile_user_id_fkey
+              FOREIGN KEY (user_id) REFERENCES users(id);
+
+            -- 5. With slots reclaimed, add the four v3 columns (idempotent).
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sweat_rate_level TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS daily_hydration_baseline TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_consistency TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS body_weight_trend TEXT;
+
+            COMMIT;
+          SQL
+
+          echo "## athlete_profile rebuilt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify (slots reclaimed, row preserved, columns present, PK intact)
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          echo "### Post-rebuild state" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -P pager=off <<'SQL' | tee -a "$GITHUB_STEP_SUMMARY"
+            SELECT
+              (SELECT count(*) FROM pg_attribute
+                 WHERE attrelid='athlete_profile'::regclass AND attnum>0) AS total_slots,
+              (SELECT count(*) FROM pg_attribute
+                 WHERE attrelid='athlete_profile'::regclass AND attnum>0 AND NOT attisdropped) AS live_cols,
+              (SELECT count(*) FROM pg_attribute
+                 WHERE attrelid='athlete_profile'::regclass AND attnum>0 AND attisdropped) AS dropped_tombstones,
+              (SELECT count(*) FROM athlete_profile) AS rows;
+          SQL
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          # Fail the job unless all four columns exist AND tombstones are gone.
+          ok=$(psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -tAc "
+            SELECT
+              (SELECT count(*) FROM information_schema.columns
+                 WHERE table_name='athlete_profile'
+                   AND column_name IN ('sweat_rate_level','daily_hydration_baseline',
+                                       'sleep_consistency','body_weight_trend')) = 4
+              AND
+              (SELECT count(*) FROM pg_attribute
+                 WHERE attrelid='athlete_profile'::regclass AND attnum>0 AND attisdropped) = 0
+              AND
+              (SELECT count(*) FROM pg_constraint
+                 WHERE conrelid='athlete_profile'::regclass AND contype='p') = 1;
+          ")
+          if [ "$ok" != "t" ]; then
+            echo "::error::Verification failed — see post-rebuild state above"
+            exit 1
+          fi
+          echo "Verified: 4 columns present, 0 tombstones, PK intact." >> "$GITHUB_STEP_SUMMARY"

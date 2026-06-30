@@ -63,27 +63,28 @@
   </div>
   {% endif %}
 
-  {# Unified drop zone (#767 slice 5) — one uploader that auto-detects what each
-     file is and routes it server-side (routes.garmin.import_bulk): .fit/.tcx/.gpx
+  {# Unified drop zone (#767 slice 5; auto-detected source #1055) — one uploader
+     that auto-detects what each file is AND which app/device it came from,
+     routing it server-side (routes.garmin.import_bulk): .fit/.tcx/.gpx
      activities → cardio_log; Garmin wellness/daily-metric FITs → wellness tables;
-     a WHOOP physiological_cycles.csv → provider_raw_record. Multi-file + drag-
-     and-drop via the shared bulk uploader ([data-bulk-*] → static/app.js);
-     duplicate files are skipped server-side. The single-file review-and-plan-
-     match path lives on the full Import .FIT page (linked below). #}
+     a WHOOP wellness CSV → provider_raw_record. Multi-file + drag-and-drop via
+     the shared bulk uploader ([data-bulk-*] → static/app.js); duplicate files
+     are skipped server-side. The single-file review-and-plan-match path lives
+     on the full Import .FIT page (linked below). #}
   <div class="conn-drop" data-bulk-upload
        data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.tcx,.gpx,.csv,.zip">
     <div class="drop-ic">
       <svg class="icon" width="18" height="18" aria-hidden="true"><use href="#i-upload"></use></svg>
     </div>
     <div class="drop-title">Upload your data</div>
-    <p class="drop-sub">Drop a whole export folder — Garmin <code>.fit</code> workouts <em>and</em>
-      wellness/daily-metric files (<code>_WELLNESS</code>, <code>_METRICS</code>, <code>_SLEEP_DATA</code>,
-      <code>_HRV_STATUS</code>), <code>.tcx</code> / <code>.gpx</code> activities from COROS / Polar /
-      Strava, or a WHOOP <code>physiological_cycles.csv</code> (sleep / HRV / resting HR). We detect
-      what each file is and route it automatically; duplicates are skipped.</p>
+    <p class="drop-sub">Drop your exported workout and health files from your watch or app —
+      we figure out the rest. Sort by hand isn't necessary: we automatically tell workouts
+      apart from sleep, recovery, and daily-metric files, work out which app or device each one
+      came from, and file everything in the right place. Drop a whole export folder at once;
+      duplicates are skipped.</p>
 
     <div data-bulk-drop class="fit-drop">
-      <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.tcx</code> / <code>.gpx</code> / <code>.csv</code> / <code>.zip</code> files here</p>
+      <p class="fit-drop-hint">Drag &amp; drop files (or a whole folder) here</p>
       <div class="fit-drop-actions">
         <label class="btn btn-ghost btn-sm fit-file-btn">
           Choose files
@@ -95,19 +96,6 @@
         </label>
       </div>
     </div>
-
-    <label class="fit-source">
-      <span>Source</span>
-      <select name="source" data-bulk-field class="form-select form-select-sm">
-        <option value="garmin" selected>Garmin</option>
-        <option value="coros">COROS</option>
-        <option value="wahoo">Wahoo</option>
-        <option value="polar">Polar</option>
-        <option value="strava">Strava</option>
-      </select>
-      <span class="dim">— which service the <em>activity</em> files came from. Wellness / daily-metric
-        files and a WHOOP <code>.csv</code> route automatically regardless.</span>
-    </label>
 
     <label class="fit-match">
       <input type="checkbox" value="1" name="match_plan" data-bulk-field checked>

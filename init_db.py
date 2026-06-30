@@ -3529,6 +3529,12 @@ def init_postgres():
     # receive `cur`; string migrations are executed directly. Each migration
     # runs in its own transaction so a failure (e.g. SET NOT NULL on a column
     # that still has NULLs pre-bootstrap) doesn't abort the whole batch.
+    # Advisory lock serialises concurrent Lambda cold-starts so they don't
+    # race on ALTER TABLE (lock contention caused silent migration drops that
+    # produced UndefinedColumn 500s on the first request after a deploy).
+    # Lock is session-scoped: released automatically when the connection closes.
+    cur.execute("SELECT pg_advisory_lock(7361925174)")
+    conn.commit()
     for stmt in _PG_MIGRATIONS:
         try:
             if callable(stmt):
@@ -3536,8 +3542,9 @@ def init_postgres():
             else:
                 cur.execute(stmt)
             conn.commit()
-        except Exception:
+        except Exception as e:
             conn.rollback()
+            print(f"[init_db] migration failed (skipped): {e!r} :: {(stmt if isinstance(stmt, str) else repr(stmt))[:120]!r}")  # Rule #15
     # Seed current_rx for user 1 only — pre-bootstrap, the table stays empty
     # (NOT NULL on user_id post-2D would reject NULL inserts anyway). Andy's
     # rows are seeded inline by routes/auth.py:register on first-user bootstrap.

@@ -16,7 +16,7 @@ import zipfile
 
 import pytest
 
-from tcx_gpx_parser import parse_tcx, parse_gpx
+from tcx_gpx_parser import parse_tcx, parse_gpx, detect_source
 import routes.garmin as g
 from routes.garmin import _blob_ext, _iter_activity_blobs
 
@@ -213,6 +213,39 @@ class TestParseGpx:
         with pytest.raises(ValueError):
             parse_gpx(b'<?xml version="1.0"?>'
                       b'<gpx xmlns="http://www.topografix.com/GPX/1/1"/>')
+
+
+# ─── source auto-detection (#1055) ───────────────────────────────────────────
+
+class TestDetectSource:
+    def test_tcx_author_name_detected(self):
+        tcx = TCX_RUN.replace(
+            b'</Activities>',
+            b'</Activities><Author><Name>COROS App</Name></Author>')
+        assert detect_source(tcx, 'tcx') == 'coros'
+
+    def test_tcx_polar_flow_detected(self):
+        tcx = TCX_RUN.replace(
+            b'</Activities>',
+            b'</Activities><Author><Name>Polar Flow</Name></Author>')
+        assert detect_source(tcx, 'tcx') == 'polar'
+
+    def test_gpx_creator_attribute_detected(self):
+        gpx = GPX_RUN.replace(b'creator="test"', b'creator="StravaGPX"')
+        assert detect_source(gpx, 'gpx') == 'strava'
+
+    def test_gpx_wahoo_creator_detected(self):
+        gpx = GPX_RUN.replace(b'creator="test"', b'creator="Wahoo Fitness"')
+        assert detect_source(gpx, 'gpx') == 'wahoo'
+
+    def test_unrecognized_creator_falls_back_to_garmin(self):
+        assert detect_source(GPX_RUN, 'gpx') == 'garmin'  # creator="test"
+
+    def test_no_author_falls_back_to_garmin(self):
+        assert detect_source(TCX_RUN, 'tcx') == 'garmin'
+
+    def test_malformed_xml_falls_back_to_garmin(self):
+        assert detect_source(b'<not closed', 'tcx') == 'garmin'
 
 
 # ─── blob dispatch (routes.garmin) ───────────────────────────────────────────
