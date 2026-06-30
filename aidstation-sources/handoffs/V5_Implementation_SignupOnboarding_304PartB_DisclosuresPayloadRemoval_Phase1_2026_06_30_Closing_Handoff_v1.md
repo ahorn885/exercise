@@ -1,6 +1,6 @@
 # V5 Implementation — Sign-up / Onboarding Consolidation, Phase 1: #304 Part B — Remove `disclosures` from the Layer-1 Payload — Closing Handoff (2026-06-30)
 
-**Branch:** `claude/signup-onboarding-health-screening-b224t2` · **Commit:** `b3f1436` (code) + the bookkeeping commit riding the same branch · **PR:** not yet opened — pushed + bookkept, **waiting on Andy's go** (Ops model: never auto-open) · **Issue:** [#304](https://github.com/ahorn885/exercise/issues/304) (use-or-stop-collecting orphaned Layer-1 fields), Part B · **Epic:** [#246](https://github.com/ahorn885/exercise/issues/246) · **Plan:** sign-up/onboarding consolidation, Phase 1 (`CARRY_FORWARD.md` arc entry) · **Suite:** full `tests/` **3989 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
+**Branch:** `claude/signup-onboarding-health-screening-b224t2` · **Commit:** `b3f1436` (code) + the bookkeeping commits riding the same branch · **PR:** [#1073](https://github.com/ahorn885/exercise/pull/1073) — opened + **auto-merge armed (merge commit, Andy's go 2026-06-30)** · **Issue:** [#304](https://github.com/ahorn885/exercise/issues/304) (use-or-stop-collecting orphaned Layer-1 fields), Part B · **Epic:** [#246](https://github.com/ahorn885/exercise/issues/246) · **Plan:** sign-up/onboarding consolidation, Phase 1 (`CARRY_FORWARD.md` arc entry) · **Suite:** full `tests/` **3989 passed / 30 skipped** (the 3 Layer3B `evidence_basis` warnings pre-exist, #217).
 
 **Context:** Continuation of the sign-up/onboarding consolidation arc (Phase 0 health-screening foundation shipped + merged last session, PR #1070). Phase 1 bundles four issues, **each its own PR off `main`**. Andy picked the **#304 Part B** slice this session (AskUserQuestion 2026-06-30) — the lowest-risk one, no new UI, executing the already-resolved **D2** decisions.
 
@@ -40,9 +40,14 @@
 
 No new decisions this session — executed the already-resolved **D2** (Andy, 2026-06-30, recorded in `CARRY_FORWARD.md`). The disclosures removal IS the decided action; the other D2 fields needed no code change (see §1).
 
-## 5. NEXT — remaining Phase 1 slices (each its own PR off `main`)
+## 5. NEXT — DECIDED: continue with Phase 1 slice **#257 (7 V3 profile fields)**
 
-- **#257 — 7 V3 profile fields.** Columns/enums in `athlete.py` `PROFILE_FIELDS` + `init_db.py` migrations + form in `routes/profile.py` / `templates/profile/edit.html`. **Confirm D3 first** (V3-I-4 sweat-rate/salt-loss split ownership vs Layer 2E heat; V3-I-7 supplement restructure vs `athlete_supplements_repo.py`). This is epic #246's only open child for closeout.
+This handoff continues directly into **#257** next session — it's the explicit next step (Andy, 2026-06-30). It's epic #246's only open child, so it's the path to closing the epic.
+
+- **#257 — 7 V3 profile fields (NEXT).** Columns/enums in `athlete.py` `PROFILE_FIELDS` + `init_db.py` migrations + form in `routes/profile.py` / `templates/profile/edit.html` (sleep variability, macro preference, caffeine sensitivity, hydration baseline, body-weight trend, sweat-rate/salt-loss split, supplement-protocol restructure). **Confirm D3 first** (V3-I-4 sweat-rate/salt-loss split ownership vs Layer 2E heat; V3-I-7 supplement restructure vs `athlete_supplements_repo.py`). Its own PR off `main`.
+
+Then the rest of Phase 1, each its own PR off `main`:
+
 - **#1067 — pack-load weighting (per D1).** Weight prior race experience above recent pack training in `layer3b/builder.py` (~`:615`) + a summary/edit/delete UX on the pack-load entry form (`routes/profile.py` + template; data via `pack_load_repo.py`).
 - **#223 — pregnancy field (capture only).** Make screening Q8/`PREGNANCY` the source of truth; add an explicit capture field. **DEFER the `layer2e` HITL-gate half** — gates 1-4 are dead-stubbed (`_emit_hitl_items` returns `[]`, deferred to the post-§I.1 supplements refresh) so there's nothing live to wire into, AND the gate change is stop-and-ask trigger #4. #223 is also labelled `priority:low`/`icebox` on GitHub — confirm with Andy it's still wanted in Phase 1.
 - **#304 remains OPEN** — Part B's `_history`-lists decision (medications/conditions/injury history; only the *active* lists are read) was **not** in D2 scope and still needs a thread-or-stop-capturing call.
@@ -68,4 +73,4 @@ No new decisions this session — executed the already-resolved **D2** (Andy, 20
 4. This handoff
 5. `./scripts/verify-handoff.sh` — automated anchor sweep
 
-**PR state:** pushed to `claude/signup-onboarding-health-screening-b224t2`; **PR not opened** — per the Ops model, push + bookkeep + wait for Andy's explicit go, then open (ready, not draft) + `enable_pr_auto_merge(merge)`. The bookkeeping commit rides the same branch/PR as the code.
+**PR state:** PR [#1073](https://github.com/ahorn885/exercise/pull/1073) opened on Andy's go; **auto-merge armed (merge commit)** — self-merges once the required checks pass (`Python unit suite (stubbed)` / `JS harness (jsdom)` / `Layer 0 integrity gate`). The bookkeeping commits ride the same branch/PR as the code. Session subscribed to PR #1073 activity (CI / review comments).
