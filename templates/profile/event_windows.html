@@ -51,7 +51,7 @@
             {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
             {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
             {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
-              {% if w.brought_craft %}<span class="dim">· with {{ w.brought_craft | join(', ') | replace('_', ' ') }}</span>{% endif %}
+              {% if w.brought_gear %}<span class="dim">· with {{ w.brought_gear | join(', ') | replace('_', ' ') }}</span>{% endif %}
             {% elif w.override_type == 'reduced_volume' %}Reduced volume
               {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
               {% else %}<span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day)</span>{% endif %}
@@ -128,14 +128,15 @@
         <fieldset class="field field-wide pf-craftset"><span class="lbl">Gear brought <span class="dim">(if training away — only gear you bring counts at the destination)</span></span>
           {# #884 slice 6b — the brought picker is generalized from craft-only to
              the full unified gear registry (all kinds), so skis/climbing gear can
-             be brought to a race. The form field stays `brought_craft` (the column
-             rename rides 6c); values are gear_ids of any kind. #}
-          {% set bc = d.get('brought_craft', []) %}
+             be brought to a race. #884 slice 6c-1 — the form field is now
+             `brought_gear` (the legacy-craft naming retirement; storage cut to the
+             brought_gear column); values are gear_ids of any kind. #}
+          {% set bc = d.get('brought_gear', []) %}
           {% for grp in gear_registry %}
             {% for c in grp.rows %}
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="brought_{{ c.gear_id }}"
-                     name="brought_craft" value="{{ c.gear_id }}"{{ ' checked' if c.gear_id in bc else '' }}>
+                     name="brought_gear" value="{{ c.gear_id }}"{{ ' checked' if c.gear_id in bc else '' }}>
               <label class="form-check-label" for="brought_{{ c.gear_id }}">{{ c.label }}</label>
             </div>
             {% endfor %}

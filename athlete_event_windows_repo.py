@@ -65,10 +65,11 @@ class EventWindow:
     # empty tuple on non-away windows / when nothing is brought. Fed (unioned with
     # the standing gear<->locale set) as the away cluster's owned_crafts. #884
     # slice 6b — generalized from craft-only to all gear kinds (ski/snow/climb/
-    # alpine), so the stored gear_ids may be any registry kind. (Attribute name
-    # kept `brought_craft`; the `brought_craft`→`brought_gear` column/field rename
-    # rides 6c's legacy-column retirement.)
-    brought_craft: tuple[str, ...] = ()
+    # alpine), so the stored gear_ids may be any registry kind. #884 slice 6c-1 —
+    # attribute + storage column renamed `brought_craft`→`brought_gear` (the
+    # legacy-craft naming retirement; the `brought_craft` column drop is the 6c-1
+    # redump-fold follow-up).
+    brought_gear: tuple[str, ...] = ()
     # Slice 6 (#593) — the retained capacity fraction for a 'reduced_volume'
     # window (0 < pct < 1), athlete-set per window. None on every other type
     # ('no_training' is the discrete 0% type, not pct=0).
@@ -83,7 +84,7 @@ class EventWindow:
 
 _WINDOW_COLUMNS = (
     "id, user_id, start_date, end_date, override_type, unavailable_locale, "
-    "away_locale, brought_craft, volume_pct, volume_by_date, notes"
+    "away_locale, brought_gear, volume_pct, volume_by_date, notes"
 )
 
 
@@ -99,7 +100,7 @@ def _row_to_window(row) -> EventWindow:
         unavailable_locale=row["unavailable_locale"] or None,
         away_locale=row["away_locale"] or None,
         notes=row["notes"] or "",
-        brought_craft=tuple(_split_craft(row["brought_craft"])),
+        brought_gear=tuple(_split_craft(row["brought_gear"])),
         volume_pct=(
             float(row["volume_pct"]) if row["volume_pct"] is not None else None
         ),
@@ -195,7 +196,7 @@ def add_event_window(
     override_type: str,
     unavailable_locale: str | None = None,
     away_locale: str | None = None,
-    brought_craft: list[str] | None = None,
+    brought_gear: list[str] | None = None,
     volume_pct: float | None = None,
     notes: str = "",
 ) -> None:
@@ -238,7 +239,7 @@ def add_event_window(
         # Brought gear is only meaningful on an away window (the destination's
         # env replaces home); validate against the unified registry, emit in
         # registry order for a stable stored CSV.
-        crafts = _validate_crafts(brought_craft or [])
+        crafts = _validate_crafts(brought_gear or [])
     elif override_type == "reduced_volume":
         # Volume window — carries no locale; requires a retained fraction in (0,1).
         unavail = None
@@ -261,7 +262,7 @@ def add_event_window(
     db.execute(
         "INSERT INTO athlete_event_windows "
         "  (user_id, start_date, end_date, override_type, unavailable_locale, "
-        "   away_locale, brought_craft, volume_pct, notes) "
+        "   away_locale, brought_gear, volume_pct, notes) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, start_date, end_date, override_type, unavail, away,
@@ -316,7 +317,7 @@ def update_event_window_volume_by_date(
             )
         clean[dd.isoformat()] = p
     # Stored sorted for a deterministic CSV-equivalent digest (mirrors the
-    # brought_craft enum-order rule) → a stable compute_event_windows_hash.
+    # brought_gear enum-order rule) → a stable compute_event_windows_hash.
     stored = json.dumps(dict(sorted(clean.items()))) if clean else None
     db.execute(
         "UPDATE athlete_event_windows SET volume_by_date = ? "
