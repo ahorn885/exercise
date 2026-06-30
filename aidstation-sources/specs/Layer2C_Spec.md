@@ -42,7 +42,7 @@ def q_layer2c_equipment_mapper_payload(
 | Param | Type | Source | Notes |
 |---|---|---|---|
 | `locale_id` | str | Layer 1 (§J Locales) | Unique identifier for the specific locale being mapped |
-| `locale_equipment_pool` | list[str] | Layer 1 (§J Equipment Inventory for this locale) | Canonical equipment names from `layer0.equipment_items.canonical_name`. Must already include any `is_universal=true` items the locale has. |
+| `locale_equipment_pool` | list[str] | Layer 1 (§J Equipment Inventory for this locale) | Canonical equipment names from `layer0.equipment_items.canonical_name`. Must already include any `is_universal=true` items the locale has. **#971 D-60 §5:** the pool is built by `locations.locale_effective_tags(..., exclude_disputed=True)` on every plan-gen path, so a tag a peer has flagged as wrong on the shared profile (an open `gym_profiles.disputed_items` `removes`) is **not in the pool** while the dispute is under admin review — it is not-available for plan-gen. See `designs/CrowdSourcedProfiles_DisputedItemPlanGen_971_Design_v1.md`. 2C itself is unchanged (it just unions the pool it's given). |
 | `cluster_locale_ids` | list[str] | Layer 1 (§J cluster definition) | All locales in this athlete's cluster. Context only — not used for equipment union (equipment is locale-scoped). |
 | `cluster_gear_toggle_states` | dict[str, bool] | Layer 1 (§J Gear Readiness) | Each toggle_name → on/off. Toggles unioned across cluster ("climbing kit travels"). |
 | `included_discipline_ids` | list[str] | Layer 1 / 2A | Disciplines the athlete is training. Drives which exercises are considered. |
@@ -451,6 +451,7 @@ If a cluster has many locales (e.g., athlete travels regularly to 5+ places), th
 | 2C-3 | Layer 4 selection logic — how plan-gen picks Tier 2 vs Tier 3 when both resolve | Layer 4 design | Out of scope here; surfaced in payload |
 | 2C-4 | Foci selection (orthogonal to 2C) | Layer 4 design | Already tracked as Open Item P in Batch B handoff |
 | 2C-5 | D-08 follow-up: Long Distance / Endurance Cycling missing 2 disciplines from `sport_discipline_map` — when those sports come online, verify 2C still works | FC-1 | Not AR-blocking |
+| 2C-6 | **Disputed item ⇒ not-available for plan-gen** (#971 D-60 §5) — `locale_equipment_pool` excludes open-dispute `removes` on the plan-gen path | Andy | ✅ Resolved 2026-06-30 — plan-gen-only subtraction + lazy/next-regen invalidation (`designs/CrowdSourcedProfiles_DisputedItemPlanGen_971_Design_v1.md`). Implemented in `locations.locale_effective_tags(exclude_disputed=True)`. |
 
 ## 13. Test scenarios
 

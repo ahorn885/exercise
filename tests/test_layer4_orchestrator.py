@@ -3449,7 +3449,7 @@ class TestOrchestratePlanCreateHappyPath:
             patch("layer4.orchestrator.locations.cluster_locale_ids",
                   return_value=["home", "park"]),
             patch("layer4.orchestrator.locations.locale_effective_tags",
-                  side_effect=lambda db, uid, loc: locale_tags[loc]),
+                  side_effect=lambda db, uid, loc, **kw: locale_tags[loc]),
             patch("layer4.orchestrator.q_layer2c_equipment_mapper_payload",
                   side_effect=_l2c_side_effect),
             patch("layer4.orchestrator.q_layer2d_injury_risk_profile_payload",
