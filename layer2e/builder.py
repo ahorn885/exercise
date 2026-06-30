@@ -580,13 +580,25 @@ def _sport_modifier(sport_profile: str) -> float:
 
 
 def _salt_tolerance_modifier(deployed_value: str | None) -> tuple[float, str]:
-    # §5.4.4 — Low → 0.8 / Standard → 1.0 / High → 1.2.
+    # §5.4.4 — Low → 0.8 / Standard → 1.0 / High → 1.2. Drives the SODIUM band.
     spec = _SALT_TOLERANCE_NORM.get(deployed_value)
     if spec == "Low":
         return 0.8, "Low"
     if spec == "High":
         return 1.2, "High"
     return 1.0, spec or "Standard"
+
+
+def _sweat_rate_modifier(deployed_value: str | None) -> tuple[float, str]:
+    # #257 V3-I-4 — sweat *rate* drives the FLUID band, split from the salt
+    # (sodium) modifier above. A heavy sweater loses more volume → more fluid;
+    # a light sweater needs less. Mirrors the salt scale: low 0.8 / high 1.2.
+    # Unset (the pre-split default) is a no-op 1.0.
+    if deployed_value == "low":
+        return 0.8, "low"
+    if deployed_value == "high":
+        return 1.2, "high"
+    return 1.0, deployed_value or "moderate"
 
 
 def _build_caffeine_plan(
@@ -679,6 +691,9 @@ def _build_race_day_fueling(
 
     sport_mod = _sport_modifier(sport_profile)
     salt_mod, _salt_label = _salt_tolerance_modifier(lifestyle.salt_electrolyte_tolerance)
+    # #257 V3-I-4 — fluid scales on sweat *rate*, sodium on salt *loss*. The v2
+    # `salt_electrolyte_tolerance` enum drove both; they vary independently.
+    sweat_mod, _sweat_label = _sweat_rate_modifier(lifestyle.sweat_rate_level)
 
     # §5.4.3 sport modifier shrinks the upper CHO band but not the lower.
     cho_low = band["cho_low"]
@@ -687,8 +702,8 @@ def _build_race_day_fueling(
     na_low = band["na_low"] * salt_mod
     na_high = band["na_high"] * salt_mod
 
-    fluid_low = band["fluid_low"] * salt_mod if band["fluid_low"] is not None else None
-    fluid_high = band["fluid_high"] * salt_mod if band["fluid_high"] is not None else None
+    fluid_low = band["fluid_low"] * sweat_mod if band["fluid_low"] is not None else None
+    fluid_high = band["fluid_high"] * sweat_mod if band["fluid_high"] is not None else None
 
     protein_after = band["protein_after_hr"]
 
@@ -725,6 +740,7 @@ def _build_race_day_fueling(
         protein_g_per_hr_after_hr_n=protein_after,
         sport_modifier_applied=sport_mod,
         salt_tolerance_modifier_applied=salt_mod,
+        sweat_rate_modifier_applied=sweat_mod,  # #257 V3-I-4
         heat_acclim_modifier_applied=1.0,  # §5.8 stub — no modifier applied
         recommended_formats=formats,
         blocked_formats=blocked,
