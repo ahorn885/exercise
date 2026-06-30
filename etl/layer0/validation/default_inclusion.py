@@ -1,9 +1,12 @@
 """Validate `phase_load_allocation.default_inclusion` against the v10 enum.
 
-Allowed values: `included`, `excluded`, `prompt_required`. Aggregator
-(`WEEKLY TOTAL TARGET`) rows are exempt and excluded from the check.
+Allowed values: `included`, `excluded`, `prompt_required`.
 
 Mismatch → ERROR.
+
+#269 (2026-06-30): the `WEEKLY TOTAL TARGET` aggregator rows were retired by
+migration 0034 (superseded; `WHERE superseded_at IS NULL` already excludes
+them), so the former aggregator exemption is removed.
 """
 from __future__ import annotations
 
@@ -25,11 +28,6 @@ def run_default_inclusion(conn) -> dict[str, Any]:
         )
         rows = cur.fetchall()
     for sport, did, disc, di in rows:
-        # Aggregator rows ("WEEKLY TOTAL TARGET") may legitimately have
-        # default_inclusion populated or NULL — exempt them.
-        if disc and "WEEKLY TOTAL TARGET" in str(disc).upper():
-            pass_count += 1
-            continue
         if di is None or str(di).strip() in ALLOWED:
             pass_count += 1
             continue

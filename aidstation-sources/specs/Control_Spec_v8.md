@@ -329,7 +329,7 @@ Final-cleanup batches (FC-1 ETL fixes, FC-2 spec v4 rewrite) run at end of Layer
 
 ### 8.2 Standing rules (don't violate these)
 
-- **D-05 aggregator filter** (`AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`): every query touching `layer0.phase_load_allocation` MUST include this filter until ETL fix lands (FC-1). Currently applied in 2A; required for 2D and 2E and Layer 4. **2026-05-11 update:** cleanup half of D-05 ran in FC-1a (all 33 aggregator rows already superseded in deployed); ETL extractor code patch still pending. Standing rule stays in force until ETL patch + next clean run confirm no regression.
+- **D-05 aggregator filter — RESOLVED (#269, 2026-06-30):** the `WEEKLY TOTAL TARGET` aggregator rows in `layer0.phase_load_allocation` are retired at the source by migration `0034_supersede_phase_load_allocation_aggregators.sql` (applied to live prod; nightly `layer0-validate-live` green). The former standing rule — *every query touching `phase_load_allocation` MUST carry `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`* — is **withdrawn**; the only query that actually applied it (2A §5.2) has had it removed. Regression is now guarded by the `phase_load_allocation_aggregators` check in `validate_layer0` (fails the gate if any aggregator row goes active again), so no query-side filter is owed. _(History: cleanup half ran in FC-1a 2026-05-11 — rows superseded in deployed; the migration `0034` + the gate check closed it out under #269.)_
 - **Sport naming convention** (D-17): for non-AR sub-format sports, framework_sport in queries against `phase_load_allocation` uses the sub-format ("Triathlon (Standard / Olympic)") while queries against `sport_discipline_map` use the top-level ("Triathlon"). Code-side strip logic in 2A §5.1.
 - **Match on enum values, not column names** (closed-out D-21 standing rule): 2D and 2E match on `HealthConditionRecord.system_category` enum *values* (strings like 'Cardiac', 'Neurological'), not on the SQL column name. The deployed SQL column is `category_name` (confirmed FC-4b 2026-05-13; see `Layer0_ETL_Spec_v7` §4.14, §6.2). The Python dataclass field name `system_category` is independent of the SQL column. Standing rule: code reads the dataclass; SQL queries read `category_name`.
 - **No FKs anywhere in layer0:** all relationships are TEXT-based by design. Be careful when superseding rows — nothing prevents orphaned references in denormalized columns.
@@ -445,7 +445,7 @@ Where things currently live, what's pending. **Cross-references in this map use 
 
 **What this doc gets right:**
 - One place to see the whole system. Currently scattered across 50+ docs.
-- Explicit standing rules (D-05 filter, naming convention, no-FK reality, pre-flight introspection) called out so they don't get re-discovered the hard way.
+- Explicit standing rules (naming convention, no-FK reality, pre-flight introspection) called out so they don't get re-discovered the hard way. (The former D-05 aggregator-filter standing rule was retired when #269 removed the root cause — see §8.2.)
 - Doc map shows what exists vs what's pending — easy to see the spec-debt at a glance.
 - HITL surface table is the kind of cross-cutting view that's hard to derive from per-node specs alone.
 
