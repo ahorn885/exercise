@@ -16,11 +16,14 @@ Missing-input policy (settled in PR-C): soft (return empty + caller may
 later attach `Observation(category='data_gap')` at the payload level) when
 input is missing-but-tolerable. Rules NEVER raise.
 
-D-66 / D-67 / D-68 forward-compatibility: 4 rules carry D-67-aware branches
-that no-op against the always-empty `per_date_restrictions` list in v1.
-When D-67 implementation ships, the branches activate without further
-validator-code changes. D-70 (ROM modality) + D-71 (phase-sequencing) are
-formally deferred per `Layer2D_Spec.md` §5.3.6.6.
+D-67 per-date athlete restrictions (#237): rule 6c (`session_locale_not_in_cluster_*`)
+enforces `locale_lock` and rule 21 (`indoor_only_violation_*`) enforces `indoor_only`,
+both reading `ValidatorContext.per_date_restrictions`. The originally-specced
+`discipline_exclusions` and `max_total_minutes` restriction fields were dropped
+(Andy, 2026-06-30) — disciplines are governed by gear/terrain availability rules,
+and `volume_by_date`'s per-day percentage already supersedes a minutes cap. D-70
+(ROM modality) + D-71 (phase-sequencing) are formally deferred per
+`Layer2D_Spec.md` §5.3.6.6.
 
 **Accommodation-modality baseline caveat (v1).** The
 `injury_accommodation_violation_*` rule formulas (per §5.3.6 + §5.4 line
@@ -94,9 +97,9 @@ class ValidatorContext:
     in the athlete's saved locale cluster. The keys form the implicit
     "cluster" set for rule 6c (`session_locale_not_in_cluster_*`).
 
-    `per_date_restrictions` is always empty in v1 (D-67 deferred); D-67-aware
-    rule branches (6c locale_lock; 12 discipline_exclusions; 20
-    max_total_minutes; 21 indoor_only) no-op against empty input.
+    `per_date_restrictions` (#237) carries per-date `locale_lock` + `indoor_only`
+    restrictions; D-67-aware rule branches (6c locale_lock; 21 indoor_only) no-op
+    against empty input.
 
     `prior_session_loads_by_date` provides trailing-window historical data
     for ACWR (rule 2). When None, ACWR rule emits no failures.
@@ -1328,10 +1331,6 @@ def _rule_discipline_excluded(
             for d in ctx.layer2a_payload.disciplines
             if d.inclusion == "included"
         }
-    excl_by_date: dict[date, set[str]] = {}
-    for r in ctx.per_date_restrictions:
-        d = r.date.date() if hasattr(r.date, "date") else r.date
-        excl_by_date.setdefault(d, set()).update(r.discipline_exclusions)
     for s in payload.sessions:
         if s.discipline_id is None or s.kind == "rest":
             continue
@@ -1343,21 +1342,6 @@ def _rule_discipline_excluded(
                     severity="blocker",
                     detail=(
                         f"discipline {s.discipline_id} not in 2A discipline_inclusion=='included' set"
-                    ),
-                    affected_session_ids=[s.session_id],
-                )
-            )
-            continue
-        date_excl = excl_by_date.get(s.date, set())
-        if s.discipline_id in date_excl:
-            out.append(
-                RuleFailure(
-                    rule_name=f"discipline_excluded_per_date_{s.discipline_id}_{s.session_id}",
-                    phase_name=s.phase_metadata.phase_name if s.phase_metadata else None,
-                    severity="blocker",
-                    detail=(
-                        f"discipline {s.discipline_id} excluded on {s.date} via D-67 "
-                        f"discipline_exclusions"
                     ),
                     affected_session_ids=[s.session_id],
                 )
@@ -1773,10 +1757,6 @@ def _rule_daily_window_fit(
             continue
         total = (w.window_duration or 0) + (w.second_window_duration or 0)
         minutes_by_dow[w.day_of_week] = total
-    max_total_by_date: dict[date, int | None] = {}
-    for r in ctx.per_date_restrictions:
-        d = r.date.date() if hasattr(r.date, "date") else r.date
-        max_total_by_date[d] = r.max_total_minutes
     out: list[RuleFailure] = []
     duration_by_date: dict[date, int] = {}
     sessions_by_date: dict[date, list[str]] = {}
@@ -1794,19 +1774,6 @@ def _rule_daily_window_fit(
                     severity="blocker",
                     detail=(
                         f"{d}: total session duration {dur}min > available window {cap}min"
-                    ),
-                    affected_session_ids=sessions_by_date[d],
-                )
-            )
-        d67_cap = max_total_by_date.get(d)
-        if d67_cap is not None and dur > d67_cap:
-            out.append(
-                RuleFailure(
-                    rule_name=f"daily_window_fit_d67_max_{d.isoformat()}",
-                    phase_name=None,
-                    severity="blocker",
-                    detail=(
-                        f"{d}: total session duration {dur}min > D-67 max_total_minutes {d67_cap}"
                     ),
                     affected_session_ids=sessions_by_date[d],
                 )

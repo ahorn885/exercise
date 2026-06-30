@@ -81,11 +81,13 @@ class EventWindow:
     # scale the rest. Dates not present fall back to `volume_pct` at resolution.
     volume_by_date: dict[date, float] = field(default_factory=dict)
     # #237 — per-DATE restrictions layered onto ANY window type:
-    #   {date: {"locale_lock": str|None, "discipline_exclusions": [discipline_id],
-    #           "indoor_only": bool, "max_total_minutes": int|None}}
+    #   {date: {"locale_lock": str|None, "indoor_only": bool}}
     # The Layer 4 validator's D-67-aware branches enforce each on its date. Empty
     # → no per-date restrictions. Independent of override_type (a plain travel
-    # window can still lock a locale or cap minutes on specific days).
+    # window can still lock a locale on specific days). Originally also carried
+    # `discipline_exclusions` + `max_total_minutes`; both dropped (Andy,
+    # 2026-06-30) — disciplines are governed by gear/terrain availability rules,
+    # and the per-day volume percentage already supersedes a minutes cap.
     restrictions_by_date: dict[date, dict] = field(default_factory=dict)
 
 
@@ -379,13 +381,16 @@ def update_event_window_restrictions_by_date(
     db, user_id: int, window_id: int, by_date: dict | None
 ) -> None:
     """Set (or clear) the per-DATE restrictions on a window (#237). `by_date` maps
-    a covered date → ``{"locale_lock", "discipline_exclusions", "indoor_only",
-    "max_total_minutes"}`` (any subset of keys). A day whose spec carries no actual
-    restriction is dropped; an empty/None map clears the schedule.
+    a covered date → ``{"locale_lock", "indoor_only"}`` (any subset of keys). A day
+    whose spec carries no actual restriction is dropped; an empty/None map clears
+    the schedule. (Originally also accepted `discipline_exclusions` +
+    `max_total_minutes`; both dropped, Andy 2026-06-30 — disciplines are governed
+    by gear/terrain availability rules, and the per-day volume percentage already
+    supersedes a minutes cap.)
 
     Raises ``EventWindowError`` (writing nothing) when the window isn't the
-    athlete's, a date falls outside it, an unknown locale_lock is given, or
-    max_total_minutes is invalid. Caller commits."""
+    athlete's, a date falls outside it, or an unknown locale_lock is given.
+    Caller commits."""
     win = load_event_window(db, user_id, window_id)
     if win is None:
         raise EventWindowError("event window not found")
@@ -403,28 +408,13 @@ def update_event_window_restrictions_by_date(
             raise EventWindowError(
                 f"locale_lock {lock!r} is not one of your saved locales"
             )
-        mins = spec.get("max_total_minutes")
-        if mins is not None and mins != "":
-            try:
-                mins = int(mins)
-            except (TypeError, ValueError):
-                raise EventWindowError(
-                    f"max_total_minutes {mins!r} is not a number"
-                )
-            if mins < 0:
-                raise EventWindowError("max_total_minutes must be >= 0")
-        else:
-            mins = None
-        excl = sorted({s for s in (spec.get("discipline_exclusions") or []) if s})
         indoor = bool(spec.get("indoor_only"))
         # Drop a day that carries no actual restriction so storage stays tidy and
         # the validator only sees meaningful per-date entries.
-        if lock or excl or indoor or mins is not None:
+        if lock or indoor:
             clean[dd.isoformat()] = {
                 "locale_lock": lock,
-                "discipline_exclusions": excl,
                 "indoor_only": indoor,
-                "max_total_minutes": mins,
             }
     # Stored sorted for a deterministic digest (mirrors volume_by_date) → a stable
     # compute_event_windows_hash.
@@ -475,9 +465,10 @@ def _parse_volume_by_date(value) -> dict[date, float]:
 
 def _parse_restrictions_by_date(value) -> dict[date, dict]:
     """Decode the stored per-date restrictions JSON (#237) into
-    `{date: {locale_lock, discipline_exclusions, indoor_only, max_total_minutes}}`.
-    Empty / NULL → `{}`. Each day's dict is normalized to all four keys with safe
-    defaults so downstream readers don't branch on presence."""
+    `{date: {locale_lock, indoor_only}}`. Empty / NULL → `{}`. Each day's dict is
+    normalized to both keys with safe defaults so downstream readers don't branch
+    on presence. Any legacy `discipline_exclusions` / `max_total_minutes` keys on
+    an old stored row are silently ignored (dropped, Andy 2026-06-30)."""
     if not value:
         return {}
     raw = value if isinstance(value, dict) else json.loads(value)
@@ -486,12 +477,7 @@ def _parse_restrictions_by_date(value) -> dict[date, dict]:
         v = v or {}
         out[_as_date(k)] = {
             "locale_lock": v.get("locale_lock") or None,
-            "discipline_exclusions": list(v.get("discipline_exclusions") or []),
             "indoor_only": bool(v.get("indoor_only")),
-            "max_total_minutes": (
-                int(v["max_total_minutes"])
-                if v.get("max_total_minutes") is not None else None
-            ),
         }
     return out
 
