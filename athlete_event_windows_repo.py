@@ -67,8 +67,8 @@ class EventWindow:
     # slice 6b — generalized from craft-only to all gear kinds (ski/snow/climb/
     # alpine), so the stored gear_ids may be any registry kind. #884 slice 6c-1 —
     # attribute + storage column renamed `brought_craft`→`brought_gear` (the
-    # legacy-craft naming retirement; the `brought_craft` column drop is the 6c-1
-    # redump-fold follow-up).
+    # legacy-craft naming retirement); the legacy `brought_craft` column was
+    # dropped in the 6c column-cleanup follow-up.
     brought_gear: tuple[str, ...] = ()
     # Slice 6 (#593) — the retained capacity fraction for a 'reduced_volume'
     # window (0 < pct < 1), athlete-set per window. None on every other type
