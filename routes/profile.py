@@ -105,7 +105,9 @@ from health_inputs_repo import (
 from pack_load_repo import (
     list_pack_loads, add_pack_load, delete_pack_load,
 )
-from health_screening_repo import get_pregnancy_flag, set_pregnancy_flag
+from health_screening_repo import (
+    get_pregnancy_flag, set_pregnancy_flag, get_screening, flag_descriptions,
+)
 from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
@@ -537,6 +539,12 @@ def edit():
     pack_loads = list_pack_loads(db, uid)
     # #223 — pregnancy status from screening Q8 / PREGNANCY flag.
     pregnancy_status = get_pregnancy_flag(db, uid)
+    # #394 D-85 — read-view of the current health screening (flags, last
+    # assessed, reassessment due/overdue) for the Health tab.
+    screening = get_screening(db, uid)
+    screening_flag_descriptions = (
+        flag_descriptions(screening['flags']) if screening else []
+    )
 
     from datetime import datetime as _dt
     return render_template(
@@ -552,6 +560,8 @@ def edit():
         medications=medications,
         pack_loads=pack_loads,
         pregnancy_status=pregnancy_status,
+        screening=screening,
+        screening_flag_descriptions=screening_flag_descriptions,
         system_category_choices=SYSTEM_CATEGORY_CHOICES,
         conditions_by_category=CONDITIONS_BY_CATEGORY,
         medication_class_choices=MEDICATION_CLASS_CHOICES,
