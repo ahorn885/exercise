@@ -930,18 +930,40 @@ def event_windows():
     db = get_db()
     uid = current_user_id()
     windows = load_event_windows(db, uid)
+    # #1049 — carry the refined display name (`locale_name`), not the raw slug,
+    # so the pickers and the window list read like the location's own page. The
+    # slug stays the option *value* (and the stored window key); `label` is the
+    # `locale_name or slug` fallback already used by `athlete_locale_choices`.
+    loc_rows = db.execute(
+        "SELECT locale, locale_name FROM locale_profiles WHERE user_id = ? "
+        "ORDER BY locale",
+        (uid,),
+    ).fetchall()
     locales = [
-        r['locale']
-        for r in db.execute(
-            "SELECT locale FROM locale_profiles WHERE user_id = ? ORDER BY locale",
-            (uid,),
-        ).fetchall()
+        {'slug': r['locale'], 'label': (r['locale_name'] or r['locale'])}
+        for r in loc_rows
     ]
+    locale_names = {l['slug']: l['label'] for l in locales}
     return_to = _safe_local_path(request.args.get('return_to'))
+    # #608 item 2 — repopulate the add-window form after an inline new-location
+    # round-trip (consumed once); None on a normal visit.
+    draft = _pop_event_window_draft()
+    # #1058 — when the athlete added a new location mid-capture, `/locales/new`
+    # returns with `?new_locale=<slug>`; pre-select it in the away field (the
+    # field that hosts the "Add a new location" button) so they don't have to
+    # find and pick it again. Guard on ownership: only a slug we actually loaded
+    # for this athlete is honored.
+    new_locale = request.args.get('new_locale')
+    if draft is not None and new_locale and new_locale in locale_names:
+        if not draft.get('away_locale'):
+            draft['away_locale'] = new_locale
+        if not draft.get('override_type'):
+            draft['override_type'] = 'away'
     return render_template(
         'profile/event_windows.html',
         windows=windows,
         locales=locales,
+        locale_names=locale_names,
         override_types=OVERRIDE_TYPES,
         # Slice 4 (#581 WS-H) — away-gear capture: the brought-gear (c) picker
         # catalog. (The standing gear↔locale (b) capture moved to the per-locale
@@ -956,9 +978,7 @@ def event_windows():
         # the "back to <origin>" link can round-trip them back where they started.
         return_to=return_to,
         return_to_label=_event_windows_return_label(return_to),
-        # #608 item 2 — repopulate the add-window form after an inline
-        # new-location round-trip (consumed once); None on a normal visit.
-        draft=_pop_event_window_draft(),
+        draft=draft,
     )
 
 

@@ -186,3 +186,84 @@ def test_volume_days_rejects_non_reduced_window(monkeypatch):
     with app.test_request_context('/event-windows/5/volume-days'):
         response = pf_mod.event_window_volume_days(5)
     assert response.status_code == 302  # redirected, not rendered
+
+
+# ─── location picker display names (#1049) + pre-select new locale (#1058) ────
+
+
+class _FakeLocaleCur:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeLocaleConn:
+    """Minimal conn whose only `execute` answers the event_windows() locale
+    SELECT with the supplied rows."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def execute(self, sql, params=()):
+        return _FakeLocaleCur(self._rows)
+
+
+def _render_event_windows(monkeypatch, *, rows, url, draft=None, current_row=None):
+    import os
+    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
+    os.environ.setdefault('DATABASE_URL', '')
+    import flask
+    import app as _appmod
+    import routes.profile as pf_mod
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_windows', lambda db, uid: [])
+    monkeypatch.setattr(pf_mod, 'load_gear_registry_grouped', lambda: [])
+    with _appmod.app.test_request_context(url):
+        flask.g.current_user_row = current_row or {
+            'id': 7, 'username': 'o', 'display_name': 'O'}
+        if draft is not None:
+            flask.session['event_window_draft'] = draft
+        return pf_mod.event_windows()
+
+
+def test_event_windows_picker_shows_display_names(monkeypatch):
+    """#1049 — the location pickers render the refined display name
+    (`locale_name`), keeping the slug only as the option value."""
+    rows = [{'locale': 'horn_s_house', 'locale_name': "Horn's House"}]
+    html = _render_event_windows(
+        monkeypatch, rows=rows, url='/profile/event-windows')
+    assert 'value="horn_s_house"' in html              # slug stays the value
+    assert 'Horn&#39;s House' in html                  # display name is shown
+    assert '>horn_s_house<' not in html                # slug is never the label
+
+
+def test_event_windows_preselects_new_locale(monkeypatch):
+    """#1058 — returning from an inline /locales/new with ?new_locale=<slug>
+    pre-selects that location in the away field of the repopulated draft."""
+    rows = [{'locale': 'lake_house', 'locale_name': 'Lake House'}]
+    draft = {
+        'start_date': '', 'end_date': '', 'override_type': '',
+        'unavailable_locale': '', 'away_locale': '', 'brought_gear': [],
+        'volume_pct': '', 'notes': '',
+    }
+    html = _render_event_windows(
+        monkeypatch, rows=rows, draft=draft,
+        url='/profile/event-windows?new_locale=lake_house')
+    assert '<option value="lake_house" selected>Lake House</option>' in html
+
+
+def test_event_windows_ignores_unknown_new_locale(monkeypatch):
+    """#1058 — a `new_locale` the athlete doesn't own is not pre-selected."""
+    rows = [{'locale': 'lake_house', 'locale_name': 'Lake House'}]
+    draft = {
+        'start_date': '', 'end_date': '', 'override_type': '',
+        'unavailable_locale': '', 'away_locale': '', 'brought_gear': [],
+        'volume_pct': '', 'notes': '',
+    }
+    html = _render_event_windows(
+        monkeypatch, rows=rows, draft=draft,
+        url='/profile/event-windows?new_locale=someone_elses_place')
+    assert 'selected' not in html.split('name="away_locale"')[1].split('</select>')[0]

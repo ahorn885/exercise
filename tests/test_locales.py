@@ -51,6 +51,7 @@ from routes.locales import (
     _resolve_shared_profile,
     _review_profile_edit,
     _review_profile_photo,
+    _seed_locale_equipment_from_baseline,
     _terrain_choices,
     delete_locale,
 )
@@ -1372,3 +1373,46 @@ class TestReviewProfilePhoto:
         conn = _FakeConn()
         conn.queue_response(row=None)
         assert _review_profile_photo(conn, 7, approve=True) is None
+
+
+class TestAssumeEquipmentBaseline:
+    """#1065 — picking "assume hotel/commercial-gym kit" at add-time seeds the
+    new locale's backing gym_profile from the category equipment baseline."""
+
+    def _patch_baselines(self, monkeypatch, mapping):
+        import routes.locales as locales_mod
+        monkeypatch.setattr(
+            locales_mod.locations, 'load_category_baselines', lambda db: mapping)
+        monkeypatch.setattr(
+            locales_mod, '_layer0_equipment',
+            lambda db: ([], {'Dumbbell', 'Treadmill', 'Bench', 'Barbell'}))
+
+    def test_hotel_kit_seeds_profile_with_baseline_equipment(self, monkeypatch):
+        self._patch_baselines(monkeypatch, {
+            'hotel': {'equipment': {'Dumbbell', 'Treadmill', 'Bench'}, 'terrain': set()},
+        })
+        conn = _FakeConn()
+        conn.queue_response(row={'id': 9})  # _create_gym_profile RETURNING id
+        _seed_locale_equipment_from_baseline(
+            conn, 1, 'hotel_x', 'hotel',
+            locale_name='Hotel X', category='hotel_gym', mapbox_id='mbx.1',
+            lat=1.0, lng=2.0, opt_out=False,
+        )
+        gym_insert = [p for sql, p in conn.calls if 'INSERT INTO gym_profiles' in sql]
+        assert gym_insert, 'expected a gym_profiles INSERT seeded from the baseline'
+        # params = (mapbox_id, display, category, equipment_json, ...) — the JSON
+        # array carries exactly the baseline's items (sorted canonical names).
+        equip_json = gym_insert[0][3]
+        assert '"Bench"' in equip_json and '"Dumbbell"' in equip_json
+        assert '"Treadmill"' in equip_json and 'Barbell' not in equip_json
+        assert _calls_matching(conn, 'SET gym_profile_id')  # linked to the locale
+
+    def test_specify_choice_is_noop(self, monkeypatch):
+        # '' (the "I'll specify" default) and any unknown key seed nothing.
+        self._patch_baselines(monkeypatch, {'hotel': {'equipment': {'Dumbbell'}}})
+        conn = _FakeConn()
+        _seed_locale_equipment_from_baseline(
+            conn, 1, 'x', '', locale_name='X', category=None, mapbox_id=None,
+            lat=None, lng=None, opt_out=False,
+        )
+        assert not any('INSERT INTO gym_profiles' in sql for sql, _ in conn.calls)

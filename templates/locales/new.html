@@ -94,6 +94,14 @@
           <input class="form-check-input" type="checkbox" name="private" value="1">
           <span class="form-check-label">Keep private — don't share with athletes nearby</span>
         </label>
+        {# #1065 — assume a sensible default equipment kit so a new location isn't
+           empty. "I'll specify" leaves it blank for the athlete to fill in. #}
+        <label class="field loc-result-equip"><span class="lbl">Equipment</span>
+          <select name="assume_equipment" class="form-control form-control-sm">
+            <option value="">I'll specify the equipment myself</option>
+            <option value="hotel">Assume a general hotel-gym kit</option>
+            <option value="commercial">Assume a general commercial-gym kit</option>
+          </select></label>
         {% if upgrade_slug %}<input type="hidden" name="upgrade_slug" value="{{ upgrade_slug }}">{% endif %}
         <button type="submit" class="btn btn-primary btn-sm">{% if upgrade_slug %}Upgrade to this{% else %}Save this{% endif %}</button>
       </form>

@@ -49,8 +49,8 @@
           <td class="mono">{% if w.start_date == w.end_date %}{{ w.start_date.isoformat() }} <span class="dim">(1 day)</span>{% else %}{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}{% endif %}</td>
           <td>
             {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
-            {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
-            {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
+            {% elif w.override_type == 'locale_unavailable' %}“{{ locale_names.get(w.unavailable_locale, w.unavailable_locale) }}” unavailable
+            {% elif w.override_type == 'away' %}Away at “{{ locale_names.get(w.away_locale, w.away_locale) }}”
               {% if w.brought_gear %}<span class="dim">· with {{ w.brought_gear | join(', ') | replace('_', ' ') }}</span>{% endif %}
             {% elif w.override_type == 'reduced_volume' %}Reduced volume
               {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
@@ -112,13 +112,13 @@
           {% set ul = d.get('unavailable_locale', '') %}
           <select name="unavailable_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == ul else '' }}>{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == ul else '' }}>{{ loc.label }}</option>{% endfor %}
           </select></label>
         <label class="field field-full"><span class="lbl">Away destination <span class="dim">(if training away)</span></span>
           {% set al = d.get('away_locale', '') %}
           <select name="away_locale" class="form-control form-control-sm">
             <option value="">—</option>
-            {% for loc in locales %}<option value="{{ loc }}"{{ ' selected' if loc == al else '' }}>{{ loc }}</option>{% endfor %}
+            {% for loc in locales %}<option value="{{ loc.slug }}"{{ ' selected' if loc.slug == al else '' }}>{{ loc.label }}</option>{% endfor %}
           </select>
           <span class="dim">Destination not saved yet?
             <button type="submit" formnovalidate
