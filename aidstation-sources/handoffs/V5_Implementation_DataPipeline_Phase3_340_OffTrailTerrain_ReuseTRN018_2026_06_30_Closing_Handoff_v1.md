@@ -2,7 +2,7 @@
 
 **Branch:** `claude/data-pipeline-phase-3-6-uxcpv3`
 **Commits:** `afca826` (discipline attach + tests), `9c7de1d` (migration `0035`)
-**PR:** not yet opened — pushed; opens on Andy's go. **Scope decision pending:** this branch also carries the #269 close-out — ask Andy whether to open one bundled PR or split (see §5).
+**PR:** [#1077](https://github.com/ahorn885/exercise/pull/1077) — **bundled #269 + #340 (Andy's call), auto-merge armed (merge commit).** Self-merges once the required checks pass.
 **Campaign kickoff:** `handoffs/DataPipeline_Phase1-2_Done_Phase3-6_Kickoff_Handoff.md`
 **Issue:** [#340](https://github.com/ahorn885/exercise/issues/340) (closes on merge)
 
@@ -52,15 +52,15 @@ Andy's call: **groomed + scree are low-fidelity proxies** (both land in the high
 
 ---
 
-## 5. PR-scope decision pending Andy
+## 5. PR — bundled (decided)
 
-This branch carries **two phases**: the #269 close-out (Phase 2 tail) and #340 (Phase 3). The campaign rule is "each phase = its own PR." Both are small, independent (no file overlap), and un-merged. **At open time, ask Andy:** one bundled PR (#269 + #340) or split into two. If split, #269's commits (`fca0974` + bookkeeping) and #340's (`afca826`, `9c7de1d` + bookkeeping) are cleanly separable.
+Andy chose to **bundle**: PR [#1077](https://github.com/ahorn885/exercise/pull/1077) carries both the #269 close-out (Phase 2 tail) and #340 (Phase 3). Auto-merge armed with a **merge commit**, so the per-commit `#269` / `#340` trail stays visible in `main`'s history (revertible individually). After merge: `layer0-apply` `0035`, close #269 + #340, close epic #261.
 
 ---
 
-## 6. NEXT — Phase 4: #229 + #233
+## 6. NEXT — Phase 4: #229 + #233 (THIS IS THE NEXT STEP — CONTINUE HERE)
 
-Per the kickoff (`layer2e/builder.py`): promote `_FUELING_BANDS`, `_SPORT_PROFILE_CHO_MOD`, `_MULTIPLIER_BANDS`, and the `_dietary_pattern_adjustments` rules into Layer 0 tables; add `layer0.sport_met_values` + a MET path in `_compute_activity_multiplier()`. Seed with current constants verbatim (behavior-preserving), add loaders, register tables in family `0A`, add gate checks, add a test that table-driven output == old hardcoded output. **Next migration number = `0036`.** Its own PR.
+**The campaign continues with Phase 4 next.** Per the kickoff (`layer2e/builder.py`): promote `_FUELING_BANDS`, `_SPORT_PROFILE_CHO_MOD`, `_MULTIPLIER_BANDS`, and the `_dietary_pattern_adjustments` rules into Layer 0 tables; add `layer0.sport_met_values` + a MET path in `_compute_activity_multiplier()`. Seed with current constants verbatim (behavior-preserving), add loaders, register tables in family `0A`, add gate checks, add a test that table-driven output == old hardcoded output. **Next migration number = `0036`.** Its own PR, off `main` once #1077 merges.
 
 ---
 
