@@ -85,25 +85,17 @@
 
 All 7 tracked V3-I items resolved: **V3-I-1/2/4/9/10 built** this session; **V3-I-7 already built** (athlete_supplements); **V3-I-3 dropped** (Andy). → #257 is **closeable as `completed`** when this lands.
 
-### §6.3 DEFERRED — Rule #11 mechanical follow-up: onboarding spec §I → v7
+### §6.3 Onboarding spec §I → v7 — DONE this session
 
-The onboarding data spec wasn't bumped in this code PR (kept reviewable). To fold the now-built fields in, bump `aidstation-sources/specs/Athlete_Onboarding_Data_Spec_v6.md` → `_v7.md` (move v6 to `archive/superseded-specs/` per Rule #12) and **add these rows to the §I.1 "Core lifestyle fields" table** (after the `Caffeine Tolerance & Strategy` row):
+The onboarding data spec was bumped to v7: `specs/Athlete_Onboarding_Data_Spec_v7.md` (v6 moved to `archive/superseded-specs/` per Rule #12). It now carries `Body-weight Trend` (§A), `Sleep Consistency` + `Daily Hydration Baseline` (§I.1), the `Sweat Rate` / `Salt / Electrolyte Loss` split as a new §I.2 table (resolving Section_I_Audit Fix-now #4), and the `low_carb` / `fat_adapted` `Dietary Pattern` tokens. Header "what changed in v7 vs v6" summarizes it.
 
-```
-| Sleep Consistency | Enum (Consistent / Mostly consistent / Variable / Highly variable) | 3 | Recovery-day placement refinement (variability beyond mean hours) | Self-report — #257 V3-I-1 |
-| Daily Hydration Baseline | Enum (Low / Moderate / High) | 3 | Hydration-habit refinement | Self-report — #257 V3-I-9 |
-```
+## 7. NEXT SESSION — continue with #1067 (pack-load weighting)
 
-**Add to §I.2 (Race-day fueling preferences):**
-```
-| Sweat Rate | Enum (Low / Moderate / High) | 2 | Layer 2E race-day FLUID band (split from Salt / Electrolyte Loss, which now drives sodium only — V3-I-4 resolves the v2 conflation noted in Section_I_Audit Fix-now #4) | Self-report — #257 V3-I-4 |
-```
+**This slice is complete.** The next step in the Phase-1 sequence is **#1067 — pack-load weighting** (per D1). Two parts, its own PR off `main`:
 
-**Add to §A (Body) — a Body-weight Trend row:**
-```
-| Body-weight Trend (3 mo) | Enum (Stable / Gaining / Losing / Significant gain / Significant loss; significant = >5% / 3 mo) | 3 | Fueling-target accuracy | Self-report — #257 V3-I-10 |
-```
+1. **Weighting** — in `layer3b/builder.py` near the `pack_load_history` read (~`:615`), weight **prior race experience** above recent pack training when summarizing load-carriage readiness into Layer 3B.
+2. **UX** — a summary/edit/delete surface on the pack-load entry form (`routes/profile.py` + its template; data via `pack_load_repo.py`).
 
-And add to the §I.2 `Dietary Pattern` multi-select vocabulary note: `low_carb`, `fat_adapted` (macro axis distinct from `keto`/`paleo` — #257 V3-I-2).
+Then #223 (pregnancy capture; `layer2e` HITL half deferred + re-confirm — it's `icebox`/`priority:low`), Phase 2 #394, Phase 3 #272/#267, then close epic #246. **STAY ON THE SIGN-UP/ONBOARDING THREAD.**
 
-**PR state:** none open. Pushed to `origin/claude/disclosures-payload-removal-p1-2v355b`; bookkeeping rides the same branch. Per the project operating model, **open the PR only on Andy's explicit go** (then `enable_pr_auto_merge` with **merge-commit** method). Issue #257 commented with the shipped status (close on merge).
+**PR state:** opened + merged on Andy's go (merge-commit method) this session; issue #257 commented (close on merge). Branch `claude/disclosures-payload-removal-p1-2v355b` (harness-pinned name; scope was #257).
