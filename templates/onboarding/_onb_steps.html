@@ -1,13 +1,15 @@
 {#- Shared onboarding progress stepper (redesign finish-the-open). Renders the
-    6 setup steps in canonical route order — Connect → Profile (prefill) →
-    Locations → Skills → Schedule → Target race — with done / current / upcoming
-    states. `route_locales` is a sub-step of Target race, so it highlights that
-    step. Account (signup) is already complete by the time onboarding runs, so
+    7 setup steps in canonical route order — Connect → Profile (prefill) →
+    Locations → Skills → Schedule → Target race → Health — with done / current /
+    upcoming states. `route_locales` is a sub-step of Target race, so it
+    highlights that step. Health is the final pre-profile gate (Health Screening
+    Spec v2). Account (signup) is already complete by the time onboarding runs, so
     it isn't shown. CSP-clean (no inline style). -#}
 {% macro onb_steps(current) %}
-{%- set order = ['connect', 'prefill', 'locales', 'skills', 'schedule', 'target_race'] -%}
+{%- set order = ['connect', 'prefill', 'locales', 'skills', 'schedule', 'target_race', 'health'] -%}
 {%- set labels = {'connect': 'Connect', 'prefill': 'Profile', 'locales': 'Locations',
-                  'skills': 'Skills', 'schedule': 'Schedule', 'target_race': 'Target race'} -%}
+                  'skills': 'Skills', 'schedule': 'Schedule', 'target_race': 'Target race',
+                  'health': 'Health'} -%}
 {%- set cur = 'target_race' if current == 'route_locales' else current -%}
 {%- set cur_idx = order.index(cur) if cur in order else 0 -%}
 <ol class="onb-steps" aria-label="Setup progress">

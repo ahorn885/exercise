@@ -3320,6 +3320,27 @@ _PG_MIGRATIONS = [
     # a fresh DB that never created the table. Public-schema → auto-applies on each
     # Vercel deploy.
     "DROP TABLE IF EXISTS athlete_craft_locale CASCADE",
+    # Phase 0 (#246/#394/#223) — health_screening. AIDSTATION Health Screening
+    # Spec v2: one current-state row per user. `flags` is the structured PAR-Q+
+    # taxonomy (§4/§5); `details` is the optional per-flag free text, stored only
+    # under explicit opt-in (`details_optin`, §7.2) — sensitive health data. The
+    # acknowledgment + annual-reassessment timestamps (§9) are DB-authoritative
+    # (NOW() / NOW()+365d on each save). Acknowledgment-only / non-blocking: flags
+    # are coaching context, never a plan-gen gate (§2.3). Append-only acknowledgment
+    # history (§8.3 liability defense) is a follow-up; this row is current state.
+    """CREATE TABLE IF NOT EXISTS health_screening (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id),
+        screening_version TEXT NOT NULL DEFAULT 'v1',
+        flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        details_optin BOOLEAN NOT NULL DEFAULT FALSE,
+        acknowledged BOOLEAN NOT NULL DEFAULT FALSE,
+        acknowledged_at TIMESTAMP,
+        last_assessed_at TIMESTAMP,
+        reassessment_due_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )""",
 ]
 
 _CLOTHING_SEEDS = [

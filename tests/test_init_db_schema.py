@@ -42,3 +42,21 @@ def test_provider_tables_present_in_schema():
     frags = _fragments()
     assert any('CREATE TABLE IF NOT EXISTS provider_value_map' in f for f in frags)
     assert any('CREATE TABLE IF NOT EXISTS provider_raw_record' in f for f in frags)
+
+
+def test_health_screening_migration_present_and_idempotent():
+    """Phase 0 (#246/#394/#223) — the health_screening table is a single
+    `_PG_MIGRATIONS` statement (executed standalone, so the ';'-split incident
+    above does not apply). It must be `IF NOT EXISTS` (re-run safe), carry no
+    internal ';' (the migration runner executes one statement per entry), and
+    hold the spec-required columns."""
+    stmts = [s for s in init_db._PG_MIGRATIONS if isinstance(s, str)]
+    matches = [s for s in stmts if 'health_screening' in s]
+    assert len(matches) == 1, 'expected exactly one health_screening migration'
+    stmt = matches[0]
+    assert 'CREATE TABLE IF NOT EXISTS health_screening' in stmt
+    assert ';' not in stmt  # one statement per entry — no split needed/allowed
+    for col in ('flags JSONB', 'details JSONB', 'details_optin BOOLEAN',
+                'acknowledged', 'acknowledged_at', 'last_assessed_at',
+                'reassessment_due_at'):
+        assert col in stmt, f'missing column: {col}'
