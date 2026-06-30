@@ -1192,7 +1192,9 @@ back to the tables it touches.
    `rx_engine.apply_session_outcome(db, exercise, date, sets, targets,
    rx_source='Manual', user_id=current_user_id())`. That helper:
    - Inserts a `training_log` row with the prescription and actuals.
-   - Computes outcome (PROGRESS / REPEAT / FAIL) from the sets.
+   - Computes outcome (`'PROGRESS ↑'` / `'REPEAT →'` / `'REDUCE ↓'`, or
+     `NULL` in bootstrap mode) from the sets — the arrows are part of the
+     stored value; see §6.2.
    - UPSERTs `current_rx` for `(user_id, exercise)`: bumps or resets
      `consecutive_failures` / `sessions_since_progress`, projects
      `next_*`.

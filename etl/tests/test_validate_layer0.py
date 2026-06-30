@@ -33,6 +33,7 @@ def _clean_results() -> dict[str, dict]:
         "contraindicated_conditions": {"warnings": []},
         "default_inclusion": {"errors": []},
         "sport_sub_format_map": {"errors": []},
+        "phase_load_allocation_aggregators": {"errors": []},
     }
 
 
@@ -44,16 +45,18 @@ def test_clean_results_pass() -> None:
 
 
 def test_registry_has_all_logical_checks() -> None:
-    # fk_checks splits into two runners → 12 entries (11 logical checks: the
+    # fk_checks splits into two runners → 13 entries (12 logical checks: the
     # original 7 + terrain_types, primary_movement, exercises_fk, all added with
-    # the DB-source-of-truth model, plus sport_sub_format_map for #254/D-17).
-    assert len(v.CHECKS) == 12
+    # the DB-source-of-truth model, plus sport_sub_format_map for #254/D-17 and
+    # phase_load_allocation_aggregators for #269).
+    assert len(v.CHECKS) == 13
     names = [c.name for c in v.CHECKS]
     assert names.count("substitution_fks") == 1
     assert names.count("training_gap_fks") == 1
     assert "terrain_types" in names
     assert "primary_movement" in names
     assert "exercises_fk" in names
+    assert "phase_load_allocation_aggregators" in names
 
 
 def test_fk_violation_fails_the_gate() -> None:
@@ -81,6 +84,21 @@ def test_sport_sub_format_map_violation_fails_the_gate() -> None:
     ssfm = next(o for o in outcomes if o.name == "sport_sub_format_map")
     assert ssfm.failed
     assert ssfm.unwaived[0].id == "Triathlon"
+
+
+def test_phase_load_allocation_aggregator_fails_the_gate() -> None:
+    # #269 — a "WEEKLY TOTAL TARGET" row left active in phase_load_allocation
+    # (the class migration 0034 retires) must fail the gate, fix-not-waive.
+    results = _clean_results()
+    results["phase_load_allocation_aggregators"] = {
+        "errors": [{"id": "Adventure Racing/-",
+                    "detail": "aggregator row 'WEEKLY TOTAL TARGET' still active"}],
+    }
+    outcomes = v.evaluate(results, {})
+    assert v.gate_failed(outcomes)
+    agg = next(o for o in outcomes if o.name == "phase_load_allocation_aggregators")
+    assert agg.failed
+    assert agg.unwaived[0].id == "Adventure Racing/-"
 
 
 def test_sum_to_100_waived_passes() -> None:

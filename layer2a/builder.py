@@ -14,7 +14,15 @@ D-52 sub-decision: these three tables exist only under `layer0.*` (no
 D-05 standing filter: discipline_name LIKE pattern excluding "WEEKLY TOTAL"
 applied on the PLA join (aggregator rows polluting the table per spec §6).
 SQL uses `%%` to survive psycopg2's parameter-substitution scan when params
-are non-empty (see line 170; Bucket B #1, 2026-05-23 walkthrough).
+are non-empty (see the PLA LEFT JOIN; Bucket B #1, 2026-05-23 walkthrough).
+
+#269: the aggregator rows are now retired at the source — migration
+`etl/migrations/layer0/0034_supersede_phase_load_allocation_aggregators.sql`
+supersedes them, and the `phase_load_allocation_aggregators` check in
+`validate_layer0` fails the gate if any ever come back. This filter is kept as
+belt-and-suspenders only until 0034 is confirmed applied to live prod (the
+nightly `layer0-validate-live` run goes green); once it is, the filter and the
+`default_inclusion` aggregator exemption can be deleted.
 
 D-17 sub-format naming: `_SUB_FORMAT_SPORTS` whitelist drives the
 `top_level_sport` strip — only sports known to use sub-format naming

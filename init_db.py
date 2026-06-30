@@ -3537,25 +3537,38 @@ def init_postgres():
         except Exception as e:
             conn.rollback()
             print(f"[init_db] current_rx seed skipped: {e!r}")  # Rule #15
+    # Seed steps run AFTER the migration loop. Each is wrapped in its own
+    # try/commit/except-rollback so one failing seed can't abort the tail of
+    # init (and get swallowed by app.py's broad "DB init skipped" catch) the way
+    # the unguarded schema loop did pre-#742. The migration loop above has
+    # already committed per-statement, so a seed failure here can only lose that
+    # one seed's data — never the schema. Mirrors the migration loop's guard
+    # (#747 residual hardening).
+    #
     # Seed provider_value_map (#681 §4) from the consolidated seed module. The
     # table is the runtime-canonical store; the seed module is its git authoring
     # source, so ON CONFLICT DO UPDATE re-syncs the table to the seed each deploy.
-    _pvm_rows = list(provider_value_map_rows())
-    cur.executemany(
-        '''INSERT INTO provider_value_map
-           (provider, data_type, direction, source_value, canonical_kind,
-            canonical_value, match_kind, confidence, no_canonical_match, notes)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (provider, data_type, direction, source_value)
-           DO UPDATE SET canonical_kind=EXCLUDED.canonical_kind,
-                         canonical_value=EXCLUDED.canonical_value,
-                         match_kind=EXCLUDED.match_kind,
-                         confidence=EXCLUDED.confidence,
-                         no_canonical_match=EXCLUDED.no_canonical_match,
-                         notes=EXCLUDED.notes''',
-        _pvm_rows
-    )
-    print(f"[init_db] seeded provider_value_map: {len(_pvm_rows)} rows")  # Rule #15
+    try:
+        _pvm_rows = list(provider_value_map_rows())
+        cur.executemany(
+            '''INSERT INTO provider_value_map
+               (provider, data_type, direction, source_value, canonical_kind,
+                canonical_value, match_kind, confidence, no_canonical_match, notes)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (provider, data_type, direction, source_value)
+               DO UPDATE SET canonical_kind=EXCLUDED.canonical_kind,
+                             canonical_value=EXCLUDED.canonical_value,
+                             match_kind=EXCLUDED.match_kind,
+                             confidence=EXCLUDED.confidence,
+                             no_canonical_match=EXCLUDED.no_canonical_match,
+                             notes=EXCLUDED.notes''',
+            _pvm_rows
+        )
+        conn.commit()
+        print(f"[init_db] seeded provider_value_map: {len(_pvm_rows)} rows")  # Rule #15
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] provider_value_map seed skipped: {e!r}")  # Rule #15
     # #826 — seed the curated science-provenance sources from the canonical
     # catalog (`evidence_catalog`), the same module the Layer 3 prompts cite
     # from, so every citable slug exists in the store. ON CONFLICT (slug) DO
@@ -3564,31 +3577,44 @@ def init_postgres():
     # above, so the table is guaranteed present here. Rows carry per-row
     # is_baseline (baseline sources auto-link to every plan; the rest are
     # cited selectively by Layer 3).
-    cur.executemany(
-        '''INSERT INTO evidence_sources
-           (slug, kind, title, summary, citation, url, is_baseline)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)
-           ON CONFLICT (slug) DO UPDATE SET
-               kind=EXCLUDED.kind, title=EXCLUDED.title, summary=EXCLUDED.summary,
-               citation=EXCLUDED.citation, url=EXCLUDED.url,
-               is_baseline=EXCLUDED.is_baseline''',
-        EVIDENCE_SOURCE_SEEDS,
-    )
-    print(f"[init_db] seeded evidence_sources: "  # Rule #15
-          f"{len(EVIDENCE_SOURCE_SEEDS)} rows")
-    # Phase 1 — Seed equipment_items catalog (idempotent)
-    for category_name, items in EQUIPMENT_CATEGORIES:
-        for tag, label in items:
-            cur.execute(
-                'INSERT INTO equipment_items (tag, label, category) VALUES (%s, %s, %s) '
-                'ON CONFLICT (tag) DO NOTHING',
-                (tag, label, category_name)
-            )
-    # Phase 2 — Build the equipment lookup for the purchase-recommendations seed
-    cur.execute('SELECT id, tag FROM equipment_items')
-    tag_to_id = {row[1]: row[0] for row in cur.fetchall()}
-    # Phase 2b — Seed shared purchase_recommendations catalog (UPSERT on slug)
-    _seed_purchase_recommendations(cur, tag_to_id)
+    try:
+        cur.executemany(
+            '''INSERT INTO evidence_sources
+               (slug, kind, title, summary, citation, url, is_baseline)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (slug) DO UPDATE SET
+                   kind=EXCLUDED.kind, title=EXCLUDED.title, summary=EXCLUDED.summary,
+                   citation=EXCLUDED.citation, url=EXCLUDED.url,
+                   is_baseline=EXCLUDED.is_baseline''',
+            EVIDENCE_SOURCE_SEEDS,
+        )
+        conn.commit()
+        print(f"[init_db] seeded evidence_sources: "  # Rule #15
+              f"{len(EVIDENCE_SOURCE_SEEDS)} rows")
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] evidence_sources seed skipped: {e!r}")  # Rule #15
+    # Phase 1 — Seed equipment_items catalog (idempotent), then Phase 2 — build
+    # the tag→id lookup, then Phase 2b — seed the shared purchase_recommendations
+    # catalog. These three steps are interdependent (the purchase-rec seed needs
+    # the tag→id map), so they share one guard: any failure rolls back the whole
+    # equipment seed group rather than leaving a half-seeded catalog.
+    try:
+        for category_name, items in EQUIPMENT_CATEGORIES:
+            for tag, label in items:
+                cur.execute(
+                    'INSERT INTO equipment_items (tag, label, category) VALUES (%s, %s, %s) '
+                    'ON CONFLICT (tag) DO NOTHING',
+                    (tag, label, category_name)
+                )
+        cur.execute('SELECT id, tag FROM equipment_items')
+        tag_to_id = {row[1]: row[0] for row in cur.fetchall()}
+        _seed_purchase_recommendations(cur, tag_to_id)
+        conn.commit()
+        print("[init_db] seeded equipment_items + purchase_recommendations")  # Rule #15
+    except Exception as e:
+        conn.rollback()
+        print(f"[init_db] equipment/purchase seed skipped: {e!r}")  # Rule #15
     # Phase 3 — (removed) the exercise_equipment join seed retired with the v1
     # catalog (Slice C): exercise↔equipment now lives in layer0
     # (layer0.exercises.equipment_required); purchases counts impacted exercises
