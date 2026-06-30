@@ -115,6 +115,22 @@
         <button type="submit" class="btn btn-ghost btn-sm">{{ 'Regenerate' if conditions and conditions.days else 'Generate' }}</button>
       </form>
     </div>
+    {# #1035 — live upcoming-conditions extremes (the forecast the conditions
+       advisory fires on), distinct from the per-day climate normals below.
+       Shown only when an extreme day sits in the 7-day window; absent otherwise. #}
+    {% if upcoming_extremes %}
+    <div class="upcoming-extremes">
+      <p class="rail-note">⚠ Extreme weather in the next 7 days — live forecast, not typical conditions:</p>
+      {% set flag_label = {'heat': '🔥 heat', 'freeze': '🥶 freeze', 'rain': '🌧️ rain'} %}
+      {% for e in upcoming_extremes %}
+      <div class="extreme-day">
+        <strong>{{ e.date.strftime('%a, %b %d') }}</strong>
+        <span class="rail-note">{{ e.temp_max_c|round|int }}° / {{ e.temp_min_c|round|int }}°C{% if e.precip_prob_pct %} · 💧 {{ e.precip_prob_pct }}%{% endif %}</span>
+        {% for f in e.flags %}<span class="chip warn">{{ flag_label.get(f, f) }}</span>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
     {% if not (conditions and conditions.days) %}
     <p class="rail-note">Conditions haven't been generated for this plan yet — they need at least one session at a locale with coordinates.</p>
     {% endif %}

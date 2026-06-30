@@ -609,6 +609,43 @@ _CONDITIONS_CROSSES = f'''
             AND (uc.temp_max_c >= {HEAT_TMAX_C}
                  OR uc.temp_min_c <= {FREEZE_TMIN_C}
                  OR uc.precip_prob_pct >= {RAIN_PROB_PCT})'''
+
+
+def select_upcoming_extremes(rows):
+    """Forecast rows that cross a heat / freeze / rain extreme, each tagged with
+    its crossings — the Python twin of `_CONDITIONS_CROSSES` for the #1035
+    plan-view surface.
+
+    Shares the same `HEAT_TMAX_C` / `FREEZE_TMIN_C` / `RAIN_PROB_PCT` constants
+    as the nudge's arm/clear SQL so the surface the advisory's CTA lands on can
+    never disagree with the condition that fired the advisory. `rows` is the
+    `upcoming_conditions_repo.load_upcoming_for_user` output (already date-windowed
+    and ordered); this applies only the threshold test. Returns, in input order,
+    a `{date, temp_max_c, temp_min_c, precip_prob_pct, flags}` dict per crossing
+    day — `flags` a subset of `('heat', 'freeze', 'rain')`; non-crossing days are
+    dropped.
+    """
+    extremes = []
+    for r in rows:
+        tmax = r.get('temp_max_c')
+        tmin = r.get('temp_min_c')
+        precip = r.get('precip_prob_pct')
+        flags = []
+        if tmax is not None and tmax >= HEAT_TMAX_C:
+            flags.append('heat')
+        if tmin is not None and tmin <= FREEZE_TMIN_C:
+            flags.append('freeze')
+        if precip is not None and precip >= RAIN_PROB_PCT:
+            flags.append('rain')
+        if flags:
+            extremes.append({
+                'date': r['forecast_date'],
+                'temp_max_c': tmax,
+                'temp_min_c': tmin,
+                'precip_prob_pct': precip,
+                'flags': flags,
+            })
+    return extremes
 # Escalating re-surface ladder for `plan_needs_review`, measured from when the
 # plan parked at the review gate (`plan_versions.created_at`). The nudge first
 # appears at rung 1 (1 day); if the athlete read or dismissed it, it RE-SURFACES
