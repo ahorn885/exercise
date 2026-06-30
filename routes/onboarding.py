@@ -93,9 +93,16 @@ from athlete_skill_toggles_repo import (
 )
 from athlete_crafts_repo import (
     CraftSelectionError,
-    get_athlete_crafts,
-    load_craft_catalog,
     replace_athlete_crafts,
+)
+from athlete_gear_repo import (
+    GearSelectionError,
+    get_gear_access_map,
+    load_gear_registry,
+    load_gear_registry_grouped,
+    parse_gear_registry_form,
+    replace_owned_gear_for_kinds,
+    _GEAR_TOGGLE_KINDS,
 )
 
 
@@ -499,9 +506,12 @@ def skills():
         'onboarding/skills.html',
         toggle_defs=load_active_skill_capability_toggle_vocab(db),
         current_states=get_athlete_skill_toggles(db, uid),
-        # 2c.2b (#540) — owned-craft picker shares this step.
-        craft_catalog=load_craft_catalog(),
-        athlete_crafts=get_athlete_crafts(db, uid),
+        # 2c.2b (#540) — owned-gear picker shares this step. #884 slice 6c-2 —
+        # generalized from the craft-only catalog to the full unified registry
+        # (all kinds, own/have-access), so onboarding + the profile gear tab
+        # capture identically (mirrors the 6a `save_gear` surface).
+        gear_registry=load_gear_registry_grouped(),
+        gear_access=get_gear_access_map(db, uid),
         post_step_skills_target=_POST_STEP_SKILLS_TARGET,
     )
 
@@ -521,24 +531,35 @@ def skills_save():
     uid = current_user_id()
     vocab = load_active_skill_capability_toggle_vocab(db)
     states = parse_skill_form(request.form, vocab)
-    # 2c.2b (#540) — the same step captures owned crafts (replace-all per
-    # family; the form always submits the current checkbox state). Validated
-    # against the closed enums before any write.
+    # 2c.2b (#540) + #884 slice 6c-2 — the same step captures owned gear via the
+    # unified registry (own/have-access, all kinds), mirroring the 6a `save_gear`
+    # split: crafts (bike/paddle) → `replace_athlete_crafts` (baseline CSVs + the
+    # unified store), gear toggles (ski/snow/climb/alpine) → `replace_owned_gear_
+    # for_kinds`. Replace-all within each kind (an unselected row = not owned);
+    # swim gear isn't in the registry, so the shared store preserves it.
+    chosen = parse_gear_registry_form(request.form)  # {gear_id: access}
+    by_id = {e['gear_id']: e for e in load_gear_registry()}
+    bikes = [g for g in chosen if by_id[g]['group_kind'] == 'bike']
+    paddles = [g for g in chosen if by_id[g]['group_kind'] == 'paddle']
+    craft_access = {g: a for g, a in chosen.items() if by_id[g]['source'] == 'craft'}
+    toggle_access = {g: a for g, a in chosen.items() if by_id[g]['source'] == 'toggle'}
     try:
         replace_athlete_crafts(
-            db,
-            uid,
-            bike_types=request.form.getlist('bike_types'),
-            paddle_crafts=request.form.getlist('paddle_crafts'),
+            db, uid, bike_types=bikes, paddle_crafts=paddles,
+            access_by_slug=craft_access,
         )
-    except CraftSelectionError as exc:
+        replace_owned_gear_for_kinds(db, uid, toggle_access, _GEAR_TOGGLE_KINDS)
+    except (CraftSelectionError, GearSelectionError) as exc:
         flash(str(exc), 'error')
         return redirect(url_for('onboarding.skills'))
     if states:
         upsert_athlete_skill_toggles(db, uid, states)
     db.commit()
-    # Skills + crafts both live in Layer 1 — one eviction covers both.
+    # Skills + crafts + gear toggles all live in Layer 1 — one eviction covers
+    # all three (the three evict_layer1_on_*_change helpers are identical).
     evict_layer1_on_skill_toggle_change(db, uid)
+    # Rule #15 — the gear decision this path made (the athlete's gear + access).
+    print(f"[onboarding-gear-capture] uid={uid} chosen={dict(sorted(chosen.items()))}")
     flash('Skills & gear saved.', 'success')
     return redirect(_POST_STEP_SKILLS_TARGET)
 
