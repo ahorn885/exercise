@@ -50,7 +50,40 @@ def primary_locale(db: Any, user_id: int) -> str:
     return row["locale"]
 
 
-def locale_effective_tags(db: Any, user_id: int, locale: str) -> set[str]:
+def disputed_equipment_tags(db: Any, gym_profile_id: int) -> set[str]:
+    """The set of equipment tags currently DISPUTED on a shared profile — the
+    union of every open correction proposal's `removes` on
+    `gym_profiles.disputed_items` (#971 Slice 3 records these as a JSON list of
+    `{by, adds, removes, at}` objects).
+
+    A disputed tag is one a peer has flagged as wrong on the shared profile; per
+    D-60 §5 it is treated as not-available for plan generation until an admin
+    reviews the proposal. Only `removes` matter — a proposal's `adds` aren't in
+    the shared set until approved, so they never drive plan-gen.
+
+    Tolerant of NULL / empty / malformed `disputed_items` (returns set()). Mirrors
+    the inline `gym_profiles.equipment` parse above — same tolerance, same module
+    (no `routes/locales` import, so no circular dependency)."""
+    row = db.execute(
+        "SELECT disputed_items FROM gym_profiles WHERE id = ?",
+        (gym_profile_id,),
+    ).fetchone()
+    if row is None or not row["disputed_items"]:
+        return set()
+    try:
+        proposals = json.loads(row["disputed_items"])
+    except (ValueError, TypeError):
+        return set()
+    disputed: set[str] = set()
+    for p in proposals:
+        if isinstance(p, dict):
+            disputed.update(t for t in (p.get("removes") or []) if isinstance(t, str))
+    return disputed
+
+
+def locale_effective_tags(
+    db: Any, user_id: int, locale: str, *, exclude_disputed: bool = False
+) -> set[str]:
     """The authoritative effective-equipment set at one locale, as layer0
     canonical names. `(shared ∪ adds) ∖ removes` (§4):
 
@@ -59,7 +92,16 @@ def locale_effective_tags(db: Any, user_id: int, locale: str) -> set[str]:
       - removes = ditto action='remove'.
 
     Empty set when the locale links no gym profile and carries no overrides.
-    """
+
+    `exclude_disputed=True` (the plan-gen path only — #971 D-60 §5): subtract the
+    shared profile's DISPUTED tags before the override math, so a tag a peer
+    flagged as wrong stops driving plan prescriptions while it's under admin
+    review. Resolves `((shared − disputed) ∪ adds) − removes`, so an athlete who
+    personally re-added the tag keeps it (a personal override is authoritative
+    for that athlete; it beats a peer's provisional dispute). The UI / references
+    / override-save / legacy-coaching callers take the default (False) and are
+    byte-identical to before — only the locale's own equipment view stays the
+    real shared set."""
     shared: set[str] = set()
     prof = db.execute(
         "SELECT gym_profile_id FROM locale_profiles "
@@ -78,6 +120,18 @@ def locale_effective_tags(db: Any, user_id: int, locale: str) -> set[str]:
                 }
             except (ValueError, TypeError):
                 shared = set()
+        if exclude_disputed:
+            disputed = disputed_equipment_tags(db, prof["gym_profile_id"])
+            if disputed & shared:
+                # Rule #15: a "why did the plan stop prescribing X" question must
+                # be answerable from /admin/logs alone — log the inputs + the
+                # tags the dispute actually removed from this locale's pool.
+                print(
+                    f"locale_effective_tags: user_id={user_id} locale={locale!r} "
+                    f"gym_profile_id={prof['gym_profile_id']} disputed-excluded "
+                    f"{sorted(disputed & shared)} (plan-gen path)"
+                )
+            shared = shared - disputed
     rows = db.execute(
         "SELECT equipment_tag, action FROM locale_equipment_overrides "
         "WHERE user_id = ? AND locale = ?",
@@ -208,7 +262,7 @@ def cluster_effective_tags(db: Any, user_id: int, cluster: list[str]) -> list[st
     deterministic 2C cache key (the pool feeds the cache-key hash)."""
     pool: set[str] = set()
     for locale in cluster:
-        pool |= locale_effective_tags(db, user_id, locale)
+        pool |= locale_effective_tags(db, user_id, locale, exclude_disputed=True)
     return sorted(pool)
 
 
@@ -321,7 +375,10 @@ def cluster_equipment_by_locale(
     Slice 3 (F8): a locale with NO logged equipment whose category has an
     authored baseline assumes that baseline (replace semantics — any logged
     equipment wins, so a logged locale is untouched)."""
-    out = {locale: locale_effective_tags(db, user_id, locale) for locale in cluster}
+    out = {
+        locale: locale_effective_tags(db, user_id, locale, exclude_disputed=True)
+        for locale in cluster
+    }
     baselines = load_category_baselines(db)
     # Rule #15 observability: equipment feeds the feasibility INDOOR tier + craft
     # routing. The usual reason a locale's pool is empty is that it links no

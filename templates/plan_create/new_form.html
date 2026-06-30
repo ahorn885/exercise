@@ -63,7 +63,7 @@
                 {% if w.override_type == 'indoor_only' %}Indoor only (no outdoor terrain)
                 {% elif w.override_type == 'locale_unavailable' %}“{{ w.unavailable_locale }}” unavailable
                 {% elif w.override_type == 'away' %}Away at “{{ w.away_locale }}”
-                  {% if w.brought_craft %}<span class="dim">· with {{ w.brought_craft | join(', ') | replace('_', ' ') }}</span>{% endif %}
+                  {% if w.brought_gear %}<span class="dim">· with {{ w.brought_gear | join(', ') | replace('_', ' ') }}</span>{% endif %}
                 {% else %}{{ w.override_type }}{% endif %}
               </td>
               <td class="dim">{{ w.notes or '—' }}</td>
