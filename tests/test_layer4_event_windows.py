@@ -43,6 +43,7 @@ from layer4.hashing import (
 from layer4.orchestrator import (
     _FeasibilityInputs,
     _build_event_window_overlay,
+    _extract_pool_by_discipline,
     _reduced_env,
     _resolve_included_feasibility,
 )
@@ -123,6 +124,37 @@ def _mk_inputs(
         locale_meta={loc: {"name": loc, "distance_km": None} for loc in cluster},
         terrain_names={},
         terrain_attrs={},
+    )
+
+
+def _fake_l2c(pool_by_discipline=None):
+    """A minimal stand-in for a `Layer2CPayload` that `_extract_pool_by_discipline`
+    can read (it only touches `.exercises_resolved[*].{tier,discipline_ids,
+    exercise_id,priority_per_discipline}`): one tier-1 High exercise per
+    (discipline, exercise_id) in `pool_by_discipline`. Empty → no exercises → the
+    away cascade gets an empty destination pool. Used to stub the per-segment 2C
+    re-resolve build (#884 slice 6) in away-overlay tests."""
+    exs = [
+        SimpleNamespace(
+            tier=1, discipline_ids=[d_id], exercise_id=ex_id,
+            priority_per_discipline={d_id: "High"},
+        )
+        for d_id, ex_ids in (pool_by_discipline or {}).items()
+        for ex_id in ex_ids
+    ]
+    return SimpleNamespace(exercises_resolved=exs)
+
+
+def _fake_cone():
+    """A `_UpstreamFullCone` stand-in carrying only the fields the away-branch 2C
+    re-resolve reads (the build itself is stubbed via `_fake_l2c`, so the values
+    are placeholders that just need to exist)."""
+    return SimpleNamespace(
+        layer2d_payload=None,
+        etl_version_set={},
+        layer1_payload=SimpleNamespace(
+            lifestyle=SimpleNamespace(skill_toggle_states={})
+        ),
     )
 
 
@@ -401,13 +433,27 @@ class TestAwayWindows:
     away feasibility for the grid (counts-follow-away, §4.1)."""
 
     def _patch(self, monkeypatch, fi, windows, *, cluster, terrain, equip,
-               gear_locales=None):
+               gear_locales=None, away_pool=None):
         import layer4.orchestrator as orch
         monkeypatch.setattr(orch, "load_event_windows", lambda db, uid: windows)
         monkeypatch.setattr(
             orch, "load_gear_locales", lambda db, uid: dict(gear_locales or {})
         )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
+        # #884 slice 6 — the away branch builds a destination 2C payload; stub it
+        # (and the locale-equipment read it needs) so the cascade gets `away_pool`.
+        # Defaults to the home pool (a real destination 2C is never empty —
+        # bodyweight strength always resolves), so away strength substitution keeps
+        # working unless a test overrides to assert home-vs-destination divergence.
+        pool = fi.pool_by_discipline if away_pool is None else away_pool
+        monkeypatch.setattr(
+            orch, "q_layer2c_equipment_mapper_payload",
+            lambda *a, **k: _fake_l2c(pool),
+        )
+        monkeypatch.setattr(
+            orch.locations, "locale_effective_tags",
+            lambda db, uid, loc, exclude_disputed=False: set(),
+        )
         monkeypatch.setattr(
             orch.locations, "cluster_locale_ids",
             lambda db, uid, anchor_locale=None: cluster,
@@ -449,7 +495,7 @@ class TestAwayWindows:
             cluster=["hotel"], terrain={"hotel": set()}, equip={"hotel": set()},
         )
         segments, overlapping = _build_event_window_overlay(
-            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            None, 7, _fake_cone(), plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
             home_feasibility=home,
         )
         assert len(overlapping) == 1 and len(segments) == 1
@@ -476,7 +522,7 @@ class TestAwayWindows:
             equip={"trailtown": set()},
         )
         segments, _ = _build_event_window_overlay(
-            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            None, 7, _fake_cone(), plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
             home_feasibility=home,
         )
         assert segments[0].away_feasibility["D-001"].tier == "exact"
@@ -503,11 +549,61 @@ class TestAwayWindows:
             equip={"trailtown": set()},
         )
         segments, _ = _build_event_window_overlay(
-            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            None, 7, _fake_cone(), plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
             home_feasibility=home,
         )
         # away env resolved (D-001 exact at trailtown), not the home-indoor result.
         assert segments[0].away_feasibility["D-001"].tier == "exact"
+
+    def test_away_strength_pool_comes_from_destination_2c(self, monkeypatch):
+        # #884 slice 6 per-segment 2C re-resolve — an away week's strength
+        # substitute draws from the DESTINATION's 2C pool (EX-AWAY), not the home
+        # gym's (EX-HOME). The away cascade receives the destination pool as
+        # `pool_override` (reverses the #780 "substitute at home" default for away
+        # segments only).
+        import layer4.orchestrator as orch
+        fi = _mk_inputs(
+            cluster=["home"], terrain_by_locale={"home": set()},
+            equip_by_locale={"home": set()}, disciplines=["D-001"],
+            pool_by_discipline={"D-001": ["EX-HOME"]},
+        )
+        self._patch(
+            monkeypatch, fi, [self._away_win("hotel")],
+            cluster=["hotel"], terrain={"hotel": set()}, equip={"hotel": set()},
+            away_pool={"D-001": ["EX-AWAY"]},
+        )
+        recorded: dict = {}
+
+        def _spy(_fi, *, pool_override=None, **kw):
+            if pool_override is not None:
+                recorded["pool"] = pool_override
+            return {}
+
+        monkeypatch.setattr(orch, "_resolve_included_feasibility", _spy)
+        _build_event_window_overlay(
+            None, 7, _fake_cone(),
+            plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            home_feasibility={},
+        )
+        assert recorded["pool"] == {"D-001": ["EX-AWAY"]}
+
+
+class TestExtractPoolByDiscipline:
+    """`_extract_pool_by_discipline` (#884 slice 6) groups a 2C payload's tier-1/2/3
+    exercises by discipline, dropping tier-0 (unavailable) and sorting each pool by
+    per-discipline priority. Shared by the home cone build + the away re-resolve."""
+
+    def test_filters_tier_zero_and_sorts_by_priority(self):
+        l2c = SimpleNamespace(exercises_resolved=[
+            SimpleNamespace(tier=2, discipline_ids=["D-1"], exercise_id="LOW",
+                            priority_per_discipline={"D-1": "Low"}),
+            SimpleNamespace(tier=1, discipline_ids=["D-1"], exercise_id="CRIT",
+                            priority_per_discipline={"D-1": "Critical"}),
+            SimpleNamespace(tier=0, discipline_ids=["D-1"], exercise_id="DROP",
+                            priority_per_discipline={"D-1": "Critical"}),
+        ])
+        # tier-0 dropped; Critical sorts before Low within the discipline.
+        assert _extract_pool_by_discipline(l2c) == {"D-1": ["CRIT", "LOW"]}
 
 
 # ─── away craft: brought-craft (c) ∪ standing gear↔locale (b) ────────────────
@@ -531,7 +627,7 @@ class TestAwayCraft:
         recorded: dict = {}
 
         def _spy(_fi, *, locale_order, terrain_by_locale, equip_by_locale,
-                 owned_crafts=None, locale_meta=None):
+                 owned_crafts=None, locale_meta=None, pool_override=None):
             recorded["owned_crafts"] = owned_crafts
             return {}
 
@@ -540,6 +636,15 @@ class TestAwayCraft:
             orch, "load_gear_locales", lambda db, uid: dict(gear_locales or {})
         )
         monkeypatch.setattr(orch, "_gather_feasibility_inputs", lambda db, uid, cone: fi)
+        # #884 slice 6 — stub the away-branch destination 2C build (and its
+        # locale-equipment read) so the spy below only observes owned_crafts.
+        monkeypatch.setattr(
+            orch, "q_layer2c_equipment_mapper_payload", lambda *a, **k: _fake_l2c()
+        )
+        monkeypatch.setattr(
+            orch.locations, "locale_effective_tags",
+            lambda db, uid, loc, exclude_disputed=False: set(),
+        )
         monkeypatch.setattr(orch, "_resolve_included_feasibility", _spy)
         monkeypatch.setattr(
             orch.locations, "cluster_locale_ids",
@@ -556,7 +661,7 @@ class TestAwayCraft:
             lambda db, uid, c, anchor_locale=None: {},
         )
         _build_event_window_overlay(
-            None, 7, None, plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
+            None, 7, _fake_cone(), plan_start=date(2026, 6, 1), plan_end=date(2026, 6, 30),
             home_feasibility={},
         )
         return recorded["owned_crafts"]

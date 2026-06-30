@@ -531,6 +531,30 @@ class _FeasibilityInputs:
     terrain_attrs: dict[str, dict[str, bool]]
 
 
+def _extract_pool_by_discipline(l2c: "Layer2CPayload") -> dict[str, list[str]]:
+    """The per-discipline strength-substitute exercise pool from a 2C payload:
+    tier-(1,2,3) exercises grouped by discipline, each list sorted by its
+    per-discipline priority rank (stable). Home builds it off the primary locale's
+    2C (#780); an away event-window segment builds it off the DESTINATION's 2C so
+    an away-week strength substitute draws from the destination gym, not home
+    (#884 slice 6 per-segment 2C re-resolve)."""
+    pool: dict[str, list[str]] = {}
+    for ex in l2c.exercises_resolved:
+        if ex.tier not in (1, 2, 3):
+            continue
+        for d_id in ex.discipline_ids:
+            pool.setdefault(d_id, []).append(ex.exercise_id)
+    for d_id, ids in pool.items():
+        rank_of = {
+            ex.exercise_id: _PRIORITY_RANK.get(
+                ex.priority_per_discipline.get(d_id, ""), 99
+            )
+            for ex in l2c.exercises_resolved
+        }
+        ids.sort(key=lambda e: rank_of.get(e, 99))
+    return pool
+
+
 def _gather_feasibility_inputs(
     db: Any, user_id: int, cone: "_UpstreamFullCone"
 ) -> "_FeasibilityInputs | None":
@@ -584,21 +608,7 @@ def _gather_feasibility_inputs(
     # present (cluster[0] is the preferred locale; empty-cluster cones fall back
     # to {primary_locale}).
     primary_l2c = cone.layer2c_payloads[cone.primary_locale]
-    pool_by_discipline: dict[str, list[str]] = {}
-    for ex in primary_l2c.exercises_resolved:
-        if ex.tier not in (1, 2, 3):
-            continue
-        for d_id in ex.discipline_ids:
-            pool_by_discipline.setdefault(d_id, []).append(ex.exercise_id)
-    # Rank each discipline's pool by its per-discipline priority (stable).
-    for d_id, ids in pool_by_discipline.items():
-        rank_of = {
-            ex.exercise_id: _PRIORITY_RANK.get(
-                ex.priority_per_discipline.get(d_id, ""), 99
-            )
-            for ex in primary_l2c.exercises_resolved
-        }
-        ids.sort(key=lambda e: rank_of.get(e, 99))
+    pool_by_discipline = _extract_pool_by_discipline(primary_l2c)
 
     gated = skill_gated_disciplines(cone.layer2c_payloads)
     included = [d for d in cone.layer2a_payload.disciplines if d.inclusion == "included"]
@@ -635,6 +645,7 @@ def _resolve_included_feasibility(
     equip_by_locale: dict[str, set[str]],
     owned_crafts: list[str] | None = None,
     locale_meta: dict[str, dict[str, Any]] | None = None,
+    pool_override: dict[str, list[str]] | None = None,
 ) -> dict[str, TerrainResolution]:
     """Run the existing EXACT→PROXY→INDOOR→STRENGTH→REALLOCATE cascade for every
     included, non-skill-gated discipline against the supplied environment.
@@ -652,6 +663,9 @@ def _resolve_included_feasibility(
     through INDOOR→STRENGTH→REALLOCATE). Slice 4 supplies declared brought-craft."""
     crafts = fi.owned_crafts if owned_crafts is None else owned_crafts
     meta = fi.locale_meta if locale_meta is None else locale_meta
+    # #884 slice 6 — an away segment passes the DESTINATION's strength pool
+    # (`pool_override`); home + subtractive segments pass None → the home pool.
+    pool = fi.pool_by_discipline if pool_override is None else pool_override
     out: dict[str, TerrainResolution] = {}
     for d in fi.included:
         if d.discipline_id in fi.gated:
@@ -668,7 +682,7 @@ def _resolve_included_feasibility(
             locale_order=locale_order,
             cluster_terrain_by_locale=terrain_by_locale,
             cluster_equipment_by_locale=equip_by_locale,
-            discipline_exercise_ids=fi.pool_by_discipline.get(d.discipline_id, []),
+            discipline_exercise_ids=pool.get(d.discipline_id, []),
             discipline_names=fi.name_by_discipline,
         )
         if resolution is None:
@@ -678,7 +692,7 @@ def _resolve_included_feasibility(
                 cluster_terrain_by_locale=terrain_by_locale,
                 cluster_equipment_by_locale=equip_by_locale,
                 gap_rules=fi.gap_rules,
-                discipline_exercise_ids=fi.pool_by_discipline.get(d.discipline_id, []),
+                discipline_exercise_ids=pool.get(d.discipline_id, []),
             )
         if resolution is not None:
             # Deterministic venue display (#624 / #618-7): attach the saved-locale
@@ -897,6 +911,10 @@ def _build_event_window_overlay(
     # backfilled 1:1); ski/snow/climb/alpine gear kept at a destination now feeds
     # the away cascade once the slice-6 picker captures those kinds.
     gear_locale_map = load_gear_locales(db, user_id)
+    # #884 slice 6 per-segment 2C re-resolve — the included disciplines, computed
+    # once for the away-segment destination 2C build (mirrors the home cone build's
+    # included_discipline_ids; reused per away segment below).
+    away_included_ids = [d.discipline_id for d in fi.included]
     raw: list[tuple[date, date, EventWindowOverride]] = []
     for w in overlapping:
         base_ov = EventWindowOverride(
@@ -956,6 +974,32 @@ def _build_event_window_overlay(
                 g for g in (brought | standing)
                 if GEAR_REGISTRY.get(g) in _CRAFT_ALIAS_GROUP_KINDS
             )
+            # #884 slice 6 per-segment 2C re-resolve — build a DESTINATION 2C
+            # payload so an away-week strength substitute draws from the
+            # destination gym, not home (reverses the #780 "substitute at home"
+            # default, scoped to away segments only). Gear-toggle basis = the
+            # away gear set (brought ∪ standing-at-destination, all kinds;
+            # owned_gear_toggle_states self-filters to the toggle gear_ids), per
+            # Andy 2026-06-30. Mirrors the home cone build (_upstream_full_cone).
+            from athlete_gear_repo import owned_gear_toggle_states
+
+            away_gear_states = owned_gear_toggle_states(sorted(brought | standing))
+            away_l2c = q_layer2c_equipment_mapper_payload(
+                db,
+                locale_id=away_ov.away_locale,
+                locale_equipment_pool=sorted(
+                    locations.locale_effective_tags(
+                        db, user_id, away_ov.away_locale, exclude_disputed=True
+                    )
+                ),
+                cluster_locale_ids=away_cluster,
+                cluster_gear_toggle_states=away_gear_states,
+                included_discipline_ids=away_included_ids,
+                layer2d_payload=cone.layer2d_payload,
+                etl_version_set=cone.etl_version_set,
+                skill_toggle_states=cone.layer1_payload.lifestyle.skill_toggle_states,
+            )
+            away_pool = _extract_pool_by_discipline(away_l2c)
             reduced = _resolve_included_feasibility(
                 fi,
                 locale_order=away_cluster,
@@ -970,8 +1014,19 @@ def _build_event_window_overlay(
                 locale_meta=locations.cluster_locale_meta(
                     db, user_id, away_cluster, anchor_locale=away_ov.away_locale
                 ),
+                pool_override=away_pool,
             )
             away_feasibility = reduced
+            # Rule #15 — the destination 2C inputs that drove the away strength
+            # pool: away gear-toggle states + the per-discipline pool sizes. An
+            # away day landing on an unexpected strength substitute is then
+            # attributable here (home pool vs destination pool divergence).
+            print(
+                f"event_window_overlay: user_id={user_id} away 2C re-resolve "
+                f"locale={away_ov.away_locale!r} gear_toggle_states="
+                f"{dict(sorted(away_gear_states.items()))} "
+                f"away_pool_sizes={ {d: len(p) for d, p in sorted(away_pool.items())} }"
+            )
             # Slice 3 (F8): if the destination is cold (no logged equipment/
             # terrain) and its category has a baseline, the away cluster resolved
             # above ran on that ASSUMED baseline — mark the segment so the overlay
