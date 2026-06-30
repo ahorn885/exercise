@@ -27,12 +27,6 @@ from athlete_event_windows_repo import (
     load_event_windows,
     update_event_window_volume_by_date,
 )
-from athlete_craft_locale_repo import (
-    CraftLocaleError,
-    delete_craft_locale,
-    load_craft_locales,
-    replace_craft_locale,
-)
 from layer4.context import (
     Layer2ADiscipline,
     Layer2APayload,
@@ -1038,53 +1032,6 @@ class TestRepo:
             override_type="indoor_only", brought_gear=["packraft"],
         )
         assert conn.calls[-1][1][6] is None  # brought-gear only on 'away'
-
-
-# ─── craft↔locale repo (Slice 4, the (b) surface) ────────────────────────────
-
-class TestCraftLocaleRepo:
-    def test_load_groups_by_locale_in_enum_order(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[
-            {"locale": "cabin", "craft_slug": "packraft"},
-            {"locale": "cabin", "craft_slug": "mountain_bike"},
-        ])
-        assert load_craft_locales(conn, 7) == {"cabin": ["mountain_bike", "packraft"]}
-
-    def test_replace_rejects_foreign_locale(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[])  # _locale_exists → not found
-        with pytest.raises(CraftLocaleError):
-            replace_craft_locale(conn, 7, "ghost", ["packraft"])
-        assert not any("INSERT" in c[0] for c in conn.calls)
-
-    def test_replace_rejects_unknown_slug(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
-        with pytest.raises(CraftLocaleError):
-            replace_craft_locale(conn, 7, "cabin", ["jetpack"])
-
-    def test_replace_deletes_then_inserts_in_enum_order(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
-        replace_craft_locale(conn, 7, "cabin", ["packraft", "mountain_bike"])
-        assert any("DELETE FROM athlete_craft_locale" in c[0] for c in conn.calls)
-        inserts = [c for c in conn.calls if "INSERT INTO athlete_craft_locale" in c[0]]
-        assert [c[1] for c in inserts] == [
-            (7, "mountain_bike", "cabin"), (7, "packraft", "cabin")
-        ]
-
-    def test_replace_with_empty_clears(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
-        replace_craft_locale(conn, 7, "cabin", [])
-        assert any("DELETE FROM athlete_craft_locale" in c[0] for c in conn.calls)
-        assert not any("INSERT" in c[0] for c in conn.calls)
-
-    def test_delete_scoped_to_user_and_locale(self):
-        conn = _FakeConn()
-        delete_craft_locale(conn, 7, "cabin")
-        assert conn.calls[0][1] == (7, "cabin")
 
 
 # ─── integration: the overlay reaches a full synthesis prompt ────────────────

@@ -652,7 +652,6 @@ def _retire_outdoor_terrain_equipment_tags(cur):
 # (athlete_gear_repo.GEAR_REGISTRY).
 _GEAR_BACKFILL_BIKE_IN = ", ".join(f"'{s}'" for s in BIKE_TYPES)
 _GEAR_BACKFILL_PADDLE_IN = ", ".join(f"'{s}'" for s in PADDLE_CRAFT_TYPES)
-_GEAR_BACKFILL_CRAFT_IN = ", ".join(f"'{s}'" for s in (*BIKE_TYPES, *PADDLE_CRAFT_TYPES))
 
 _PG_MIGRATIONS = [
     "ALTER TABLE cardio_log ADD COLUMN IF NOT EXISTS stride_length_m REAL",
@@ -2638,15 +2637,6 @@ _PG_MIGRATIONS = [
     # CSV pattern); NULL → the window-wide volume_pct applies to every covered day
     # (the pre-#889 behaviour). Dates/range validated in athlete_event_windows_repo.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_by_date TEXT",
-    # (b) craft<->locale: a standing "this craft is kept at this locale"
-    # association (a bike at the parents' place). Many-to-many, no per-row
-    # attribute → a thin join table; athlete-scoped; locale app-validated against
-    # the athlete's locale_profiles (no FK, the no-CHECK convention).
-    "CREATE TABLE IF NOT EXISTS athlete_craft_locale ("
-    "user_id INTEGER NOT NULL REFERENCES users(id), craft_slug TEXT NOT NULL, "
-    "locale TEXT NOT NULL, created_at TIMESTAMP DEFAULT NOW(), "
-    "PRIMARY KEY (user_id, craft_slug, locale))",
-    "CREATE INDEX IF NOT EXISTS idx_acl_user ON athlete_craft_locale(user_id)",
     # #335 Phase 2b — key the strength-rx path off the layer0 EX-id (the single
     # source of truth the synthesizer emits on StrengthExercise.exercise_id)
     # instead of the exercise NAME, which never matched the layer0 qualified
@@ -3120,11 +3110,6 @@ _PG_MIGRATIONS = [
     f"CROSS JOIN LATERAL unnest(string_to_array(dbp.paddle_craft_types, ',')) AS g(slug) "
     f"WHERE btrim(g.slug) IN ({_GEAR_BACKFILL_PADDLE_IN}) "
     f"ON CONFLICT (user_id, gear_id) DO NOTHING",
-    # craft↔locale rows migrate 1:1 (craft_slug IS a gear_id), filtered to known slugs.
-    f"INSERT INTO athlete_gear_locale (user_id, gear_id, locale) "
-    f"SELECT user_id, craft_slug, locale FROM athlete_craft_locale "
-    f"WHERE craft_slug IN ({_GEAR_BACKFILL_CRAFT_IN}) "
-    f"ON CONFLICT (user_id, gear_id, locale) DO NOTHING",
     # ── #196 Phase 2 — the canonical daily-wellness layer ─────────────────────
     # The daily-metrics analog of Phase 3's canonical_activity: one best-of row
     # per (user, date), materialized on ingest by canonical_wellness.py:
@@ -3325,6 +3310,16 @@ _PG_MIGRATIONS = [
     # schema → auto-applies on each Vercel deploy. IF EXISTS keeps it re-run safe
     # and a clean no-op on a fresh DB that never created brought_craft.
     "ALTER TABLE athlete_event_windows DROP COLUMN IF EXISTS brought_craft",
+    # #884 slice 6c-3 — retire the legacy athlete_craft_locale table (the (b)
+    # standing-gear surface from Event Windows slice 4). Slice 5's away overlay
+    # moved the live write+read path onto athlete_gear_locale
+    # (replace_gear_locale / load_gear_locales); the only remaining reader was the
+    # craft_locale→gear_locale backfill above (now removed), which ran one final
+    # time on every deploy since slice 5, so gear_locale is authoritative. CASCADE
+    # drops the orphaned index; IF EXISTS keeps it re-run safe and a clean no-op on
+    # a fresh DB that never created the table. Public-schema → auto-applies on each
+    # Vercel deploy.
+    "DROP TABLE IF EXISTS athlete_craft_locale CASCADE",
 ]
 
 _CLOTHING_SEEDS = [
