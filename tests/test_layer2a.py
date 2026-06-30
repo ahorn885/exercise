@@ -417,24 +417,17 @@ class TestARBaseline:
         # whitewater duration-gated conditional).
         kayak = by_id["D-010"]
         assert kayak.inclusion == "included"
-        assert kayak.is_conditional is False
-        assert kayak.conditional_resolution is None
 
         # Synthetic conditional discipline (role "(*Conditional)") → prompt_required.
         # (Uses the legacy D-015 id as a generic conditional fixture; the
         # navigation/sleep-dep conditional itself was retired with the Trekking
-        # fold, so sleep_deprivation_relevant is now always False.)
+        # fold.)
         nav = by_id["D-015"]
         assert nav.inclusion == "prompt_required"
-        assert nav.conditional_resolution == "athlete_opt_in"
-        assert nav.is_conditional is True
-        assert nav.sleep_deprivation_relevant is False
 
         # Primaries unconditional + included
         trail = by_id["D-001"]
         assert trail.inclusion == "included"
-        assert trail.is_conditional is False
-        assert trail.conditional_resolution is None
         # load_weight is normalized to a 0–1 distribution over the included
         # set (Layer4_Spec §4.2). Trail's raw 25–40 midpoint (32.5) is the
         # largest included band, so it carries the largest normalized share.
@@ -471,13 +464,11 @@ class TestARBaseline:
 
         # Training gaps summary
         assert payload.training_gaps_summary.flagged_count == 1
-        assert payload.training_gaps_summary.any_no_substitute is False
 
         # ETL version set echoed
         assert payload.etl_version_set == _DEFAULT_ETL
 
         # Rationale metadata
-        assert payload.rationale_metadata.template_version == "v1"
         assert payload.rationale_metadata.generated_at  # non-empty ISO string
 
         # Three queries: the per-discipline join + the modality_group
@@ -597,7 +588,6 @@ class TestInclusionPrecedence:
         assert by_id["D-016"].inclusion == "excluded"
         assert by_id["D-018"].inclusion == "excluded"
         # Curator include/exclude is deterministic — no athlete prompt.
-        assert by_id["D-011"].conditional_resolution is None
         assert payload.hitl_required is False
 
     def test_null_column_defaults_to_included(self):
@@ -622,7 +612,6 @@ class TestInclusionPrecedence:
         )
         nav = payload.disciplines[0]
         assert nav.inclusion == "prompt_required"
-        assert nav.conditional_resolution == "athlete_opt_in"
         assert payload.hitl_required is True
 
     def test_race_demand_overrides_curator_excluded(self):
@@ -635,7 +624,6 @@ class TestInclusionPrecedence:
         )
         by_id = {d.discipline_id: d for d in payload.disciplines}
         assert by_id["D-011"].inclusion == "included"
-        assert by_id["D-011"].conditional_resolution is None
 
     def test_athlete_weighting_is_complete_list(self):
         conn = _FakeConn()
@@ -647,10 +635,8 @@ class TestInclusionPrecedence:
         )
         by_id = {d.discipline_id: d for d in payload.disciplines}
         assert by_id["D-001"].inclusion == "included"
-        assert by_id["D-001"].conditional_resolution == "athlete_opt_in"
         # Kayaking is curator-included but unlisted → excluded by the athlete's list.
         assert by_id["D-010"].inclusion == "excluded"
-        assert by_id["D-010"].conditional_resolution == "athlete_opt_in"
         # An all-or-nothing athlete list resolves everything → no prompt.
         assert payload.hitl_required is False
 
@@ -854,7 +840,6 @@ class TestEdgeCases:
         assert by_id["D-010"].inclusion == "included"
         # D-015: conditional with no override → prompt_required, athlete_opt_in
         assert by_id["D-015"].inclusion == "prompt_required"
-        assert by_id["D-015"].conditional_resolution == "athlete_opt_in"
         # HITL fires
         assert payload.hitl_required is True
         # Rationale prompts the athlete to confirm
@@ -864,8 +849,8 @@ class TestEdgeCases:
 class TestDisciplineIdFilter:
     """D-73 Phase 5.2 Bucket E.(b)-B2 — race-level `discipline_id_filter`
     narrows the bridge-derived discipline list to an explicit subset
-    while preserving rationale + phase_load + training_gap on the
-    surviving rows. None = full bridge defaults (pre-B2 behavior).
+    while preserving rationale + phase_load + training-gap coaching flags
+    on the surviving rows. None = full bridge defaults (pre-B2 behavior).
     """
 
     def test_none_filter_returns_full_bridge_list(self):
@@ -887,7 +872,7 @@ class TestDisciplineIdFilter:
     def test_subset_filter_narrows_disciplines(self):
         """`discipline_id_filter=["D-001","D-015"]` keeps only those two
         from the bridge-derived 7. Surviving rows retain their rationale,
-        phase_load, conditional_resolution."""
+        phase_load, inclusion resolution."""
         conn = _FakeConn()
         conn.queue_response(rows=_ar_rows())
         payload = q_layer2a_discipline_classifier_payload(
@@ -904,7 +889,7 @@ class TestDisciplineIdFilter:
         assert by_id["D-001"].phase_load is not None
         assert by_id["D-001"].phase_load.base_low == 30
         # Conditional resolution preserved
-        assert by_id["D-015"].conditional_resolution == "athlete_opt_in"
+        assert by_id["D-015"].inclusion == "prompt_required"
 
     def test_empty_filter_returns_no_disciplines(self):
         """`discipline_id_filter=[]` is the explicit "no disciplines"
@@ -955,4 +940,9 @@ class TestDisciplineIdFilter:
         assert len(payload.disciplines) == 1
         d = payload.disciplines[0]
         assert d.discipline_id == "D-018"
-        assert d.training_gap is not None
+        # The DTG row still surfaces — as a training_gap coaching flag,
+        # since the per-discipline `training_gap` field was retired (#296).
+        assert any(
+            f.flag_type == "training_gap" and f.discipline_id == "D-018"
+            for f in payload.coaching_flags
+        )

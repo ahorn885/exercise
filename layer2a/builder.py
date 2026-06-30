@@ -76,8 +76,6 @@ _DIVERGENCE_RATIO_THRESHOLD: float = 0.5
 
 _VALID_TEAM_FORMATS: frozenset[str] = frozenset({"Solo", "Unified", "Relay"})
 
-_TEMPLATE_VERSION: str = "v1"
-
 # #447 §5 — cross-training fold. A folded home-discipline gets a raw weight of
 # this fraction of the SMALLEST included race discipline, guaranteeing every
 # cross-training discipline sits strictly below every race discipline (Andy
@@ -241,17 +239,6 @@ def _role_modifier(role: str) -> str:
     return base or "supporting"
 
 
-def _is_conditional(role: str, notes_conditions: str | None) -> bool:
-    """Per spec §5.3: conditional iff role contains `(*Conditional)` OR
-    notes_conditions starts with `*CONDITIONAL` (case-insensitive).
-    """
-    if "*conditional" in role.lower():
-        return True
-    if notes_conditions and notes_conditions.strip().lower().startswith("*conditional"):
-        return True
-    return False
-
-
 _INCLUSION_VALUES = {"included", "excluded", "prompt_required"}
 
 
@@ -322,9 +309,9 @@ def _resolve_inclusion(
     row: dict[str, Any],
     race_overrides: dict[str, float] | None,
     athlete_overrides: dict[str, dict] | None,
-) -> tuple[str, str | None]:
+) -> str:
     """Resolve a discipline's inclusion via the #509 precedence chain
-    `race > athlete > curator-default`. Returns `(inclusion, conditional_resolution)`.
+    `race > athlete > curator-default`.
 
     1. **Race demand** — the race terrain mix names this discipline
        (`race_discipline_overrides`, derived from per-row `discipline_id` by
@@ -337,31 +324,19 @@ def _resolve_inclusion(
        `phase_load_allocation.default_inclusion` column
        (`included` / `excluded` / `prompt_required`; NULL → `included`).
 
-    `conditional_resolution` records athlete-driven resolution (`athlete_opt_in`
-    — both a list-in and a list-out are the athlete's call) and the
-    pending-prompt curator case; race / curator-included / curator-excluded
-    carry `None`. Race provenance rides on `load_weight.source == "race_override"`.
-
-    This supersedes the retired `_resolve_conditional`, whose notes-derived
-    path could only ever emit `included` / `prompt_required` and whose explicit
-    `{"included": bool}` athlete branch had no live producer."""
+    Race provenance rides on `load_weight.source == "race_override"`."""
     discipline_id = row["discipline_id"]
 
     # 1. Race demand wins (X3 terrain-derived mix).
     if race_overrides and discipline_id in race_overrides:
-        return ("included", None)
+        return "included"
 
     # 2. Athlete weighting is the complete membership list when set (#509 Option A).
     if athlete_overrides:
-        if discipline_id in athlete_overrides:
-            return ("included", "athlete_opt_in")
-        return ("excluded", "athlete_opt_in")
+        return "included" if discipline_id in athlete_overrides else "excluded"
 
     # 3. Curator default_inclusion column (authoritative base).
-    curator = _curator_default_inclusion(row)
-    if curator == "prompt_required":
-        return ("prompt_required", "athlete_opt_in")
-    return (curator, None)
+    return _curator_default_inclusion(row)
 
 
 def _compute_load_weight(
@@ -687,25 +662,10 @@ def _fold_cross_training_disciplines(
                 primary_movement=row.get("primary_movement"),
                 inclusion="included",
                 role="Cross-training",
-                is_conditional=False,
-                conditional_resolution=None,
                 load_weight=WeightResult(
                     value=cap, source="system_default", system_default=cap
                 ),
-                race_time_pct_low=(
-                    float(row["race_time_pct_low"])
-                    if row.get("race_time_pct_low") is not None
-                    else None
-                ),
-                race_time_pct_high=(
-                    float(row["race_time_pct_high"])
-                    if row.get("race_time_pct_high") is not None
-                    else None
-                ),
-                sport_specific_context=row.get("sport_specific_context"),
                 phase_load=folded_phase_load,
-                sleep_deprivation_relevant=False,
-                training_gap=_build_training_gap(row),
                 rationale=(
                     f"Cross-training from your primary sport "
                     f"({cross_training_sport}) — folded in at a minority weight to "
@@ -754,11 +714,10 @@ def _render_rationale(
     row: dict[str, Any],
     framework_sport: str,
     inclusion: str,
-    conditional_resolution: str | None,
     race_duration_hours: float | None,
 ) -> str:
     """Render the athlete-facing rationale string. Composed from a small
-    template library keyed on role + inclusion + conditional resolution.
+    template library keyed on role + inclusion.
     `sport_specific_context` from SDM is appended verbatim when non-NULL.
 
     Voice per CLAUDE.md: direct, evidence-grounded, no platitudes or hype.
@@ -856,18 +815,19 @@ def _emit_coaching_flags(
     for d in disciplines:
         # §8.1 — training gap surfaced on any discipline with a DTG entry
         # (regardless of inclusion — the gap is informational).
-        if d.training_gap is not None:
+        gap = _build_training_gap(rows_by_id[d.discipline_id])
+        if gap is not None:
             flags.append(
                 Layer2ACoachingFlag(
                     flag_type="training_gap",
                     discipline_id=d.discipline_id,
                     message=(
                         f"{d.discipline_name} has a known training gap: "
-                        f"{d.training_gap.notes}"
+                        f"{gap.notes}"
                     ),
                     metadata={
-                        "gap_type": d.training_gap.gap_type,
-                        "multi_substitute_candidate": d.training_gap.multi_substitute_candidate,
+                        "gap_type": gap.gap_type,
+                        "multi_substitute_candidate": gap.multi_substitute_candidate,
                     },
                 )
             )
@@ -908,21 +868,17 @@ def _emit_coaching_flags(
 
 def _build_training_gaps_summary(
     disciplines: list[Layer2ADiscipline],
+    raw_rows: list[dict[str, Any]],
 ) -> TrainingGapsSummary:
     """Roll up DTG entries across included disciplines per spec §7."""
-    included = [d for d in disciplines if d.inclusion == "included" and d.training_gap is not None]
-    flagged = len(included)
-    any_no_sub = any(
-        "no" in (d.training_gap.gap_type or "").lower()
-        and "substitute" in (d.training_gap.gap_type or "").lower()
-        for d in included
+    rows_by_id = {r["discipline_id"]: r for r in raw_rows}
+    flagged = sum(
+        1
+        for d in disciplines
+        if d.inclusion == "included"
+        and _build_training_gap(rows_by_id[d.discipline_id]) is not None
     )
-    any_multi_sub = any(d.training_gap.multi_substitute_candidate for d in included)
-    return TrainingGapsSummary(
-        flagged_count=flagged,
-        any_no_substitute=any_no_sub,
-        any_multi_substitute_candidate=any_multi_sub,
-    )
+    return TrainingGapsSummary(flagged_count=flagged)
 
 
 # ─── Public entry point ──────────────────────────────────────────────────────
@@ -991,7 +947,7 @@ def q_layer2a_discipline_classifier_payload(
 
     disciplines: list[Layer2ADiscipline] = []
     for row in raw_rows:
-        inclusion, conditional_resolution = _resolve_inclusion(
+        inclusion = _resolve_inclusion(
             row,
             race_discipline_overrides,
             athlete_discipline_overrides,
@@ -1001,15 +957,8 @@ def q_layer2a_discipline_classifier_payload(
             row,
             framework_sport,
             inclusion,
-            conditional_resolution,
             estimated_race_duration_hours,
         )
-        # Sleep-deprivation relevance: the navigation conditional (D-015) was
-        # retired with the Trekking fold (May 2026). No discipline-level
-        # sleep-dep trigger remains — the field stays on the contract but is
-        # always False; the real sleep-dep overlay lives in Layer 2E (driven by
-        # event duration > 20 h).
-        sleep_dep_relevant = False
         disciplines.append(
             Layer2ADiscipline(
                 discipline_id=row["discipline_id"],
@@ -1018,23 +967,8 @@ def q_layer2a_discipline_classifier_payload(
                 primary_movement=row.get("primary_movement"),
                 inclusion=inclusion,
                 role=row["role"],
-                is_conditional=_is_conditional(row["role"], row.get("notes_conditions")),
-                conditional_resolution=conditional_resolution,
                 load_weight=load_weight,
-                race_time_pct_low=(
-                    float(row["race_time_pct_low"])
-                    if row.get("race_time_pct_low") is not None
-                    else None
-                ),
-                race_time_pct_high=(
-                    float(row["race_time_pct_high"])
-                    if row.get("race_time_pct_high") is not None
-                    else None
-                ),
-                sport_specific_context=row.get("sport_specific_context"),
                 phase_load=_build_phase_load(row),
-                sleep_deprivation_relevant=sleep_dep_relevant,
-                training_gap=_build_training_gap(row),
                 rationale=rationale,
             )
         )
@@ -1092,7 +1026,7 @@ def q_layer2a_discipline_classifier_payload(
         raw_rows,
         estimated_race_duration_hours,
     )
-    training_gaps_summary = _build_training_gaps_summary(disciplines)
+    training_gaps_summary = _build_training_gaps_summary(disciplines, raw_rows)
 
     # X1b.2 — Modality-group pool/redistribute per Modality_Group_Spec_v1 §5.1.
     # Loads layer0.discipline_modality_membership for the current 0A version
@@ -1140,7 +1074,6 @@ def q_layer2a_discipline_classifier_payload(
         coaching_flags=coaching_flags,
         modality_group_allocations=modality_group_allocations,
         rationale_metadata=RationaleMetadata(
-            template_version=_TEMPLATE_VERSION,
             # Day-anchored: `generated_at` is hashed into `layer2a_hash`, which
             # keys plan_create / per-block / race_week_brief cache entries. A
             # full-precision timestamp made those keys vary on every invocation

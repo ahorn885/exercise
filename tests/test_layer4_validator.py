@@ -366,9 +366,7 @@ def _layer2a_with_band(
         discipline_name=discipline_id,
         inclusion=inclusion,  # type: ignore[arg-type]
         role="Primary",
-        is_conditional=False,
         load_weight=WeightResult(value=0.5, source="system_default", system_default=0.5),
-        sleep_deprivation_relevant=False,
         rationale="r",
         phase_load=PhaseLoadBands(
             base_low=base_low,
@@ -398,13 +396,13 @@ def _layer2a_with_band(
             "Taper": (_base_mid - 2, _base_mid - 2),
         },
         training_gaps_summary=TrainingGapsSummary(
-            flagged_count=0, any_no_substitute=False, any_multi_substitute_candidate=False
+            flagged_count=0
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+            generated_at="2026-05-17T10:00:00Z"
         ),
     )
 
@@ -2636,11 +2634,9 @@ def _layer2a_multi(
             discipline_name=did,
             inclusion="included",
             role="Primary",
-            is_conditional=False,
             load_weight=WeightResult(
                 value=None, source="system_default", system_default=None
             ),
-            sleep_deprivation_relevant=False,
             rationale="r",
             phase_load=PhaseLoadBands(
                 base_low=lo, base_high=hi,
@@ -2661,14 +2657,12 @@ def _layer2a_multi(
         },
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+            generated_at="2026-05-17T10:00:00Z"
         ),
     )
 

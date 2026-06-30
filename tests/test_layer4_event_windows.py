@@ -808,11 +808,11 @@ class TestCountsFollowAway:
         def _disc(did, name, lw):
             return Layer2ADiscipline(
                 discipline_id=did, discipline_name=name,
-                inclusion="included", role="Primary", is_conditional=False,
+                inclusion="included", role="Primary",
                 load_weight=WeightResult(
                     value=lw, source="system_default", system_default=lw,
                 ),
-                sleep_deprivation_relevant=False, rationale="t",
+                rationale="t",
                 phase_load=PhaseLoadBands(
                     base_low=20.0, base_high=30.0, build_low=20.0, build_high=30.0,
                     peak_low=40.0, peak_high=50.0, taper_low=20.0, taper_high=30.0,
@@ -824,11 +824,10 @@ class TestCountsFollowAway:
             disciplines=[_disc("D-001", "Trail Running", 3.0),
                          _disc("D-008", "Mountain Biking", 2.0)],
             training_gaps_summary=TrainingGapsSummary(
-                flagged_count=0, any_no_substitute=False,
-                any_multi_substitute_candidate=False),
+                flagged_count=0),
             hitl_required=False, unresolved_flags=[], coaching_flags=[],
             rationale_metadata=RationaleMetadata(
-                template_version="v1", generated_at="2026-06-06T00:00:00Z"),
+                generated_at="2026-06-06T00:00:00Z"),
             weekly_total_hours_by_phase={
                 "Base": (8.0, 10.0), "Build": (10.0, 14.0),
                 "Peak": (12.0, 16.0), "Taper": (5.0, 7.0)},
