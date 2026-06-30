@@ -38,7 +38,8 @@ def _patch_leaves(monkeypatch, *, profile, training, etl=None, terrain=None,
     )
     monkeypatch.setattr(orch.locations, "cluster_locale_ids", lambda db, uid: ["home"])
     monkeypatch.setattr(
-        orch.locations, "locale_effective_tags", lambda db, uid, loc: equipment or {"e1"}
+        orch.locations, "locale_effective_tags",
+        lambda db, uid, loc, **kw: equipment or {"e1"}
     )
 
 

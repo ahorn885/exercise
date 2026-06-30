@@ -1215,7 +1215,9 @@ def _upstream_full_cone(
             db,
             locale_id=locale,
             locale_equipment_pool=sorted(
-                locations.locale_effective_tags(db, user_id, locale)
+                locations.locale_effective_tags(
+                    db, user_id, locale, exclude_disputed=True
+                )
             ),
             cluster_locale_ids=cluster_for_2c,
             cluster_gear_toggle_states=cluster_gear_states,
@@ -2310,7 +2312,11 @@ def compute_gate_input_fingerprint(
             loc: sorted(_q_locale_terrain_ids(db, user_id, loc)) for loc in cluster
         },
         "locale_equipment": {
-            loc: sorted(locations.locale_effective_tags(db, user_id, loc))
+            loc: sorted(
+                locations.locale_effective_tags(
+                    db, user_id, loc, exclude_disputed=True
+                )
+            )
             for loc in cluster
         },
         "training_data": compute_payload_hash(
@@ -2342,7 +2348,9 @@ def _q_locale_equipment_pool(db: Any, user_id: int, locale: str) -> list[str]:
     `locale`, via the authoritative `locations.locale_effective_tags`. Used by
     the single-session path (one athlete-picked locale); the full plan-gen
     cone unions across the cluster (`locations.cluster_effective_tags`)."""
-    return sorted(locations.locale_effective_tags(db, user_id, locale))
+    return sorted(
+        locations.locale_effective_tags(db, user_id, locale, exclude_disputed=True)
+    )
 
 
 def _q_locale_by_slug(db: Any, user_id: int, locale: str) -> bool:

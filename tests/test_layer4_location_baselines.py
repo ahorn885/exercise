@@ -51,14 +51,19 @@ class _FakeDB:
     the query raises, which `load_category_baselines` swallows to {})."""
 
     def __init__(self, *, profiles=None, gym_profiles=None, overrides=None,
-                 with_baselines=True):
+                 with_baselines=True, disputed=None):
         self.profiles = [_Row(p) for p in (profiles or [])]
         self.gym_profiles = gym_profiles or {}
         self.overrides = [_Row(o) for o in (overrides or [])]
         self.with_baselines = with_baselines
+        # #971 D-60 §5 — disputed tags excluded on the plan-gen path.
+        self.disputed = disputed or {}
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
+        if "disputed_items FROM gym_profiles WHERE id" in s:
+            (gid,) = params
+            return _Cursor(row=_Row({"disputed_items": self.disputed.get(gid)}))
         if "FROM layer0.location_category_equipment_baseline" in s:
             if not self.with_baselines:
                 raise RuntimeError('relation "..." does not exist')

@@ -39,16 +39,22 @@ class _FakeDB:
     """In-memory locale model. `execute` dispatches on the SQL text + params,
     mirroring the exact queries `locations.py` issues."""
 
-    def __init__(self, *, profiles=None, gym_profiles=None, overrides=None):
+    def __init__(self, *, profiles=None, gym_profiles=None, overrides=None,
+                 disputed=None):
         # profiles: list of {user_id, locale, preferred, lat, lng, gym_profile_id}
         self.profiles = [_Row(p) for p in (profiles or [])]
         # gym_profiles: {id: equipment_json_or_none}
         self.gym_profiles = gym_profiles or {}
+        # disputed: {id: disputed_items_json_or_none} (#971 D-60 §5 plan-gen path)
+        self.disputed = disputed or {}
         # overrides: list of {user_id, locale, equipment_tag, action}
         self.overrides = [_Row(o) for o in (overrides or [])]
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
+        if "disputed_items FROM gym_profiles WHERE id" in s:
+            (gid,) = params
+            return _Cursor(row=_Row({"disputed_items": self.disputed.get(gid)}))
         if "FROM gym_profiles WHERE id" in s:
             (gid,) = params
             return _Cursor(row=_Row({"equipment": self.gym_profiles.get(gid)}))
@@ -217,3 +223,100 @@ def test_cluster_effective_tags_unions_sorted():
     assert locations.cluster_effective_tags(db, _UID, cluster) == [
         "Barbell", "Kettlebell", "Pull-up bar", "Squat rack",
     ]
+
+
+# ── #971 D-60 §5 — disputed item ⇒ not-available for plan-gen ─────────────
+
+
+def _dispute(by, removes, adds=None):
+    """One open correction proposal as Slice 3 records it on disputed_items."""
+    return {"by": by, "adds": adds or [], "removes": removes,
+            "at": "2026-06-30T00:00:00+00:00"}
+
+
+def test_disputed_equipment_tags_unions_open_removes():
+    db = _FakeDB(disputed={
+        1: json.dumps([_dispute(11, ["Treadmill"]),
+                       _dispute(12, ["Rower"], adds=["Sauna"])]),
+    })
+    # Union of `removes` across proposals; `adds` contribute nothing.
+    assert locations.disputed_equipment_tags(db, 1) == {"Treadmill", "Rower"}
+
+
+def test_disputed_equipment_tags_tolerates_null_empty_malformed():
+    assert locations.disputed_equipment_tags(_FakeDB(disputed={1: None}), 1) == set()
+    assert locations.disputed_equipment_tags(_FakeDB(disputed={1: ""}), 1) == set()
+    assert locations.disputed_equipment_tags(
+        _FakeDB(disputed={1: "{not json"}), 1) == set()
+
+
+def test_plan_gen_excludes_disputed_tag_but_ui_default_keeps_it():
+    db = _FakeDB(
+        profiles=[{"user_id": _UID, "locale": "home", "preferred": True,
+                   "lat": None, "lng": None, "gym_profile_id": 1}],
+        gym_profiles={1: json.dumps(["Barbell", "Treadmill"])},
+        disputed={1: json.dumps([_dispute(11, ["Treadmill"])])},
+    )
+    # Plan-gen path: a peer-disputed tag is not-available.
+    assert locations.locale_effective_tags(
+        db, _UID, "home", exclude_disputed=True) == {"Barbell"}
+    # UI / default path: the athlete still sees the real shared set.
+    assert locations.locale_effective_tags(db, _UID, "home") == {
+        "Barbell", "Treadmill",
+    }
+
+
+def test_personal_add_beats_a_peer_dispute():
+    db = _FakeDB(
+        profiles=[{"user_id": _UID, "locale": "home", "preferred": True,
+                   "lat": None, "lng": None, "gym_profile_id": 1}],
+        gym_profiles={1: json.dumps(["Barbell", "Treadmill"])},
+        disputed={1: json.dumps([_dispute(11, ["Treadmill"])])},
+        overrides=[{"user_id": _UID, "locale": "home",
+                    "equipment_tag": "Treadmill", "action": "add"}],
+    )
+    # This athlete personally re-affirmed the tag — their override wins over a
+    # peer's provisional dispute ((shared − disputed) ∪ adds).
+    assert locations.locale_effective_tags(
+        db, _UID, "home", exclude_disputed=True) == {"Barbell", "Treadmill"}
+
+
+def test_withdrawn_dispute_restores_tag_to_plan_gen():
+    db = _FakeDB(
+        profiles=[{"user_id": _UID, "locale": "home", "preferred": True,
+                   "lat": None, "lng": None, "gym_profile_id": 1}],
+        gym_profiles={1: json.dumps(["Barbell", "Treadmill"])},
+        disputed={1: None},  # proposal withdrawn → disputed_items cleared
+    )
+    assert locations.locale_effective_tags(
+        db, _UID, "home", exclude_disputed=True) == {"Barbell", "Treadmill"}
+
+
+def test_no_linked_profile_skips_disputed_query():
+    db = _FakeDB(profiles=[
+        {"user_id": _UID, "locale": "home", "preferred": True, "lat": None,
+         "lng": None, "gym_profile_id": None},
+    ])
+    # No gym_profile_id → no disputed read (the gym-profile guard short-circuits).
+    assert locations.locale_effective_tags(
+        db, _UID, "home", exclude_disputed=True) == set()
+
+
+def test_cluster_equipment_by_locale_excludes_disputed():
+    db = _FakeDB(
+        profiles=[
+            {"user_id": _UID, "locale": "home", "preferred": True,
+             "lat": 44.98, "lng": -93.27, "gym_profile_id": 1},
+            {"user_id": _UID, "locale": "near_gym", "preferred": False,
+             "lat": 45.01, "lng": -93.20, "gym_profile_id": 2},
+        ],
+        gym_profiles={
+            1: json.dumps(["Barbell", "Treadmill"]),
+            2: json.dumps(["Rower"]),
+        },
+        disputed={1: json.dumps([_dispute(11, ["Treadmill"])])},
+    )
+    cluster = locations.cluster_locale_ids(db, _UID)
+    by_locale = locations.cluster_equipment_by_locale(db, _UID, cluster)
+    assert by_locale["home"] == {"Barbell"}  # Treadmill disputed away
+    assert by_locale["near_gym"] == {"Rower"}
