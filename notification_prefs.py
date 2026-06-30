@@ -162,6 +162,18 @@ NOTIFICATION_TYPES = [
         'channels': ['in_app', 'push'],
         'defaults': {'in_app': True, 'push': True},
     },
+    # Extreme weather (heat / freeze / rain) forecast for an upcoming training
+    # day, from the live #289 `upcoming_conditions` signal. `warning` (safety-
+    # relevant), reconciled by the same daily cron as the staleness nudges.
+    {
+        'key': 'conditions_advisory',
+        'label': 'Weather conditions advisory',
+        'description': 'A heads-up when extreme weather — heat, freezing, or '
+                       'rain — is forecast for an upcoming training day.',
+        'category': 'warning',
+        'channels': ['in_app', 'push'],
+        'defaults': {'in_app': True, 'push': True},
+    },
     # ─── #964 recurring time-of-day sends ───────────────────────────────────
     # Fired on a per-user clock by the hourly cron (`scan_scheduled_sends`) off
     # `notification_schedules`, not by a standing DB condition. Each surfaces as
