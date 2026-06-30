@@ -1247,6 +1247,28 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS gym_profiles_mapbox_idx ON gym_profiles (mapbox_id) WHERE mapbox_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS gym_profiles_address_idx ON gym_profiles (address_fingerprint) WHERE address_fingerprint IS NOT NULL",
+    # #971 Slice 2 — crowd-sourced gym/hotel photos. Each photo attaches to a
+    # shared gym_profiles row (so every inheritor sees it, matching the
+    # equipment-sharing model), uploaded by one athlete, stored in Vercel Blob
+    # (`blob_url` = the public URL, `blob_pathname` = the store key for delete).
+    # `status` gates peer visibility: a photo is `pending` until an admin
+    # approves it (the same review step #971 Slice 3 added for equipment
+    # corrections); the uploader sees their own pending photos, peers don't.
+    # Rejected photos are deleted outright (row + blob), so only 'pending' /
+    # 'approved' ever persist. ON DELETE CASCADE: photos vanish with the profile.
+    """CREATE TABLE IF NOT EXISTS gym_profile_photos (
+        id SERIAL PRIMARY KEY,
+        gym_profile_id INTEGER NOT NULL REFERENCES gym_profiles(id) ON DELETE CASCADE,
+        uploaded_by_user_id INTEGER REFERENCES users(id),
+        blob_url TEXT NOT NULL,
+        blob_pathname TEXT,
+        content_type TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved')),
+        created_at TIMESTAMP DEFAULT NOW(),
+        reviewed_by_user_id INTEGER REFERENCES users(id),
+        reviewed_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS gym_profile_photos_profile_idx ON gym_profile_photos (gym_profile_id, status)",
     # PR2's original D-60 batch declared these tables with
     # `locale_id INTEGER NOT NULL REFERENCES locale_profiles(id)`, but
     # locale_profiles' PK is composite (user_id, locale) — there is no `id`
