@@ -1207,6 +1207,31 @@ def view_plan(plan_version_id: int):
         {day.date: day for day in conditions.days} if conditions else {}
     )
 
+    # #1035 — the live upcoming-conditions extremes the conditions-advisory nudge
+    # fires on. The advisory deep-links to this plan view, which otherwise shows
+    # only the Layer-5B climate *normals*; surface the live forecast days that
+    # crossed a heat/freeze/rain threshold beside them so the CTA lands on the
+    # forecast that triggered it. Shares the nudge's thresholds (no drift).
+    # Advisory: a load fault must NEVER 500 the plan view, so degrade to none.
+    try:
+        from routes.nudges import select_upcoming_extremes
+        from upcoming_conditions_repo import load_upcoming_for_user
+        upcoming_extremes = select_upcoming_extremes(
+            load_upcoming_for_user(db, uid)
+        )
+        if upcoming_extremes:  # Rule #15 — which days the surface flagged + why.
+            print(
+                f"[conditions-surface] user={uid} pv={plan_version_id} "
+                f"extreme_days={len(upcoming_extremes)} "
+                f"dates={[e['date'].isoformat() for e in upcoming_extremes]}"
+            )
+    except Exception as _uc_exc:  # noqa: BLE001 — advisory must not break the view
+        print(
+            f"view_plan: upcoming-conditions load failed for "
+            f"plan_version_id={plan_version_id} (non-fatal): {_uc_exc}"
+        )
+        upcoming_extremes = []
+
     plan_name = generated_plan_name(
         target_race_name(db, uid),
         plan_version['scope_start_date'],
@@ -1266,6 +1291,7 @@ def view_plan(plan_version_id: int):
         nutrition_by_date=nutrition_by_date,
         conditions=conditions,
         conditions_by_date=conditions_by_date,
+        upcoming_extremes=upcoming_extremes,
         zwift_exportable=is_zwift_exportable,
         race_week_brief_available=race_week_brief_available,
         race_week_brief_exists=race_week_brief_exists,

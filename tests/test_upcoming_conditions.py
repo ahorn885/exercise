@@ -204,6 +204,68 @@ def test_repo_prune_deletes_past_only():
     assert params == (USER_ID, TODAY)
 
 
+def test_repo_load_upcoming_reads_in_window_rows_as_dicts():
+    # #1035 surface read: today-forward, ordered, normalised to plain dicts.
+    import upcoming_conditions_repo as repo
+
+    conn = _FakeConn()
+    conn.queue(rows=[
+        {"forecast_date": IN_WINDOW, "locale_id": "park",
+         "temp_max_c": 33.0, "temp_min_c": 18.0, "precip_prob_pct": 70},
+    ])
+    out = repo.load_upcoming_for_user(conn, USER_ID)
+    sql, params = conn.calls[0]
+    assert "FROM upcoming_conditions" in sql
+    assert "forecast_date >= CURRENT_DATE" in sql
+    assert "ORDER BY forecast_date" in sql
+    assert params == (USER_ID,)
+    assert out == [{"forecast_date": IN_WINDOW, "locale_id": "park",
+                    "temp_max_c": 33.0, "temp_min_c": 18.0, "precip_prob_pct": 70}]
+
+
+# ─── #1035 surface classifier: select_upcoming_extremes ──────────────────────
+
+
+def test_select_extremes_flags_heat_freeze_rain_and_drops_calm():
+    from routes.nudges import select_upcoming_extremes
+
+    out = select_upcoming_extremes([
+        {"forecast_date": date(2026, 7, 1), "temp_max_c": 33.0,
+         "temp_min_c": 18.0, "precip_prob_pct": 10},   # heat
+        {"forecast_date": date(2026, 7, 2), "temp_max_c": 5.0,
+         "temp_min_c": -2.0, "precip_prob_pct": 0},    # freeze
+        {"forecast_date": date(2026, 7, 3), "temp_max_c": 20.0,
+         "temp_min_c": 12.0, "precip_prob_pct": 80},   # rain
+        {"forecast_date": date(2026, 7, 4), "temp_max_c": 24.0,
+         "temp_min_c": 12.0, "precip_prob_pct": 30},   # calm → dropped
+    ])
+    assert [e["date"] for e in out] == [
+        date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)]
+    assert [e["flags"] for e in out] == [["heat"], ["freeze"], ["rain"]]
+
+
+def test_select_extremes_boundaries_count_and_a_day_can_multiflag():
+    from routes.nudges import (
+        FREEZE_TMIN_C, HEAT_TMAX_C, RAIN_PROB_PCT, select_upcoming_extremes,
+    )
+
+    # At-threshold counts (>= / <=); a single day can carry all three flags.
+    out = select_upcoming_extremes([
+        {"forecast_date": IN_WINDOW, "temp_max_c": HEAT_TMAX_C,
+         "temp_min_c": FREEZE_TMIN_C, "precip_prob_pct": RAIN_PROB_PCT},
+    ])
+    assert out[0]["flags"] == ["heat", "freeze", "rain"]
+
+
+def test_select_extremes_empty_when_window_is_calm():
+    from routes.nudges import select_upcoming_extremes
+
+    assert select_upcoming_extremes([
+        {"forecast_date": IN_WINDOW, "temp_max_c": 22.0,
+         "temp_min_c": 11.0, "precip_prob_pct": 20},
+    ]) == []
+
+
 # ─── producer: refresh_upcoming_conditions_for_user ───────────────────────────
 
 
@@ -274,6 +336,78 @@ def test_producer_empty_forecast_writes_nothing():
         conn, USER_ID, today=TODAY, fetcher=_empty_fetcher) == 0
     # Forecast came back empty → no row upserted.
     assert not any("INSERT INTO upcoming_conditions" in c[0] for c in conn.calls)
+
+
+# ─── #1036 away-window locale resolution in the producer ─────────────────────
+
+
+def test_producer_away_day_uses_destination_not_session_home(monkeypatch):
+    # Away-day session carries the HOME locale (the #1036-confirmed real-data
+    # shape); the away window must override it with the destination forecast.
+    mod = _producer()
+    conn = _FakeConn()
+    conn.queue()                                          # prune
+    conn.queue(row={"id": PVID})                          # active plan
+    conn.queue(rows=[_row(IN_WINDOW, locale_id="home")])  # session carries home
+    conn.queue(row={"lat": 44.0, "lng": -93.0})           # coords for "home"
+    monkeypatch.setattr(mod, "resolve_away_location",
+                        lambda db, uid, d: ("scottsdale", 33.5, -111.9))
+
+    n = mod.refresh_upcoming_conditions_for_user(
+        conn, USER_ID, today=TODAY, fetcher=_forecast_fetcher)
+    assert n == 1
+    insert_sql, params = conn.calls[-1]
+    assert "INSERT INTO upcoming_conditions" in insert_sql
+    # Persisted under the AWAY slug, not the session's home locale.
+    assert params == (USER_ID, IN_WINDOW, "scottsdale", 33.0, 18.0, 70)
+
+
+def test_producer_non_away_day_keeps_session_locale(monkeypatch):
+    mod = _producer()
+    conn = _FakeConn()
+    conn.queue()                                          # prune
+    conn.queue(row={"id": PVID})                          # active plan
+    conn.queue(rows=[_row(IN_WINDOW, locale_id="park")])  # session at "park"
+    conn.queue(row={"lat": 44.0, "lng": -93.0})           # coords for "park"
+    monkeypatch.setattr(mod, "resolve_away_location",
+                        lambda db, uid, d: None)            # no away window
+
+    n = mod.refresh_upcoming_conditions_for_user(
+        conn, USER_ID, today=TODAY, fetcher=_forecast_fetcher)
+    assert n == 1
+    _, params = conn.calls[-1]
+    assert params == (USER_ID, IN_WINDOW, "park", 33.0, 18.0, 70)
+
+
+def test_producer_memoizes_one_fetch_per_distinct_location(monkeypatch):
+    # Two away days at the same destination → one forecast fetch (keyed on the
+    # resolved coordinate token, not the session slug).
+    mod = _producer()
+    conn = _FakeConn()
+    d1 = IN_WINDOW
+    d2 = date(2026, 7, 2)                                  # also in the horizon
+    conn.queue()                                          # prune
+    conn.queue(row={"id": PVID})                          # active plan
+    conn.queue(rows=[_row(d1, "home"), _row(d2, "home")])  # two away days
+    conn.queue(row={"lat": 44.0, "lng": -93.0})           # coords for "home"
+    monkeypatch.setattr(mod, "resolve_away_location",
+                        lambda db, uid, d: ("scottsdale", 33.5, -111.9))
+
+    fetches = {"n": 0}
+
+    def counting_fetcher(url, params):
+        fetches["n"] += 1
+        return {"daily": {
+            "time": [d1.isoformat(), d2.isoformat()],
+            "temperature_2m_max": [33.0, 34.0],
+            "temperature_2m_min": [18.0, 19.0],
+            "precipitation_probability_max": [70, 65],
+        }}
+
+    n = mod.refresh_upcoming_conditions_for_user(
+        conn, USER_ID, today=TODAY, fetcher=counting_fetcher)
+    assert n == 2
+    assert fetches["n"] == 1   # shared destination collapses to a single fetch
 
 
 # ─── batch: refresh_all_upcoming_conditions ───────────────────────────────────

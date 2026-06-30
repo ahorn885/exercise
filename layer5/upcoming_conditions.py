@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
+from athlete_event_windows_repo import resolve_away_location
 from plan_sessions_repo import (
     load_active_plan_version_id,
     load_plan_sessions_by_version,
@@ -73,8 +74,8 @@ def refresh_upcoming_conditions_for_user(
     if pv is None:
         return 0
 
-    # One representative locale per in-window training date (the day's first
-    # session carrying a locale — the Layer 5B rule).
+    # One representative session-locale per in-window training date (the day's
+    # first session carrying a locale — the Layer 5B rule).
     locale_by_date: dict[date, str] = {}
     for s in load_plan_sessions_by_version(db, pv):
         if not s.locale_id:
@@ -85,26 +86,48 @@ def refresh_upcoming_conditions_for_user(
     if not locale_by_date:
         return 0
 
-    coords = _coords_for_locales(db, user_id, sorted(set(locale_by_date.values())))
-    if not coords:
+    session_coords = _coords_for_locales(
+        db, user_id, sorted(set(locale_by_date.values()))
+    )
+
+    # Resolve each date to its forecast point `(label, lat, lng)`. #1036: an
+    # `away` event window covering the date wins (destination coords + slug),
+    # because away-day sessions routinely still carry the *home* locale — keying
+    # off the session locale alone advises on home weather for a trip. Otherwise
+    # the session locale's own coords. A date whose point has no coordinates is
+    # dropped (best-effort), same degrade as a localeless session.
+    point_by_date: dict[date, tuple[str, float, float]] = {}
+    for d, slug in locale_by_date.items():
+        away = resolve_away_location(db, user_id, d)
+        if away is not None:
+            point_by_date[d] = away
+        elif slug in session_coords:
+            lat, lng = session_coords[slug]
+            point_by_date[d] = (slug, lat, lng)
+    if not point_by_date:
         return 0
 
-    # One forecast call per distinct locale, spanning the whole window.
-    forecasts: dict[str, dict[date, DayForecast]] = {
-        slug: get_upcoming_forecast(lat, lng, today, horizon_end, fetcher=fetcher)
-        for slug, (lat, lng) in coords.items()
-    }
+    # One forecast call per distinct coordinate — keyed on the rounded token, not
+    # the slug, so an away spell and a home week sharing a point (or repeated
+    # away days) collapse to a single fetch.
+    forecasts: dict[str, dict[date, DayForecast]] = {}
+    for _label, lat, lng in point_by_date.values():
+        key = f"{lat:.4f},{lng:.4f}"
+        if key not in forecasts:
+            forecasts[key] = get_upcoming_forecast(
+                lat, lng, today, horizon_end, fetcher=fetcher
+            )
 
     rows: list[dict[str, Any]] = []
-    for d in sorted(locale_by_date):
-        slug = locale_by_date[d]
-        fc = forecasts.get(slug, {}).get(d)
+    for d in sorted(point_by_date):
+        label, lat, lng = point_by_date[d]
+        fc = forecasts.get(f"{lat:.4f},{lng:.4f}", {}).get(d)
         if fc is None:
             continue
         rows.append(
             {
                 "forecast_date": d,
-                "locale_id": slug,
+                "locale_id": label,
                 "temp_max_c": fc.temp_max_c,
                 "temp_min_c": fc.temp_min_c,
                 "precip_prob_pct": fc.precip_prob_pct,
@@ -114,7 +137,7 @@ def refresh_upcoming_conditions_for_user(
     upsert_upcoming_conditions(db, user_id, rows)
     print(
         f"[conditions-refresh] user={user_id} pv={pv} "
-        f"days={len(rows)} locales={len(coords)}"
+        f"days={len(rows)} locations={len(forecasts)}"
     )
     return len(rows)
 
