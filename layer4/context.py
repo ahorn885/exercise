@@ -1467,15 +1467,18 @@ class RaceEventPayload(_Base):
         return self
 
 
-# ─── PerDateRestriction (placeholder pending D-67; always-empty in v1) ───────
+# ─── PerDateRestriction (#237 — per-date athlete restrictions) ──────────────
+#
+# Originally specced with `discipline_exclusions` + `max_total_minutes` too;
+# both dropped (Andy, 2026-06-30) before any UI ever captured them — disciplines
+# are governed by gear/terrain availability rules instead, and the per-day
+# volume percentage (`volume_by_date`) already supersedes a minutes cap.
 
 
 class PerDateRestriction(_Base):
     date: datetime
     locale_lock: str | None = None
-    discipline_exclusions: list[str] = Field(default_factory=list)
     indoor_only: bool = False
-    max_total_minutes: int | None = Field(default=None, ge=0)
 
 
 # ─── Layer2Bundle (Layer4_Spec.md §3.2 plan_refresh signature) ───────────────
