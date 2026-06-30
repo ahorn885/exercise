@@ -11,18 +11,14 @@ D-52 sub-decision: these three tables exist only under `layer0.*` (no
 `public.*` counterparts in `init_db.py`), so the spec §5.2 SQL targets
 `layer0.*` directly — no migration coupling.
 
-D-05 standing filter: discipline_name LIKE pattern excluding "WEEKLY TOTAL"
-applied on the PLA join (aggregator rows polluting the table per spec §6).
-SQL uses `%%` to survive psycopg2's parameter-substitution scan when params
-are non-empty (see the PLA LEFT JOIN; Bucket B #1, 2026-05-23 walkthrough).
-
-#269: the aggregator rows are now retired at the source — migration
+#269 (closed 2026-06-30): the PLA `WEEKLY TOTAL TARGET` aggregator rows are
+retired at the source — migration
 `etl/migrations/layer0/0034_supersede_phase_load_allocation_aggregators.sql`
-supersedes them, and the `phase_load_allocation_aggregators` check in
-`validate_layer0` fails the gate if any ever come back. This filter is kept as
-belt-and-suspenders only until 0034 is confirmed applied to live prod (the
-nightly `layer0-validate-live` run goes green); once it is, the filter and the
-`default_inclusion` aggregator exemption can be deleted.
+supersedes them (applied to live prod; nightly `layer0-validate-live` green),
+and the `phase_load_allocation_aggregators` check in `validate_layer0` fails
+the gate if any ever come back. The former D-05 belt-and-suspenders
+`discipline_name NOT LIKE '%WEEKLY TOTAL%'` filter on the PLA join — and the
+matching `default_inclusion` aggregator exemption — are therefore removed.
 
 D-17 sub-format naming: `_SUB_FORMAT_SPORTS` whitelist drives the
 `top_level_sport` strip — only sports known to use sub-format naming
@@ -188,7 +184,6 @@ def _load_disciplines(
             ON pla.sport_name = ?
            AND pla.discipline_id = sd.discipline_id
            AND pla.superseded_at IS NULL
-           AND pla.discipline_name NOT LIKE '%%WEEKLY TOTAL%%'
         LEFT JOIN layer0.discipline_training_gaps dtg
             ON dtg.discipline_id = sd.discipline_id
            AND dtg.superseded_at IS NULL

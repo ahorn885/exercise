@@ -110,7 +110,6 @@ LEFT JOIN layer0.phase_load_allocation pla
  AND pla.discipline_id = sd.discipline_id
  AND pla.etl_version = %(version_0a)s
  AND pla.superseded_at IS NULL
- AND pla.discipline_name NOT LIKE '%%WEEKLY TOTAL%%'   -- D-05 STANDING FILTER (aggregator rows polluting PLA)
 LEFT JOIN layer0.discipline_training_gaps dtg
   ON dtg.discipline_id = sd.discipline_id
  AND dtg.etl_version = %(version_0a)s
@@ -121,7 +120,7 @@ LEFT JOIN layer0.discipline_training_gaps dtg
 
 - `top_level_sport` = if AR or any non-sub-format sport, same as `framework_sport`. If sub-format, strip the parenthetical (e.g., `"Triathlon (Standard / Olympic)"` → `"Triathlon"`). Code-side regex.
 - `framework_sport` for the PLA join uses the full sub-format name — that's how PLA indexes.
-- **D-05 standing filter** applied on PLA: `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`. Mandatory per drift backlog.
+- **D-05 (resolved, #269 2026-06-30):** the PLA `WEEKLY TOTAL TARGET` aggregator rows were retired at the source by migration `0034_supersede_phase_load_allocation_aggregators.sql` (applied to live prod; `layer0-validate-live` green). The former defensive `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'` filter is **removed**; the `phase_load_allocation_aggregators` gate check in `validate_layer0` now guards against any aggregator row going active again.
 - `applicability = 'INCLUDED'` filter on SDM matches the spec §4.4 rule — EXCLUDED rows are loaded for documentation but not consumed at runtime.
 - LEFT JOINs on PLA and DTG — a discipline may legitimately have no phase-load row for a specific sub-format sport, and most disciplines don't have a training gap entry.
 - `default_inclusion` **is** a column on `layer0.phase_load_allocation` (schema v10) — closed enum `included` / `excluded` / `prompt_required`, populated on every PLA row and enforced by the Slice 1 `validate_layer0` gate (#488). 2A's SELECT pulls `pla.default_inclusion` and treats it as the **authoritative curator base** for inclusion resolution (§5.3); the typed payload field (`SportDisciplineRow.default_inclusion`) echoes it. NULL / no-PLA-row → `included` (the historical non-conditional default). _(#509, 2026-06-10: this supersedes the prior text — the column was real all along, but serving ignored it and derived inclusion from `notes_conditions` text, a heuristic that could only emit `included`/`prompt_required` and so leaked curator-`excluded` disciplines through as `prompt_required`.)_
@@ -214,7 +213,7 @@ Procedure (in `_fold_cross_training_disciplines`):
 
 | ID | Description | Status |
 |---|---|---|
-| D-05 | `phase_load_allocation` has 33 aggregator rows polluting the table. **Standing filter `AND discipline_name NOT LIKE '%WEEKLY TOTAL%'`** is applied in §5.2 query. Mandatory until ETL fix lands. | Mitigated by filter |
+| D-05 | `phase_load_allocation` aggregator rows (`WEEKLY TOTAL TARGET`) polluting the table. **Retired at the source** by migration `0034` (#269, 2026-06-30); the former `NOT LIKE '%WEEKLY TOTAL%'` §5.2 filter is removed and the `phase_load_allocation_aggregators` gate check guards regression. | ✅ Resolved (#269) |
 | D-08 | 3 rows missing in `sport_discipline_map` (LDC -2, Triathlon -1). AR has all 15 disciplines. | Non-blocking for AR |
 | D-17 | Sport naming convention mismatch — AR uses same name in both tables, but non-AR sports use top-level in SDM and sub-format in PLA. Handled in §5.1 by strip-and-re-lookup logic. | **In progress #254** — capture-side fix designed + ratified (`Onboarding_SportSubFormat_D17_254_Design_v1.md`); §5.1 loud guard **shipped** (slice 2); onboarding default+override capture + Layer-0 `sport_sub_format_map` to land. |
 
@@ -391,7 +390,7 @@ For non-AR sports with sub-format mapping, add ~10ms for the regex strip. Neglig
 | 2A-1 | Rationale template quality bar — needs content review pass per athlete-facing UX | Product / content | 🟡 Partial-close 2026-05-20. v1 templates shipped Andy-quality 2026-05-19 (Phase 2.1) per Andy's "don't defer" call. Full athlete-facing content review naturally falls out of Phase 5.1 orchestrator vertical slice when `race_week_brief` surfaces the strings to Andy in production. |
 | 2A-2 | Conditional rule encoding — currently code-side; candidate for `discipline_conditional_rules` table if rules proliferate | Future | Defer until rule count grows |
 | 2A-3 | D-17 resolution path for non-AR sports — sub-format selection in onboarding | Layer 1 | 🟡 In progress #254 (2026-06-29) — design ratified (`Onboarding_SportSubFormat_D17_254_Design_v1.md`); §5.1 loud guard shipped; capture UX + Layer-0 `sport_sub_format_map` remaining. |
-| 2A-4 | D-05 ETL fix to filter aggregator rows from PLA — will allow removing the defensive `LIKE` filter | FC-1 | Tracked in `Project_Backlog.md` |
+| 2A-4 | D-05 ETL fix to filter aggregator rows from PLA — will allow removing the defensive `LIKE` filter | FC-1 | ✅ Done (#269, 2026-06-30): migration `0034` supersedes the aggregator rows; defensive filter removed; `phase_load_allocation_aggregators` gate check added. |
 | 2A-5 | D-08 LDC/Triathlon SDM missing rows — when those sports come online | FC-1 | Tracked in `Project_Backlog.md` |
 
 ## 13. Test scenarios
@@ -436,7 +435,7 @@ Expected:
 
 **What this spec gets right:**
 - D-17 sport-naming mismatch is explicitly addressed at §5.1 with a code-side workaround. Doesn't punt the problem.
-- D-05 aggregator filter is mandatory and called out as such. No silent assumption.
+- D-05 aggregator rows are retired at the source (#269): the defensive filter is gone, replaced by a `validate_layer0` gate check — no silent assumption, no standing workaround left to rot.
 - AR baseline test scenario is concrete enough to drive integration test fixture creation.
 - Rationale generation explicitly noted as quality-sensitive (Open Item 2A-1).
 

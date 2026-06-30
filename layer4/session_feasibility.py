@@ -60,8 +60,12 @@ _PROXY_FIDELITY_FLOOR = 0.25
 # untouched and emit no guidance. Terrain ids are the live `layer0.terrain_types`
 # vocab (genesis v1.6.7, 19 active rows). D-018 Mountaineering = Mountain/Alpine
 # + Technical Rock/Scree + Snow (Andy 2026-06-11).
+# #340 (2026-06-30): the off-trail/trackless stimulus uses the existing
+# TRN-018 "Off Trail / Bushwhack" (NOT a new terrain — it already covers it and
+# already served D-003 Trekking); attached to D-001/D-024/D-018 here so the
+# expedition-AR trackless demand is recognized for those disciplines too.
 _DISCIPLINE_REQUIRED_TERRAINS: dict[str, frozenset[str]] = {
-    "D-001": frozenset({"TRN-002", "TRN-003", "TRN-004"}),          # Trail Running
+    "D-001": frozenset({"TRN-002", "TRN-003", "TRN-004", "TRN-018"}),  # Trail Running
     "D-002": frozenset({"TRN-001"}),                                 # Road Running
     "D-003": frozenset({"TRN-002", "TRN-003", "TRN-004", "TRN-005", "TRN-018"}),  # Trekking
     "D-004": frozenset({"TRN-008", "TRN-009", "TRN-010"}),          # Swimming
@@ -75,11 +79,11 @@ _DISCIPLINE_REQUIRED_TERRAINS: dict[str, frozenset[str]] = {
     "D-013": frozenset({"TRN-013", "TRN-014"}),                      # Abseiling
     "D-014": frozenset({"TRN-005", "TRN-013"}),                      # Via Ferrata
     "D-017": frozenset({"TRN-012"}),                                 # Snowshoeing
-    "D-018": frozenset({"TRN-005", "TRN-007", "TRN-012"}),          # Mountaineering
+    "D-018": frozenset({"TRN-005", "TRN-007", "TRN-012", "TRN-018"}),  # Mountaineering
     "D-019": frozenset({"TRN-009", "TRN-011", "TRN-017"}),          # Paddle Rafting
     "D-021": frozenset({"TRN-012"}),                                 # Uphill Skinning
     "D-022": frozenset({"TRN-012"}),                                 # Alpine Descent
-    "D-024": frozenset({"TRN-002", "TRN-003", "TRN-004", "TRN-005"}),  # Mountain Running
+    "D-024": frozenset({"TRN-002", "TRN-003", "TRN-004", "TRN-005", "TRN-018"}),  # Mountain Running
     "D-028": frozenset({"TRN-012"}),                                 # Cross-Country Skiing
     "D-030": frozenset({"TRN-020", "TRN-001"}),                      # Gravel Cycling
     "D-031": frozenset({"TRN-002", "TRN-003", "TRN-020"}),          # Cross Country Cycling

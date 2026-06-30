@@ -69,9 +69,10 @@ class TestExactTier:
         assert r.tier == "exact"
         assert r.locale_id == "home"
 
-    def test_d018_mountaineering_matches_any_of_three(self):
-        # D-018 = Mountain/Alpine OR Technical Rock/Scree OR Snow.
-        for trn in ("TRN-005", "TRN-007", "TRN-012"):
+    def test_d018_mountaineering_matches_any_of_four(self):
+        # D-018 = Mountain/Alpine OR Technical Rock/Scree OR Snow OR Off-Trail
+        # (TRN-018 added per #340).
+        for trn in ("TRN-005", "TRN-007", "TRN-012", "TRN-018"):
             r = _resolve("D-018", cluster_terrain_by_locale={"home": {trn}})
             assert r.tier == "exact"
             assert r.terrain_id == trn
@@ -450,7 +451,8 @@ class TestCraftSurfaceRouting:
 
 class TestMaps:
     def test_required_terrains_lookup(self):
-        assert required_terrains("D-018") == frozenset({"TRN-005", "TRN-007", "TRN-012"})
+        assert required_terrains("D-018") == frozenset({"TRN-005", "TRN-007", "TRN-012", "TRN-018"})
+        assert required_terrains("D-001") == frozenset({"TRN-002", "TRN-003", "TRN-004", "TRN-018"})
         assert required_terrains("D-027") == frozenset()
 
     def test_indoor_machines_lookup(self):

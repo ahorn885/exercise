@@ -945,7 +945,7 @@ def _build_event_window_overlay(
             brought_gear=tuple(w.brought_gear),
             volume_pct=w.volume_pct,
         )
-        if w.override_type == "reduced_volume" and w.volume_by_date:
+        if w.volume_by_date:
             # #889 — a per-DATE schedule expands into one-day overrides so each
             # covered day carries its OWN retained fraction. A full (1.0) day
             # emits nothing (no reduction); a date with no explicit level falls
@@ -1090,7 +1090,7 @@ def _build_event_window_overlay(
         seg_volume_pct: float | None = None
         vol_overrides = [
             ov for ov in active
-            if ov.override_type in ("reduced_volume", "no_training")
+            if ov.override_type == "no_training" or ov.volume_pct is not None
         ]
         if vol_overrides:
             if any(ov.override_type == "no_training" for ov in vol_overrides):

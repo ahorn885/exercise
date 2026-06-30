@@ -12,14 +12,16 @@
    is a property of the place; see templates/locales/form.html.) #}
 {% extends 'base.html' %}
 {% set nav_active = 'athlete' %}
+{% from 'profile/_event_window_per_day_grid.html' import per_day_grid %}
 {% block title %}Event windows — AIDSTATION{% endblock %}
 {% block crumbs %}<a href="{{ url_for('profile.edit') }}">Athlete</a> · <b>Event windows</b>{% endblock %}
 
 {% block content %}
 {# One window row, shared by the upcoming list and the collapsed past-windows
-   section (#1057). #889 — for a multi-day reduced-volume window the per-day
-   editor is surfaced as a prominent action, not a buried inline link. #}
-{% macro window_row(w, locale_names, return_to) %}
+   section (#1057). #237/#889 consolidated — a multi-day window expands IN PLACE
+   to the per-day editor (% / lock / indoor) via a CSP-safe <details>; the old
+   invisible "Per-day rules" link + the "Set per-day levels →" link are gone. #}
+{% macro window_row(w, locale_names, return_to, windows_days, locales) %}
 <tr>
   <td class="mono">{% if w.start_date == w.end_date %}{{ w.start_date.isoformat() }} <span class="dim">(1 day)</span>{% else %}{{ w.start_date.isoformat() }} → {{ w.end_date.isoformat() }}{% endif %}</td>
   <td>
@@ -30,15 +32,11 @@
     {% elif w.override_type == 'reduced_volume' %}Reduced volume
       {% if w.volume_by_date %}<span class="dim">(in transit · per-day levels set)</span>
       {% else %}<span class="dim">(in transit · ~{{ (w.volume_pct * 100) | round | int }}% of a normal day — every day)</span>{% endif %}
-      {% if w.start_date != w.end_date %}<div class="pf-perday"><a class="btn btn-ghost btn-sm" href="{{ url_for('profile.event_window_volume_days', window_id=w.id, return_to=return_to or none) }}">Set per-day levels →</a></div>{% endif %}
     {% elif w.override_type == 'no_training' %}No training <span class="dim">(in transit · travel day)</span>
     {% else %}{{ w.override_type }}{% endif %}
   </td>
   <td class="dim">{{ w.notes or '—' }}</td>
   <td>
-    {# #237 — per-date restrictions (locale-lock / excluded disciplines /
-       indoor-only / time cap) for any window. #}
-    <a class="btn btn-ghost btn-sm" href="{{ url_for('profile.event_window_restrictions', window_id=w.id, return_to=return_to or none) }}">Per-day rules</a>
     <form method="post"
           action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -47,7 +45,29 @@
     </form>
   </td>
 </tr>
+{# #237/#889 — multi-day windows expand in place to the per-day editor (% of a
+   normal day / lock-to-location / indoor-only per covered date). Single-day
+   windows are covered by their window-level settings, so no expander. #}
+{% if w.start_date != w.end_date %}
+<tr class="pf-perday-row"><td colspan="4">
+  <details class="pf-perday">
+    <summary class="pf-perday-toggle">Per-day settings</summary>
+    <form method="post"
+          action="{{ url_for('profile.save_event_window_per_day', window_id=w.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ return_to or '' }}">
+      {{ per_day_grid(windows_days.get(w.id, []), locales, w.id) }}
+      <div class="pf-save">
+        <button type="submit" class="btn btn-primary btn-sm">Save per-day settings</button>
+      </div>
+    </form>
+  </details>
+</td></tr>
+{% endif %}
 {% endmacro %}
+{# Default the per-window per-day map so direct template renders (review fixtures)
+   don't need to thread it; the route always supplies it. #}
+{% set windows_days = windows_days if windows_days is defined else {} %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Training · event windows</p>
@@ -76,7 +96,7 @@
         <tr><th>Dates</th><th>Constraint</th><th>Notes</th><th></th></tr>
       </thead>
       <tbody>
-        {% for w in windows %}{{ window_row(w, locale_names, return_to) }}{% endfor %}
+        {% for w in windows %}{{ window_row(w, locale_names, return_to, windows_days, locales) }}{% endfor %}
       </tbody>
     </table>
     {% else %}
@@ -93,7 +113,7 @@
           <tr><th>Dates</th><th>Constraint</th><th>Notes</th><th></th></tr>
         </thead>
         <tbody>
-          {% for w in past_windows %}{{ window_row(w, locale_names, return_to) }}{% endfor %}
+          {% for w in past_windows %}{{ window_row(w, locale_names, return_to, windows_days, locales) }}{% endfor %}
         </tbody>
       </table>
     </details>
@@ -173,8 +193,8 @@
             <option value="75"{{ ' selected' if vp == '75' else '' }}>75% — slightly reduced</option>
           </select>
           <span class="dim">Sets a starting level for every day in the window. After you add a multi-day
-            window, use <b>Set per-day levels</b> on it to dial each day independently (e.g. a hard
-            travel day at 25% and the rest at 75%).</span></label>
+            window you'll land in its <b>per-day settings</b> to dial each day independently (e.g. a hard
+            travel day at 25% and the rest at 75%); each multi-day window also expands in place below.</span></label>
         <label class="field field-wide"><span class="lbl">Notes <span class="dim">(optional)</span></span>
           <input type="text" name="notes" maxlength="200" class="form-control form-control-sm"
                  value="{{ d.get('notes', '') }}"
