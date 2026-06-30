@@ -2291,6 +2291,16 @@ _LAYER0_TABLE_FAMILY: dict[str, str] = {
     # schema.sql (like terrain_gap_rules); read by the unified craft/terrain
     # cascade. Same 0A family as its sibling gear_discipline_aliases.
     "craft_terrain_compatibility": "0A",
+    # Nutrition/fueling tables (#229 + #233, migration 0036) — promote Layer 2E
+    # hardcoded constants into Layer 0 so they are curated data. sport_met_values
+    # drives the activity-multiplier band lookup; race_fueling_bands,
+    # sport_profile_cho_mod, and dietary_pattern_flags drive race-day fueling.
+    # All are 0A (sports-framework axis): a re-seed invalidates the 0A digest →
+    # plan-gen caches re-synthesize on the updated constants.
+    "sport_met_values": "0A",
+    "race_fueling_bands": "0A",
+    "sport_profile_cho_mod": "0A",
+    "dietary_pattern_flags": "0A",
     # 0B — exercise library
     "exercises": "0B",
     "sport_exercise_map": "0B",
