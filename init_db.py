@@ -2637,6 +2637,14 @@ _PG_MIGRATIONS = [
     # CSV pattern); NULL → the window-wide volume_pct applies to every covered day
     # (the pre-#889 behaviour). Dates/range validated in athlete_event_windows_repo.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_by_date TEXT",
+    # Event Windows per-date restrictions (#237) — restrictions_by_date: a JSON
+    # object {ISO date: {locale_lock, discipline_exclusions, indoor_only,
+    # max_total_minutes}} layering per-DAY constraints onto ANY window type, which
+    # the Layer 4 validator's D-67-aware branches (session_locale_not_in_cluster,
+    # discipline_exclusions, max_total_minutes, indoor_only) already enforce. Stored
+    # as TEXT (json.dumps, driver-agnostic — mirrors volume_by_date); NULL → no
+    # per-date restrictions. Shapes/range validated in athlete_event_windows_repo.
+    "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS restrictions_by_date TEXT",
     # #335 Phase 2b — key the strength-rx path off the layer0 EX-id (the single
     # source of truth the synthesizer emits on StrengthExercise.exercise_id)
     # instead of the exercise NAME, which never matched the layer0 qualified

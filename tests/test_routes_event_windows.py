@@ -307,3 +307,62 @@ def test_multiday_reduced_window_shows_per_day_cta(monkeypatch):
         monkeypatch, rows=rows, url='/profile/event-windows', windows=[multiday])
     assert 'Set per-day levels' in html
     assert 'volume-days' in html  # links to event_window_volume_days
+
+
+# ─── per-date restrictions editor (#237) ─────────────────────────────────────
+
+
+def test_event_window_restrictions_editor_renders(monkeypatch):
+    """#237 — the per-date restrictions editor renders a locale-lock, minutes cap,
+    and indoor-only control per covered date."""
+    import os
+    os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-render-tests')
+    os.environ.setdefault('DATABASE_URL', '')
+    import flask
+    import app as _appmod
+    import routes.profile as pf_mod
+    win = _reduced_window(start='2026-07-03', end='2026-07-04',
+                          restrictions_by_date={})
+    rows = [{'locale': 'home', 'locale_name': 'Home'}]
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: _FakeLocaleConn(rows))
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
+    with _appmod.app.test_request_context('/profile/event-windows/5/restrictions'):
+        flask.g.current_user_row = {'id': 7, 'username': 'o', 'display_name': 'O'}
+        html = pf_mod.event_window_restrictions(5)
+    assert 'name="lock_2026-07-03"' in html
+    assert 'name="mins_2026-07-03"' in html
+    assert 'name="indoor_2026-07-03"' in html
+    assert 'name="lock_2026-07-04"' in html  # one control set per covered day
+
+
+def test_event_window_restrictions_post_builds_map(monkeypatch):
+    """#237 — the POST collects per-date locale-lock / minutes / indoor into the
+    {date: spec} map and writes via the repo, then evicts the synthesis."""
+    from datetime import date
+    app = _make_profile_app()
+    conn = _FakeConn()
+    import routes.profile as pf_mod
+    win = _reduced_window(start='2026-07-03', end='2026-07-04',
+                          restrictions_by_date={})
+    captured, evicted = {}, []
+    monkeypatch.setattr(pf_mod, 'get_db', lambda: conn)
+    monkeypatch.setattr(pf_mod, 'current_user_id', lambda: 7)
+    monkeypatch.setattr(pf_mod, 'load_event_window', lambda db, uid, wid: win)
+    monkeypatch.setattr(
+        pf_mod, 'update_event_window_restrictions_by_date',
+        lambda db, uid, wid, by_date: captured.update({'by_date': by_date}))
+    monkeypatch.setattr(
+        pf_mod, 'evict_plan_caches_on_event_windows_change',
+        lambda db, uid: evicted.append(uid))
+    with app.test_request_context(
+        '/event-windows/5/restrictions', method='POST',
+        data={'lock_2026-07-03': 'home', 'mins_2026-07-03': '60',
+              'indoor_2026-07-04': '1'},
+    ):
+        resp = pf_mod.save_event_window_restrictions(5)
+    bd = captured['by_date']
+    assert bd[date(2026, 7, 3)]['locale_lock'] == 'home'
+    assert bd[date(2026, 7, 3)]['max_total_minutes'] == '60'
+    assert bd[date(2026, 7, 4)]['indoor_only'] is True
+    assert evicted == [7] and resp.status_code == 302

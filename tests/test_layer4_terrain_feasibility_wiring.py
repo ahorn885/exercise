@@ -616,3 +616,33 @@ def test_climbing_no_gym_resolution_surfaces_in_rendered_prompt():
     text = "\n".join(per_phase._format_session_feasibility(feas, l2a, l2c))
     assert "Weighted Pull-up" in text and "Hangboard Repeaters" in text
     assert "compose as strength" in text
+
+
+# ─── #237 — orchestrator builds PerDateRestriction from windows ───────────────
+
+
+def test_build_per_date_restrictions_flattens_windows():
+    """#237 — each window's restrictions_by_date becomes one PerDateRestriction
+    per restricted date, carrying all four fields into the validator's shape."""
+    from datetime import date as _date
+    w = SimpleNamespace(restrictions_by_date={
+        _date(2026, 6, 10): {
+            "locale_lock": "home", "discipline_exclusions": ["D-012"],
+            "indoor_only": True, "max_total_minutes": 60,
+        },
+    })
+    out = orchestrator._build_per_date_restrictions([w])
+    assert len(out) == 1
+    r = out[0]
+    assert r.date.date() == _date(2026, 6, 10)
+    assert r.locale_lock == "home"
+    assert r.discipline_exclusions == ["D-012"]
+    assert r.indoor_only is True
+    assert r.max_total_minutes == 60
+
+
+def test_build_per_date_restrictions_empty():
+    """No windows / empty maps → empty tuple, so the validator branches no-op."""
+    assert orchestrator._build_per_date_restrictions(None) == ()
+    assert orchestrator._build_per_date_restrictions(
+        [SimpleNamespace(restrictions_by_date={})]) == ()

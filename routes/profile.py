@@ -74,8 +74,10 @@ from athlete_event_windows_repo import (
     evict_plan_caches_on_event_windows_change,
     load_event_window,
     load_event_windows,
+    update_event_window_restrictions_by_date,
     update_event_window_volume_by_date,
 )
+from discipline_display_names import discipline_display_name
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -1140,6 +1142,101 @@ def save_event_window_volume_days(window_id):
         f"schedule={ {k.isoformat(): v for k, v in sorted(by_date.items())} }"
     )
     flash('Per-day volume levels saved.', 'success')
+    return _event_windows_redirect(return_to)
+
+
+# Per-date restrictions (#237) — locale-lock / excluded disciplines / indoor-only
+# / time cap, set per covered DATE on any window. The Layer 4 validator's
+# D-67-aware branches enforce them; this editor is the capture surface (mirrors
+# the per-day volume editor — strict CSP forbids a JS-built grid).
+def _all_disciplines(db):
+    """`[{id, label}]` for every active layer0 discipline, for the excluded-
+    disciplines picker. Guarded — an unreadable/absent table yields [] so the rest
+    of the editor still renders (mirrors locations.load_category_baselines)."""
+    try:
+        rows = db.execute(
+            "SELECT discipline_id, discipline_name FROM layer0.disciplines "
+            "WHERE superseded_at IS NULL ORDER BY discipline_id"
+        ).fetchall()
+        return [
+            {'id': r['discipline_id'],
+             'label': discipline_display_name(r['discipline_id'], r['discipline_name'])}
+            for r in rows
+        ]
+    except Exception:
+        return []
+
+
+@bp.route('/event-windows/<int:window_id>/restrictions')
+def event_window_restrictions(window_id):
+    """Render the per-date restrictions editor (#237) for one window: per covered
+    date, a locale lock, excluded disciplines, an indoor-only flag, and a minutes
+    cap, pre-filled from the saved schedule."""
+    db = get_db()
+    uid = current_user_id()
+    win = load_event_window(db, uid, window_id)
+    if win is None:
+        flash('That event window no longer exists.', 'error')
+        return _event_windows_redirect(request.args.get('return_to'))
+    loc_rows = db.execute(
+        "SELECT locale, locale_name FROM locale_profiles WHERE user_id = ? "
+        "ORDER BY locale",
+        (uid,),
+    ).fetchall()
+    locales = [
+        {'slug': r['locale'], 'label': (r['locale_name'] or r['locale'])}
+        for r in loc_rows
+    ]
+    days = [
+        {'iso': d.isoformat(), 'r': win.restrictions_by_date.get(d, {})}
+        for d in _window_dates(win)
+    ]
+    return render_template(
+        'profile/event_window_restrictions.html',
+        window=win, days=days, locales=locales,
+        disciplines=_all_disciplines(db),
+        return_to=_safe_local_path(request.args.get('return_to')),
+    )
+
+
+@bp.route('/event-windows/<int:window_id>/restrictions', methods=['POST'])
+def save_event_window_restrictions(window_id):
+    """Persist the per-date restrictions (#237): per covered date a locale lock
+    (`lock_<iso>`), excluded disciplines (`excl_<iso>` multi), indoor-only
+    (`indoor_<iso>`), and a minutes cap (`mins_<iso>`). The repo validates +
+    normalizes (dropping empty days); saving evicts the overlapping synthesis."""
+    db = get_db()
+    uid = current_user_id()
+    return_to = request.form.get('return_to')
+    win = load_event_window(db, uid, window_id)
+    if win is None:
+        flash('That event window no longer exists.', 'error')
+        return _event_windows_redirect(return_to)
+    by_date: dict = {}
+    for d in _window_dates(win):
+        iso = d.isoformat()
+        by_date[d] = {
+            'locale_lock': (request.form.get(f'lock_{iso}') or '').strip() or None,
+            'discipline_exclusions': request.form.getlist(f'excl_{iso}'),
+            'indoor_only': request.form.get(f'indoor_{iso}') == '1',
+            # Passed as the raw string; the repo coerces + range-checks it.
+            'max_total_minutes': (request.form.get(f'mins_{iso}') or '').strip() or None,
+        }
+    try:
+        update_event_window_restrictions_by_date(db, uid, window_id, by_date)
+    except EventWindowError as exc:
+        flash(str(exc), 'error')
+        return redirect(
+            url_for('profile.event_window_restrictions',
+                    window_id=window_id, return_to=return_to)
+        )
+    db.commit()
+    evict_plan_caches_on_event_windows_change(db, uid)
+    print(  # Rule #15 — which days carry which restrictions after the save.
+        f"event_window_restrictions: user={uid} window={window_id} "
+        f"days={sorted(iso for iso, r in ((d.isoformat(), by_date[d]) for d in by_date))}"
+    )
+    flash('Per-day restrictions saved.', 'success')
     return _event_windows_redirect(return_to)
 
 

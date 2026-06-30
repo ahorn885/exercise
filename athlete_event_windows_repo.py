@@ -80,11 +80,18 @@ class EventWindow:
     # pre-#889 behaviour). Lets one reduced travel day inside a longer window not
     # scale the rest. Dates not present fall back to `volume_pct` at resolution.
     volume_by_date: dict[date, float] = field(default_factory=dict)
+    # #237 — per-DATE restrictions layered onto ANY window type:
+    #   {date: {"locale_lock": str|None, "discipline_exclusions": [discipline_id],
+    #           "indoor_only": bool, "max_total_minutes": int|None}}
+    # The Layer 4 validator's D-67-aware branches enforce each on its date. Empty
+    # → no per-date restrictions. Independent of override_type (a plain travel
+    # window can still lock a locale or cap minutes on specific days).
+    restrictions_by_date: dict[date, dict] = field(default_factory=dict)
 
 
 _WINDOW_COLUMNS = (
     "id, user_id, start_date, end_date, override_type, unavailable_locale, "
-    "away_locale, brought_gear, volume_pct, volume_by_date, notes"
+    "away_locale, brought_gear, volume_pct, volume_by_date, restrictions_by_date, notes"
 )
 
 
@@ -105,6 +112,10 @@ def _row_to_window(row) -> EventWindow:
             float(row["volume_pct"]) if row["volume_pct"] is not None else None
         ),
         volume_by_date=_parse_volume_by_date(row["volume_by_date"]),
+        restrictions_by_date=_parse_restrictions_by_date(
+            row["restrictions_by_date"]
+            if "restrictions_by_date" in row.keys() else None
+        ),
     )
 
 
@@ -365,6 +376,67 @@ def update_event_window_volume_by_date(
     )
 
 
+def update_event_window_restrictions_by_date(
+    db, user_id: int, window_id: int, by_date: dict | None
+) -> None:
+    """Set (or clear) the per-DATE restrictions on a window (#237). `by_date` maps
+    a covered date → ``{"locale_lock", "discipline_exclusions", "indoor_only",
+    "max_total_minutes"}`` (any subset of keys). A day whose spec carries no actual
+    restriction is dropped; an empty/None map clears the schedule.
+
+    Raises ``EventWindowError`` (writing nothing) when the window isn't the
+    athlete's, a date falls outside it, an unknown locale_lock is given, or
+    max_total_minutes is invalid. Caller commits."""
+    win = load_event_window(db, user_id, window_id)
+    if win is None:
+        raise EventWindowError("event window not found")
+    clean: dict[str, dict] = {}
+    for d, spec in (by_date or {}).items():
+        dd = d if isinstance(d, date) else _as_date(d)
+        if not (win.start_date <= dd <= win.end_date):
+            raise EventWindowError(
+                f"{dd.isoformat()} is outside the window "
+                f"{win.start_date.isoformat()}..{win.end_date.isoformat()}"
+            )
+        spec = spec or {}
+        lock = (spec.get("locale_lock") or "").strip() or None
+        if lock is not None and not _locale_exists(db, user_id, lock):
+            raise EventWindowError(
+                f"locale_lock {lock!r} is not one of your saved locales"
+            )
+        mins = spec.get("max_total_minutes")
+        if mins is not None and mins != "":
+            try:
+                mins = int(mins)
+            except (TypeError, ValueError):
+                raise EventWindowError(
+                    f"max_total_minutes {mins!r} is not a number"
+                )
+            if mins < 0:
+                raise EventWindowError("max_total_minutes must be >= 0")
+        else:
+            mins = None
+        excl = sorted({s for s in (spec.get("discipline_exclusions") or []) if s})
+        indoor = bool(spec.get("indoor_only"))
+        # Drop a day that carries no actual restriction so storage stays tidy and
+        # the validator only sees meaningful per-date entries.
+        if lock or excl or indoor or mins is not None:
+            clean[dd.isoformat()] = {
+                "locale_lock": lock,
+                "discipline_exclusions": excl,
+                "indoor_only": indoor,
+                "max_total_minutes": mins,
+            }
+    # Stored sorted for a deterministic digest (mirrors volume_by_date) → a stable
+    # compute_event_windows_hash.
+    stored = json.dumps(dict(sorted(clean.items()))) if clean else None
+    db.execute(
+        "UPDATE athlete_event_windows SET restrictions_by_date = ? "
+        "WHERE id = ? AND user_id = ?",
+        (stored, window_id, user_id),
+    )
+
+
 def evict_plan_caches_on_event_windows_change(db, user_id: int) -> None:
     """A window add/delete changes the date-segmented plan-gen feasibility, so
     invalidate the two synthesis entry points that consume it. Unlike the craft
@@ -400,6 +472,29 @@ def _parse_volume_by_date(value) -> dict[date, float]:
         return {}
     raw = value if isinstance(value, dict) else json.loads(value)
     return {_as_date(k): float(v) for k, v in raw.items()}
+
+
+def _parse_restrictions_by_date(value) -> dict[date, dict]:
+    """Decode the stored per-date restrictions JSON (#237) into
+    `{date: {locale_lock, discipline_exclusions, indoor_only, max_total_minutes}}`.
+    Empty / NULL → `{}`. Each day's dict is normalized to all four keys with safe
+    defaults so downstream readers don't branch on presence."""
+    if not value:
+        return {}
+    raw = value if isinstance(value, dict) else json.loads(value)
+    out: dict[date, dict] = {}
+    for k, v in raw.items():
+        v = v or {}
+        out[_as_date(k)] = {
+            "locale_lock": v.get("locale_lock") or None,
+            "discipline_exclusions": list(v.get("discipline_exclusions") or []),
+            "indoor_only": bool(v.get("indoor_only")),
+            "max_total_minutes": (
+                int(v["max_total_minutes"])
+                if v.get("max_total_minutes") is not None else None
+            ),
+        }
+    return out
 
 
 def _validate_crafts(values: list[str]) -> list[str]:

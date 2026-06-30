@@ -36,6 +36,9 @@
   </td>
   <td class="dim">{{ w.notes or '—' }}</td>
   <td>
+    {# #237 — per-date restrictions (locale-lock / excluded disciplines /
+       indoor-only / time cap) for any window. #}
+    <a class="btn btn-ghost btn-sm" href="{{ url_for('profile.event_window_restrictions', window_id=w.id, return_to=return_to or none) }}">Per-day rules</a>
     <form method="post"
           action="{{ url_for('profile.delete_event_window_route', window_id=w.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
