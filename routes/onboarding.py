@@ -84,6 +84,15 @@ from routes.auth import current_user_id
 from routes.profile import CONNECTION_PROVIDERS, load_connections
 from routes.profile_fields import KNOWN_PROFILE_FIELDS, provider_label
 
+from health_screening_repo import (
+    QUESTIONS as HEALTH_SCREENING_QUESTIONS,
+    PREGNANCY_FLAG,
+    flag_descriptions,
+    get_screening,
+    parse_answers,
+    save_screening,
+)
+
 from athlete_skill_toggles_repo import (
     evict_layer1_on_skill_toggle_change,
     get_athlete_skill_toggles,
@@ -120,7 +129,13 @@ bp = Blueprint('onboarding', __name__, url_prefix='/onboarding')
 # profile form. Multi-day picks then flow through `/onboarding/route-locales`
 # (Step 3d) before profile.
 _POST_STEP2_CONTINUE_TARGET = '/onboarding/prefill'
-_POST_STEP2_SKIP_TARGET = '/profile?tab=athlete'
+# Phase 0 (#246/#394/#223): the health-screening step (Health Screening Spec v2)
+# is the final onboarding gate before the §A hard-profile form. Every onboarding
+# exit that previously jumped straight to `/profile?tab=athlete` (connect-skip,
+# target-race-skip, route-locales continue/skip) now routes through it, so the
+# service-necessary screening (Spec §11) is always reached before plan-capable
+# profile entry. The screening completion lands on the profile form.
+_POST_STEP2_SKIP_TARGET = '/onboarding/health-screening'
 # Bucket C (l) capture-surface follow-on (2026-05-24): inserts the
 # Locations review + Skills capture steps between prefill and schedule.
 # Old: prefill → schedule. New: prefill → locales → skills → schedule.
@@ -128,8 +143,10 @@ _POST_STEP3_TARGET = '/onboarding/locales'
 _POST_STEP_LOCALES_TARGET = '/onboarding/skills'
 _POST_STEP_SKILLS_TARGET = '/onboarding/schedule'
 _POST_STEP3B_TARGET = '/onboarding/target-race'
-_POST_STEP3C_TARGET = '/profile?tab=athlete'
-_POST_STEP3D_TARGET = '/profile?tab=athlete'
+_POST_STEP3C_TARGET = '/onboarding/health-screening'
+_POST_STEP3D_TARGET = '/onboarding/health-screening'
+# Final step → §A hard-profile form (plan-capable).
+_POST_HEALTH_SCREENING_TARGET = '/profile?tab=athlete'
 
 # Back-compat alias for the connect template (passes the value through
 # to the Skip/Continue button copy via Jinja). Pre-PR7 callers expected
@@ -1445,3 +1462,77 @@ def route_locales_skip():
         'info',
     )
     return redirect(_POST_STEP3D_TARGET)
+
+
+# ---------------------------------------------------------------------------
+# Health screening (Phase 0 — AIDSTATION Health Screening Spec v2)
+# ---------------------------------------------------------------------------
+#
+# The final onboarding step. Two-phase POST so the screening row is written
+# only on explicit acknowledgment (Spec §3.3 / §6.2 "incomplete screenings are
+# not returned"): the questions form POSTs the answers, the handler renders the
+# acknowledgment screen carrying those answers forward as hidden fields, and the
+# acknowledgment submit (`acknowledge=1`) re-parses them server-side and saves.
+# Acknowledgment-only / non-blocking: flags never gate plan generation (§2.3).
+
+
+@bp.route('/health-screening', methods=['GET'])
+def health_screening():
+    """Render the screening questions (Spec §3.2 Screen 1 + Screen 2).
+
+    Pre-fills from any existing acknowledged screening so a returning athlete
+    sees their last answers (voluntary reassessment / re-entry, Spec §9.3).
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    existing = get_screening(db, uid)
+    prior_flags = set(existing['flags']) if existing else set()
+    prior_details = existing['details'] if existing else {}
+    prior_optin = bool(existing['details_optin']) if existing else False
+
+    return render_template(
+        'onboarding/health_screening.html',
+        phase='questions',
+        questions=HEALTH_SCREENING_QUESTIONS,
+        prior_flags=prior_flags,
+        prior_details=prior_details,
+        prior_optin=prior_optin,
+        post_target=_POST_HEALTH_SCREENING_TARGET,
+    )
+
+
+@bp.route('/health-screening', methods=['POST'])
+def health_screening_save():
+    """Show the acknowledgment screen, or persist on acknowledgment.
+
+    First POST (questions submit) renders the flag-aware acknowledgment screen
+    (Spec §3.2 Screen 3). Second POST (`acknowledge=1`) re-parses the carried
+    answers authoritatively and upserts the screening, then advances to the §A
+    profile form.
+    """
+    db = get_db()
+    uid = current_user_id()
+
+    flags, details, optin = parse_answers(request.form)
+
+    if request.form.get('acknowledge') == '1':
+        save_screening(db, uid, flags=flags, details=details, details_optin=optin)
+        db.commit()
+        flash(
+            'Health screening saved. You can update it any time from Settings.',
+            'success',
+        )
+        return redirect(_POST_HEALTH_SCREENING_TARGET)
+
+    return render_template(
+        'onboarding/health_screening.html',
+        phase='acknowledge',
+        questions=HEALTH_SCREENING_QUESTIONS,
+        flags=flags,
+        details=details,
+        details_optin=optin,
+        flag_descriptions=flag_descriptions(flags),
+        pregnancy=(PREGNANCY_FLAG in flags),
+        post_target=_POST_HEALTH_SCREENING_TARGET,
+    )

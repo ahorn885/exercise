@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% from 'onboarding/_onb_steps.html' import onb_steps %}
+{% block title %}Health screening — AIDSTATION{% endblock %}
+{% block crumbs %}<b>Set up</b> <span class="sep">/</span> Health{% endblock %}
+
+{# Phase 0 — AIDSTATION Health Screening Spec v2. Two phases share this
+   template: `questions` (Spec §3.2 Screens 1-2) and `acknowledge` (Screen 3).
+   Acknowledgment-only / non-blocking — no flag blocks plan generation (§2.3). #}
+
+{% block content %}
+<div class="dash-head">
+  <div class="races-intro">
+    <p class="eyebrow accent">● Set up · Step 7 of 7</p>
+    <h1 class="page-title">A few health questions</h1>
+    <p class="page-sub">Before we build your training plan, we ask a short set of
+      questions about your health and any medical conditions. AIDSTATION is not a
+      medical service and our recommendations are not medical advice. Your answers
+      help us tailor your training and tell you when to consult a physician before
+      proceeding. You can update them any time from Settings.</p>
+  </div>
+</div>
+
+{{ onb_steps('health') }}
+
+{% if phase == 'questions' %}
+<form method="post" action="{{ url_for('onboarding.health_screening_save') }}" class="onb-wrap">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <ol class="hs-questions">
+    {% for q in questions %}
+    <li class="hs-q">
+      <p class="hs-q-text">{{ q.text }}</p>
+      <div class="hs-q-answers">
+        <label><input type="radio" name="q{{ q.num }}" value="yes"
+          {{ 'checked' if q.code in prior_flags }}> Yes</label>
+        <label><input type="radio" name="q{{ q.num }}" value="no"
+          {{ 'checked' if q.code not in prior_flags }}> No</label>
+      </div>
+      <label class="hs-detail">
+        <span class="hs-detail-label">Optional detail (private — only stored if
+          you opt in below)</span>
+        <input type="text" name="detail_{{ q.code }}"
+          value="{{ prior_details.get(q.code, '') }}"
+          placeholder="Share more if you wish — you can skip this">
+      </label>
+    </li>
+    {% endfor %}
+  </ol>
+
+  <label class="hs-optin">
+    <input type="checkbox" name="details_optin" value="on"
+      {{ 'checked' if prior_optin }}>
+    Store the optional details I provide above. These are sensitive health notes;
+    leave unchecked and no free text is stored — your Yes/No answers are kept
+    either way.
+  </label>
+
+  <div class="onb-nav">
+    <button type="submit" class="btn btn-primary">Continue</button>
+  </div>
+</form>
+
+{% elif phase == 'acknowledge' %}
+<form method="post" action="{{ url_for('onboarding.health_screening_save') }}" class="onb-wrap">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="acknowledge" value="1">
+  {# Carry the parsed answers forward; the save handler re-parses them
+     authoritatively before writing. #}
+  {% for q in questions %}
+  <input type="hidden" name="q{{ q.num }}" value="{{ 'yes' if q.code in flags else 'no' }}">
+  {% if q.code in details %}
+  <input type="hidden" name="detail_{{ q.code }}" value="{{ details[q.code] }}">
+  {% endif %}
+  {% endfor %}
+  {% if details_optin %}<input type="hidden" name="details_optin" value="on">{% endif %}
+
+  {% if flags %}
+  <p>Based on your responses, we recommend you consult a physician before
+    starting or continuing a training plan.</p>
+  <p>Specifically, you indicated:</p>
+  <ul class="hs-flag-list">
+    {% for d in flag_descriptions %}<li>{{ d }}</li>{% endfor %}
+  </ul>
+  <p>AIDSTATION is not a medical service and we cannot evaluate your medical
+    status. By continuing, you confirm that you have read this recommendation and
+    accept responsibility for your participation. If you have not already done so,
+    we strongly suggest you speak with a qualified medical professional about your
+    fitness for endurance training.</p>
+  {% if pregnancy %}
+  <p>AIDSTATION does not provide pregnancy-specific coaching. Plans you receive
+    will not be modified for pregnancy. Consult a qualified prenatal exercise
+    specialist or your obstetric provider for pregnancy-appropriate exercise
+    guidance.</p>
+  {% endif %}
+  {% else %}
+  <p>No items in this screening require physician consultation before training.
+    AIDSTATION recommendations remain general training guidance and are not
+    medical advice. By continuing, you accept responsibility for your
+    participation in any training activity.</p>
+  {% endif %}
+
+  <div class="onb-nav">
+    <a href="{{ url_for('onboarding.health_screening') }}" class="btn btn-ghost">Back</a>
+    <button type="submit" class="btn btn-primary">I acknowledge and continue</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}
