@@ -1,0 +1,79 @@
+name: Apply missing athlete_profile columns to prod Neon
+
+# One-shot fix for the UndefinedColumn 500 on GET / (req_9933dc32c5).
+# The four columns were added to _PG_MIGRATIONS in commit 8bc0385 but the
+# concurrent-Lambda cold-start race caused the ALTER TABLE statements to be
+# dropped silently (no logging on the bare `except Exception: conn.rollback()`).
+# This workflow applies them directly so the live DB matches the code immediately,
+# without waiting for another cold-start that happens to win the race.
+#
+# Each ALTER TABLE … IF NOT EXISTS is idempotent — safe to run even if some
+# columns landed earlier. Runs under the `production` environment gate.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply:
+    name: Add missing columns -> prod Neon
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PGSSLMODE: require
+    steps:
+      - name: Install psql 17 (match prod Neon)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Add four athlete_profile columns (IF NOT EXISTS — idempotent)
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${NEON_DATABASE_URL:-}" || { echo "::error::NEON_DATABASE_URL secret unset"; exit 1; }
+
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sweat_rate_level TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS daily_hydration_baseline TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS sleep_consistency TEXT;
+            ALTER TABLE athlete_profile ADD COLUMN IF NOT EXISTS body_weight_trend TEXT;
+          SQL
+
+          echo "## Missing columns applied" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`sweat_rate_level\` TEXT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`daily_hydration_baseline\` TEXT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`sleep_consistency\` TEXT" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`body_weight_trend\` TEXT" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify columns exist
+        env:
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          psql "$NEON_DATABASE_URL" -v ON_ERROR_STOP=1 -P pager=off -c "
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'athlete_profile'
+              AND column_name IN (
+                'sweat_rate_level',
+                'daily_hydration_baseline',
+                'sleep_consistency',
+                'body_weight_trend'
+              )
+            ORDER BY column_name;
+          " | tee /tmp/verify.txt
+
+          count=$(grep -c '|' /tmp/verify.txt || true)
+          if [ "$count" -lt 4 ]; then
+            echo "::error::Expected 4 columns, found fewer — check output above"
+            exit 1
+          fi
+          echo "All 4 columns present." >> "$GITHUB_STEP_SUMMARY"
