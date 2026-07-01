@@ -13,6 +13,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}AIDSTATION{% endblock %}</title>
+  {# Link-preview cards (iMessage/SMS, WhatsApp, Slack) for shared auth links
+     — the short /i/<token> invite link redirects here, and previewers follow
+     that hop and read these tags. Same image/dimensions as base.html's
+     site-wide OG block; per-page title/description via the og_title /
+     og_description blocks (register.html overrides them for invites). #}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{% block og_title %}AIDSTATION{% endblock %}">
+  <meta property="og:description" content="{% block og_description %}AI-driven training for the data-obsessed endurance athlete.{% endblock %}">
+  <meta property="og:image" content="{{ url_for('static', filename='og-preview.png', _external=True) }}">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ self.og_title() }}">
+  <meta name="twitter:description" content="{{ self.og_description() }}">
+  <meta name="twitter:image" content="{{ url_for('static', filename='og-preview.png', _external=True) }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

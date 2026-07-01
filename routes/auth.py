@@ -735,8 +735,13 @@ def issue_invite(db, *, email: str | None = None, phone: str | None = None,
                   channel: str = 'email', created_by: int) -> str:
     """Create a single-use, time-limited invite token delivered via `channel`
     (#272 — 'email' | 'sms' | 'whatsapp'). Exactly one of `email`/`phone` is
-    set, matching `channel`. Returns the token; caller sends the link."""
-    token = secrets.token_urlsafe(32)
+    set, matching `channel`. Returns the token; caller sends the link.
+
+    8-char token (48 bits, `token_urlsafe(6)`) rather than the 43-char default
+    — short enough to read cleanly in an SMS, still computationally infeasible
+    to guess against the existing `/auth/register` rate limit (10/hour/IP)
+    within the 7-day `INVITE_TTL_DAYS` window."""
+    token = secrets.token_urlsafe(6)
     expires = datetime.utcnow() + timedelta(days=INVITE_TTL_DAYS)
     db.execute(
         'INSERT INTO user_invites (token, email, phone, channel, created_by, expires_at) '
@@ -766,12 +771,19 @@ def lookup_invite(db, token):
     return row
 
 
+def _invite_url(token: str) -> str:
+    """The short `/i/<token>` alias rather than `/auth/register?invite=...`
+    directly — shorter to read in an SMS, and link-preview crawlers (iMessage,
+    WhatsApp, Slack) follow the redirect and pick up register.html's og:*
+    tags, so the preview card still shows the AIDSTATION brand image."""
+    return url_for('invite_link.invite_redirect', token=token, _external=True)
+
+
 def send_invite_email(db, email: str, created_by: int) -> str:
     """Issue an invite token and email the registration link. Returns the token
     (False-y send still logs the link via send_email's dev fallback)."""
     token = issue_invite(db, email=email, channel='email', created_by=created_by)
-    invite_url = url_for('auth.register', invite=token, _external=True)
-    _send_invite_email(email, invite_url)
+    _send_invite_email(email, _invite_url(token))
     print(f'[invite] issued via email to {email} by user={created_by}')  # Rule #15 — no token
     return token
 
@@ -781,8 +793,7 @@ def send_invite_sms(db, phone: str, created_by: int) -> str:
     (#272). Returns the token (False-y send still logs the link via
     sms_helper's dev fallback)."""
     token = issue_invite(db, phone=phone, channel='sms', created_by=created_by)
-    invite_url = url_for('auth.register', invite=token, _external=True)
-    send_sms(phone, _invite_text(invite_url))
+    send_sms(phone, _invite_text(_invite_url(token)))
     print(f'[invite] issued via sms to {phone} by user={created_by}')  # Rule #15 — no token
     return token
 
@@ -792,31 +803,49 @@ def send_invite_whatsapp(db, phone: str, created_by: int) -> str:
     WhatsApp (#272). Returns the token (False-y send still logs the link via
     sms_helper's dev fallback)."""
     token = issue_invite(db, phone=phone, channel='whatsapp', created_by=created_by)
-    invite_url = url_for('auth.register', invite=token, _external=True)
-    send_whatsapp(phone, _invite_text(invite_url))
+    send_whatsapp(phone, _invite_text(_invite_url(token)))
     print(f'[invite] issued via whatsapp to {phone} by user={created_by}')  # Rule #15 — no token
     return token
 
 
 def _invite_text(invite_url: str) -> str:
-    return (f"You're invited to AIDSTATION. Create your account: {invite_url} "
-            f'(expires in {INVITE_TTL_DAYS} days)')
+    return (f"You're invited to AIDSTATION. Time to hit the trail — "
+            f'create your account: {invite_url}\n'
+            f'(Link expires in {INVITE_TTL_DAYS} days.)')
 
 
 def _send_invite_email(to_address: str, invite_url: str) -> None:
     subject = "You're invited to AIDSTATION"
     text = (
-        f'You\'ve been invited to AIDSTATION. Create your account here:\n\n'
+        f"You've been invited to AIDSTATION. Time to hit the trail — "
+        f'create your account here:\n\n'
         f'  {invite_url}\n\n'
         f'The link expires in {INVITE_TTL_DAYS} days.\n\n'
         f'— AIDSTATION\n'
     )
     html = f"""<!doctype html>
 <html><body style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#0E0F11;">
-<p>You've been invited to AIDSTATION.</p>
+<p>You've been invited to AIDSTATION. Time to hit the trail.</p>
 <p><a href="{invite_url}" style="display:inline-block;padding:10px 18px;background:#ED7A2D;color:#fff;text-decoration:none;border-radius:4px;">Create your account</a></p>
 <p style="font-size:12px;color:#666;">Or paste this into your browser:<br><span style="font-family:ui-monospace,monospace;word-break:break-all;">{invite_url}</span></p>
 <p style="font-size:12px;color:#666;">The link expires in {INVITE_TTL_DAYS} days.</p>
 <p style="font-size:12px;color:#666;">— AIDSTATION</p>
 </body></html>"""
     send_email(to_address, subject, text, html)
+
+
+# ── Short invite links (#272 follow-up) ─────────────────────────────────────
+# Separate, unprefixed blueprint so the link reads `/i/<token>` instead of
+# `/auth/register?invite=<token>` — auth.bp is mounted at url_prefix='/auth',
+# which a per-route override can't escape.
+
+invite_link_bp = Blueprint('invite_link', __name__)
+
+
+@invite_link_bp.route('/i/<token>')
+def invite_redirect(token):
+    """Redirect the short invite link to the real registration route. No DB
+    lookup here — `register()` already validates the token (exists, unused,
+    unexpired) and is rate-limited; this hop just keeps the shared link
+    short."""
+    return redirect(url_for('auth.register', invite=token))
