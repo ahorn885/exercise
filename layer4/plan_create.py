@@ -543,7 +543,6 @@ def _build_final_payload_for_validation(
         sessions=sessions,
         phase_structure=phase_structure,
         seam_reviews=seam_reviews,
-        shape_override=None,
         validator_results=[
             ValidatorResult(
                 pass_index=0,
@@ -1753,7 +1752,6 @@ def _build_plan_create_payload(
         sessions=result.all_sessions,
         phase_structure=result.phase_structure,
         seam_reviews=result.seam_reviews,
-        shape_override=None,
         validator_results=result.validator_results,
         notable_observations=result.notable_observations,
         suggestion_id=None,
@@ -1794,7 +1792,6 @@ def _build_plan_refresh_a_payload(
         sessions=result.all_sessions,
         phase_structure=result.phase_structure,
         seam_reviews=result.seam_reviews,
-        shape_override=None,
         validator_results=result.validator_results,
         notable_observations=result.notable_observations,
         suggestion_id=None,

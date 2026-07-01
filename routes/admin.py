@@ -15,7 +15,11 @@ from flask import (
 from werkzeug.utils import secure_filename
 
 from database import get_db
-from plan_sessions_repo import load_plan_sessions_as_blocks, load_progress_blocks
+from plan_sessions_repo import (
+    load_generation_observations,
+    load_plan_sessions_as_blocks,
+    load_progress_blocks,
+)
 from routes.auth import current_user_id
 from sms_helper import sms_configured, whatsapp_configured
 from evidence_repo import (
@@ -544,6 +548,20 @@ def telemetry_refresh():
     )
 
 
+_OBSERVATION_PRIORITY_CATEGORIES = {'best_effort_plan', 'seam_unresolved'}
+
+
+def _sort_observations_by_priority(observations: list[dict]) -> list[dict]:
+    """#418 — surface Layer-4's notable_observations with the most
+    operationally urgent categories first. A stable sort preserves emission
+    order within each tier. Pure (no Flask/DB) so it's unit-testable per the
+    `_summarize_progress_blocks` precedent."""
+    return sorted(
+        observations,
+        key=lambda o: 0 if o.get('category') in _OBSERVATION_PRIORITY_CATEGORIES else 1,
+    )
+
+
 @bp.route('/plan/<int:plan_version_id>/inspect')
 def plan_inspect(plan_version_id):
     """#321 plan-gen observability — per-block inspect view for an in-flight,
@@ -575,12 +593,16 @@ def plan_inspect(plan_version_id):
         blocks = load_plan_sessions_as_blocks(db, plan_version_id)
         fallback_from_plan_sessions = bool(blocks)
     total_sessions = sum(len(b['sessions'] or []) for b in blocks)
+    observations = _sort_observations_by_priority(
+        load_generation_observations(db, plan_version_id)
+    )
     return render_template(
         'admin/plan_inspect.html',
         pv=pv,
         blocks=blocks,
         total_sessions=total_sessions,
         fallback_from_plan_sessions=fallback_from_plan_sessions,
+        observations=observations,
     )
 
 

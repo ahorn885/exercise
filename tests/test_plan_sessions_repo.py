@@ -29,6 +29,7 @@ from layer4.payload import (
     CardioBlock,
     HRTarget,
     Layer4Payload,
+    Observation,
     PlanSession,
     ValidatorResult,
 )
@@ -41,9 +42,11 @@ from plan_sessions_repo import (
     load_active_plan_version_id,
     load_current_plan_start,
     load_active_window_with_rest,
+    load_generation_observations,
     load_plan_sessions_by_version,
     load_prior_plan_session_window,
     persist_layer4_sessions,
+    save_generation_observations,
 )
 
 
@@ -295,6 +298,54 @@ class TestAllocatePlanVersionRow:
                 pattern="A",
             )
         assert "RETURNING id" in str(exc.value)
+
+
+# ─── save_generation_observations / load_generation_observations (#418) ────
+
+
+class TestGenerationObservations:
+    def test_save_serializes_observations_as_json(self):
+        conn = _FakeConn()
+        obs = Observation(
+            category="best_effort_plan",
+            text="Volume capped by injury constraint.",
+            evidence_basis=["athlete_profile.injury_status"],
+            elevates_to_hitl=False,
+        )
+        save_generation_observations(conn, _USER_ID, 7, [obs])
+        sql, params = conn.calls[0]
+        assert "UPDATE plan_versions SET generation_observations" in sql
+        assert params == (json.dumps([obs.model_dump(mode="json")]), 7, _USER_ID)
+
+    def test_load_returns_empty_list_when_column_null(self):
+        conn = _FakeConn()
+        conn.queue(row={"generation_observations": None})
+        assert load_generation_observations(conn, 7) == []
+
+    def test_load_returns_empty_list_when_row_missing(self):
+        conn = _FakeConn()
+        conn.queue(row=None)
+        assert load_generation_observations(conn, 7) == []
+
+    def test_save_then_load_roundtrip(self):
+        conn = _FakeConn()
+        obs = Observation(
+            category="seam_unresolved",
+            text="Week-seam cliff could not be resynthesized within budget.",
+            evidence_basis=["seam_review.week_7_8"],
+            elevates_to_hitl=False,
+        )
+        save_generation_observations(conn, _USER_ID, 7, [obs])
+        _sql, params = conn.calls[0]
+        conn.queue(row={"generation_observations": params[0]})
+        assert load_generation_observations(conn, 7) == [obs.model_dump(mode="json")]
+
+    def test_load_tolerates_missing_column(self):
+        class _BoomConn(_FakeConn):
+            def execute(self, sql, params=()):
+                raise Exception('column "generation_observations" does not exist')
+
+        assert load_generation_observations(_BoomConn(), 7) == []
 
 
 # ─── persist_layer4_sessions ────────────────────────────────────────────────

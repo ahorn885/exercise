@@ -1502,7 +1502,6 @@ def _build_layer4_payload(
         sessions=sessions,
         phase_structure=None,
         seam_reviews=None,
-        shape_override=None,
         validator_results=validator_results,
         notable_observations=notable_observations,
         suggestion_id=None,
@@ -2036,7 +2035,6 @@ def _build_layer4_payload_for_validation(
         sessions=sessions,
         phase_structure=None,
         seam_reviews=None,
-        shape_override=None,
         validator_results=[
             ValidatorResult(
                 pass_index=0,

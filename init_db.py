@@ -3399,6 +3399,11 @@ _PG_MIGRATIONS = [
     )""",
     "CREATE INDEX IF NOT EXISTS user_webauthn_credentials_user_id_idx "
     "ON user_webauthn_credentials(user_id)",
+    # #418 — persist a plan's Layer-4 `notable_observations` so the operator
+    # inspect page can surface them (previously read by nothing but the
+    # now-removed `shape_override` validator). One JSONB blob written once at
+    # generation-ready time; nullable so pre-migration/legacy rows read NULL.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_observations JSONB",
 ]
 
 _CLOTHING_SEEDS = [

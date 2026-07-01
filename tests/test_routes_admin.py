@@ -389,3 +389,40 @@ class TestSummarizeProgressBlocks:
         assert out["block_timing"]["total_latency_ms"] == 0
         assert out["block_timing"]["max_block_latency_ms"] == 0
         assert out["block_timing"]["last_snapshot_at"] is None
+
+
+class TestSortObservationsByPriority:
+    """#418 — `_sort_observations_by_priority(observations)` orders a plan's
+    persisted Layer-4 `notable_observations` so the operationally urgent
+    categories (best_effort_plan, seam_unresolved) surface first on the
+    operator inspect page."""
+
+    def test_priority_categories_sort_first(self):
+        from routes.admin import _sort_observations_by_priority
+
+        observations = [
+            {"category": "data_gap", "text": "a"},
+            {"category": "best_effort_plan", "text": "b"},
+            {"category": "warning", "text": "c"},
+            {"category": "seam_unresolved", "text": "d"},
+        ]
+        out = _sort_observations_by_priority(observations)
+        assert [o["category"] for o in out] == [
+            "best_effort_plan", "seam_unresolved", "data_gap", "warning",
+        ]
+
+    def test_stable_within_each_tier(self):
+        from routes.admin import _sort_observations_by_priority
+
+        observations = [
+            {"category": "warning", "text": "first"},
+            {"category": "seam_unresolved", "text": "second"},
+            {"category": "warning", "text": "third"},
+            {"category": "best_effort_plan", "text": "fourth"},
+        ]
+        out = _sort_observations_by_priority(observations)
+        assert [o["text"] for o in out] == ["second", "fourth", "first", "third"]
+
+    def test_empty_list_returns_empty(self):
+        from routes.admin import _sort_observations_by_priority
+        assert _sort_observations_by_priority([]) == []

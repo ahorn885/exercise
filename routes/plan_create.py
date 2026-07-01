@@ -90,6 +90,7 @@ from plan_sessions_repo import (
     load_hitl_gate,
     load_plan_sessions_by_version,
     persist_layer4_sessions,
+    save_generation_observations,
     save_hitl_gate,
     snapshot_progress_blocks,
 )
@@ -734,6 +735,19 @@ def _advance_plan_generation_locked(db, uid: int, plan_version_id: int,
             (plan_version_id,),
         )
         persist_layer4_sessions(db, result)
+        # #418 — best-effort: an observations-write fault must not fail an
+        # otherwise-successful generation. Same transaction as the ready flip
+        # below (no separate commit), unlike the provenance block further down
+        # which intentionally runs after `ready` is durable.
+        try:
+            save_generation_observations(
+                db, uid, plan_version_id, result.notable_observations
+            )
+        except Exception as _obs_exc:  # noqa: BLE001 — must not break generation
+            print(
+                f"plan_create: failed to persist generation_observations "
+                f"pv={plan_version_id}: {_obs_exc!r}"
+            )  # Rule #15
         db.execute(
             "UPDATE plan_versions SET generation_status = 'ready', "
             "generation_error = NULL WHERE id = ? AND user_id = ?",
