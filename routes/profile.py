@@ -16,11 +16,12 @@ import os
 from datetime import datetime
 
 import bcrypt
-from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, session, jsonify
 
 from datetime import date, timedelta
 
 import mfa
+import webauthn_helper
 from database import get_db
 from plan_nutrition_repo import load_plan_nutrition_by_version
 from routes.auth import (
@@ -1575,6 +1576,9 @@ def account_settings():
         totp_status = 'pending'
     else:
         totp_status = 'off'
+    # Passkeys (#267) — every authenticator registered to this account,
+    # oldest first. Drives the Account page's list + delete buttons.
+    passkeys = [dict(row) for row in webauthn_helper.list_credentials(db, uid)]
     # Account-merge entry (#274 follow-up, design §6). Only surfaced when the
     # feature flag is on; buttons are the identity providers whose client id is
     # configured (the OAuth-into-the-other-account proof runs through them).
@@ -1590,6 +1594,7 @@ def account_settings():
     return render_template('profile/account.html',
                            user_row=dict(user_row) if user_row else {},
                            totp_status=totp_status,
+                           passkeys=passkeys,
                            merge_enabled=merge_enabled,
                            merge_providers=merge_providers)
 
@@ -1871,6 +1876,61 @@ def totp_disable():
     mfa.disable(db, uid)
     db.commit()
     flash(msg, 'info')
+    return redirect(url_for('profile.account_settings'))
+
+
+# ─── Passkeys / WebAuthn (#267) ──────────────────────────────────────────────
+# Register / remove passkeys from the Account page. The sign-in ceremony
+# itself lives in routes/auth.webauthn_login_*; the crypto and DB rows live
+# in webauthn_helper.py.
+
+@bp.route('/webauthn/register/options', methods=['POST'])
+def webauthn_register_options():
+    """Step 1: issue a registration challenge scoped to the signed-in
+    athlete. The challenge is stashed in `session` for
+    `webauthn_register_verify` to check against."""
+    db = get_db()
+    uid = current_user_id()
+    user_row = db.execute('SELECT username FROM users WHERE id = ?', (uid,)).fetchone()
+    options_json, challenge_b64 = webauthn_helper.build_registration_options(
+        db, uid, user_row['username'] if user_row else '', request.host
+    )
+    session['webauthn_register_challenge'] = challenge_b64
+    return options_json, 200, {'Content-Type': 'application/json'}
+
+
+@bp.route('/webauthn/register/verify', methods=['POST'])
+def webauthn_register_verify():
+    """Step 2: verify the completed ceremony and store the new credential."""
+    challenge_b64 = session.pop('webauthn_register_challenge', None)
+    if not challenge_b64:
+        return jsonify(error="Setup expired. Try adding the passkey again."), 400
+
+    db = get_db()
+    uid = current_user_id()
+    body = request.get_json(silent=True) or {}
+    try:
+        verification = webauthn_helper.verify_registration(
+            body, challenge_b64, request.host, request.scheme
+        )
+    except Exception:
+        return jsonify(error="Couldn't add that passkey. Try again."), 400
+
+    nickname = (body.get('nickname') or '').strip()[:100] or 'Passkey'
+    webauthn_helper.add_credential(
+        db, uid, body.get('id'), verification.credential_public_key,
+        verification.sign_count, nickname,
+    )
+    db.commit()
+    return jsonify(ok=True)
+
+
+@bp.route('/webauthn/<int:credential_id>/delete', methods=['POST'])
+def webauthn_delete(credential_id):
+    db = get_db()
+    webauthn_helper.delete_credential(db, current_user_id(), credential_id)
+    db.commit()
+    flash('Passkey removed.', 'info')
     return redirect(url_for('profile.account_settings'))
 
 

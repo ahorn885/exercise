@@ -380,6 +380,13 @@ _AUTH_EXEMPT_ENDPOINTS = {
     # session yet) so it must bypass the wall; in-flow auth is the pending
     # marker the challenge route checks (`routes.auth.totp_challenge`).
     'auth.totp_challenge',
+    # Passkey / WebAuthn sign-in (#267). Reached from the login page with no
+    # session yet -- the ceremony itself (a signed challenge round-trip via
+    # `session`, then a signature verified against the stored public key) is
+    # the auth, so these must bypass the wall the same way the password/TOTP
+    # login endpoints do.
+    'auth.webauthn_login_options',
+    'auth.webauthn_login_verify',
     # Single endpoint covers every registered provider (slug allowlist
     # lives in routes/oauth_callbacks.py). Adding a new provider does
     # not require a change here.

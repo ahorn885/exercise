@@ -16,10 +16,11 @@ import secrets
 from datetime import datetime, timedelta
 
 import bcrypt
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session, g
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, g, jsonify
 from zxcvbn import zxcvbn
 
 import mfa
+import webauthn_helper
 from database import get_db
 from email_helper import send_email, email_configured
 from email_templates import render_email, account_security_url, format_timestamp
@@ -333,6 +334,56 @@ def totp_challenge():
 def _clear_totp_pending():
     for key in ('totp_pending_user_id', 'totp_pending_username', 'totp_pending_next'):
         session.pop(key, None)
+
+
+# ─── Passkey / WebAuthn sign-in (#267) ───────────────────────────────────────
+# An alternative to password[+TOTP], not a replacement (Andy's call) -- the
+# login page's "Sign in with a passkey" button drives these two endpoints.
+# Registration (adding a passkey to an account) lives on the Account page,
+# routes/profile.py; the ceremony crypto and DB rows live in webauthn_helper.py.
+
+@bp.route('/webauthn/login/options', methods=['POST'])
+@_limit('10 per 5 minutes')
+def webauthn_login_options():
+    """Step 1: issue a discoverable-credential challenge with no
+    `allow_credentials` -- the browser's own passkey picker resolves which
+    account is signing in, so nothing about the user needs to be known yet.
+    The challenge is stashed in `session` (pre-login, signed the same as any
+    other session data) for `webauthn_login_verify` to check against."""
+    options_json, challenge_b64 = webauthn_helper.build_authentication_options(request.host)
+    session['webauthn_login_challenge'] = challenge_b64
+    return options_json, 200, {'Content-Type': 'application/json'}
+
+
+@bp.route('/webauthn/login/verify', methods=['POST'])
+@_limit('10 per 5 minutes')
+def webauthn_login_verify():
+    """Step 2: verify the completed ceremony and, on success, grant a full
+    session immediately -- a passkey is accepted on its own, no TOTP
+    challenge afterward even if the matched account has TOTP enabled (see
+    webauthn_helper's module docstring for the rationale)."""
+    challenge_b64 = session.pop('webauthn_login_challenge', None)
+    if not challenge_b64:
+        return jsonify(error="Sign-in expired. Try again."), 400
+
+    db = get_db()
+    credential = request.get_json(silent=True) or {}
+    try:
+        row = webauthn_helper.verify_authentication(
+            db, credential, challenge_b64, request.host, request.scheme
+        )
+    except Exception:
+        row = None
+    if not row:
+        return jsonify(error="That passkey isn't recognized. Try again, or sign in "
+                             "with your password."), 400
+
+    user_row = db.execute(
+        'SELECT username FROM users WHERE id = ?', (row['user_id'],)
+    ).fetchone()
+    next_url = url_for('dashboard.index')
+    _finalize_login(db, row['user_id'], user_row['username'] if user_row else '', next_url)
+    return jsonify(next=next_url)
 
 
 @bp.route('/logout', methods=['GET', 'POST'])
