@@ -819,17 +819,22 @@ Per-user state on each recommendation.
 
 ### Garmin
 
-#### `garmin_auth`
+#### `garmin_auth` (retired 2026-07-01, T-5.1/#249)
 
-Garmin Connect OAuth session per user. Single row per user.
-
-- Columns: `id`, `user_id`, `garmin_username`, `garth_session` (JSON
-  blob from `garth`), `created_at`, `updated_at`.
-- Writes: `routes/garmin.py:auth` flow, `garmin_connect.py:save_session`.
-- **Parked carry-forward:** `/tmp/garth_session` file caching is
-  process-shared. The DB row is per-user, but the in-memory garth
-  session at `/tmp/garth_session` is whatever was last loaded —
-  multi-user Garmin sync isn't safe yet. See the parked items in
+Legacy Garmin Connect session table. **No longer read or written** —
+`garmin_connect.py` and `routes/garmin.py`'s auth-import endpoints now
+store the `garth` session JSON in `provider_auth.session_blob`
+(provider `'garmin'`) via `routes/provider_auth.py`, same as every
+other provider. The table is still physically present (confirmed
+empty via a read-only `neon-query` before the cutover) but not yet
+dropped — that DDL is a separate follow-up. Former columns: `id`,
+`user_id`, `garmin_username`, `garth_session`, `created_at`,
+`updated_at`.
+- **Parked carry-forward (still applies post-migration):**
+  `/tmp/garth_session` file caching is process-shared — the
+  `provider_auth` row is per-user, but the in-memory garth session at
+  `/tmp/garth_session` is whatever was last loaded, so multi-user
+  Garmin sync isn't safe yet (#284). See the parked items in
   `HANDOFF.md`.
 
 #### `garmin_workouts`
@@ -858,16 +863,15 @@ Per-second wellness data from Garmin wellness FIT files.
 ### Provider integrations
 
 D-50 Phase 1 schema per `aidstation-sources/Athlete_Data_Integration_Spec_v3.md`
-§4–§6. Tables exist; route wiring lands in a subsequent PR. Garmin
-remains on the legacy `garmin_auth` table above (D-55 paused until
-Garmin reopens API access; `provider_auth.session_blob` is the
-designed destination once Garmin can be rebuilt).
+§4–§6. Garmin joined `provider_auth` on 2026-07-01 (T-5.1/#249) — every
+provider, including Garmin, now goes through this table.
 
 #### `provider_auth`
 
 Per-user, per-provider credentials and registration state. Replaces
-the legacy `garmin_auth` shape for every non-Garmin provider; Garmin
-will join when rebuilt onto `session_blob`.
+the legacy `garmin_auth` shape for every provider, Garmin included
+(`session_blob` carries its `garth` session JSON — see the retired
+`garmin_auth` entry above).
 
 - Columns: `id`, `user_id`, `provider` (slug matching
   `oauth_callbacks._PROVIDERS`), `access_token`, `refresh_token`,
@@ -1007,7 +1011,8 @@ that touches X, look here."
 | `locale_equipment` | `locales`, `purchases`, `references`, `admin` | `coaching.py` |
 | `purchase_recommendations` | `purchases` | — |
 | `user_purchase_recommendations` | `purchases`, `admin` | — |
-| `garmin_auth` | `garmin`, `admin` | `garmin_connect.py` |
+| `garmin_auth` | — (retired 2026-07-01, T-5.1; unused, not dropped) | — |
+| `provider_auth` | `garmin`, `admin` (+ every other connected provider) | `garmin_connect.py`, `routes/provider_auth.py` |
 | `garmin_workouts` | `plans`, `admin` | — |
 | `wellness_log` | `garmin`, `admin` | `coaching.py` |
 | `training_modalities` | — | `coaching.py` (reference only) |
@@ -1073,10 +1078,11 @@ inputs short-circuit before the Haiku call.
 user_id, **fields)` with a `PROFILE_FIELDS` allowlist. `updated_at`
 is set to `NOW()` on every UPDATE.
 
-### `garmin_connect.py` — OAuth via `garth`
+### `garmin_connect.py` — session via `garth`
 
-`save_session(db, garth_session, garmin_username)` writes the Garmin
-OAuth row to `garmin_auth`. Note the `/tmp/garth_session` file caching
+`_save_session_to_db(db, username)` upserts the Garmin session into
+`provider_auth` (provider `'garmin'`, `session_blob` column) via
+`routes/provider_auth.py`. Note the `/tmp/garth_session` file caching
 is process-shared and per-user multi-tenancy isn't yet safe — see
 parked items in `HANDOFF.md`.
 
@@ -1273,7 +1279,7 @@ back to the tables it touches.
      `body_metrics`, `conditions_log`,
      `injury_exercise_modifications` (parent-JOIN), `injury_log`,
      `coaching_preferences`, `feedback_log`, `wellness_log`,
-     `garmin_auth`, `garmin_workouts`, `wellness_self_report`,
+     `garmin_auth`, `garmin_workouts`, `provider_auth`, `wellness_self_report`,
      `locale_equipment`, `locale_profiles`, `clothing_options`,
      `current_rx`, `athlete_profile`, `user_purchase_recommendations`,
      `api_tokens`.

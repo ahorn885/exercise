@@ -12,6 +12,7 @@ from canonical_wellness import materialize_canonical_wellness
 from calculations import calculate_1rm
 from rx_engine import apply_session_outcome
 from provider_cardio_resolve import DISCIPLINE_TO_PLAN_SPORT
+from routes import provider_auth as pa
 from routes.auth import current_user_id
 from plan_match import (
     find_best_match,
@@ -1648,18 +1649,11 @@ def auth_import_cookies():
     session_data = json.dumps({'type': 'browser_cookie', 'cookie': cookie_string})
     db = get_db()
     uid = current_user_id()
-    existing = db.execute('SELECT id FROM garmin_auth WHERE user_id=? LIMIT 1', (uid,)).fetchone()
-    if existing:
-        db.execute(
-            "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-            (session_data, '', existing[0])
-        )
-    else:
-        db.execute(
-            'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?,?,?)',
-            (session_data, '', uid)
-        )
-    db.commit()
+    pa.upsert_auth(
+        db, uid, 'garmin',
+        session_blob=session_data, provider_user_id='',
+        status=pa.STATUS_ACTIVE,
+    )
     flash('Browser session cookies saved. Testing connection on the sync page.', 'success')
     return redirect(url_for('garmin.auth'))
 
@@ -2206,26 +2200,19 @@ def auth_import_tokens():
         flash(f'Invalid JSON: {e}', 'danger')
         return redirect(url_for('garmin.auth'))
     try:
-        from garmin_connect import _save_session_to_db, _write_session_to_tmp, GARTH_TMP
+        from garmin_connect import _write_session_to_tmp, GARTH_TMP
         import garth, os
         _write_session_to_tmp(json.dumps(token_data))
         garth.resume(GARTH_TMP)
         username = getattr(garth.client, 'username', '')
         db = get_db()
         uid = current_user_id()
-        existing = db.execute('SELECT id FROM garmin_auth WHERE user_id=? LIMIT 1', (uid,)).fetchone()
         session_json = json.dumps(token_data)
-        if existing:
-            db.execute(
-                "UPDATE garmin_auth SET garth_session=?, garmin_username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (session_json, username, existing[0])
-            )
-        else:
-            db.execute(
-                'INSERT INTO garmin_auth (garth_session, garmin_username, user_id) VALUES (?,?,?)',
-                (session_json, username, uid)
-            )
-        db.commit()
+        pa.upsert_auth(
+            db, uid, 'garmin',
+            session_blob=session_json, provider_user_id=username,
+            status=pa.STATUS_ACTIVE,
+        )
         flash(f'Tokens imported successfully{" for " + username if username else ""}.', 'success')
     except Exception as e:
         flash(f'Token import failed: {e}', 'danger')

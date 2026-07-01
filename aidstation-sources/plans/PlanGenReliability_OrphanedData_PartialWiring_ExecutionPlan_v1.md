@@ -308,7 +308,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 
 ### WS-5 — Integrations (parallel track; no plan-gen coupling)
 
-**T-5.1 — Move Garmin onto shared `provider_auth` (#249; resolves #284)**
+**T-5.1 — Move Garmin onto shared `provider_auth` (#249; resolves #284)** — **DONE 2026-07-01.**
 - Files: `garmin_connect.py`, `routes/garmin.py`, `tests/`.
 - Steps: the shared API is `routes/provider_auth.py` (`upsert_auth`=`:47`, `get_auth`=`:110`,
   `refresh_access_token`). The legacy Garmin storage is the `garmin_auth` table (Garth session JSON),
@@ -318,6 +318,26 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - Do NOT: change other providers.
 - GATE: none. (#284 needs no separate fix — note in its issue that it's resolved by #249.)
 - Verify: a multi-user test that two users' Garmin auth never cross.
+- **As-built correction (session-start caught this):** issue #249 was labeled `status:blocked`
+  ("Garmin's API is closed") — the plan's "GATE: none" didn't mention it. Andy ratified proceeding
+  anyway (AskUserQuestion): the block is about the closed *official OAuth* API; garth is an unofficial
+  session-login library, not OAuth, so the storage-layer migration isn't actually blocked by it.
+  `PROVIDERS_SCHEMA.md`/`DATABASE.md` had explicitly documented "wait for API reopen" — updated both
+  in this same PR to reflect the migration landing now. Actually touched: `garmin_connect.py` (all 4
+  read/write sites — `_save_session_to_db`/`_load_client`/`get_auth_status`/`fetch_activities` — now
+  call `routes/provider_auth.py`'s `upsert_auth`/`get_auth`, `session_blob` carries the garth JSON,
+  `provider_user_id` carries `garmin_username`); `routes/garmin.py` (`auth_import_cookies` +
+  `auth_import_tokens` — the two direct-SQL endpoints the plan's file list didn't call out by name, but
+  are covered by "Files: ... `routes/garmin.py`"); `routes/admin.py` (`_delete_user_and_data` — added
+  `DELETE FROM provider_auth WHERE user_id = ?`, since without it a Garmin-or-any-provider-connected
+  user's account delete would now hit an FK violation — this table was never in the cascade chain for
+  ANY provider, a pre-existing gap this migration exposed, not introduced). **No data migration
+  needed** — a read-only `neon-query` confirmed `garmin_auth` has 0 rows in prod. Did **not** drop the
+  `garmin_auth` table itself (out of scope for this task; it auto-applies via `_PG_MIGRATIONS` with no
+  gate, so left as a flagged follow-up rather than an unrequested irreversible DDL). New test file
+  `tests/test_garmin_provider_auth_migration.py` (8 tests) — the multi-user isolation test runs the
+  real `upsert_auth`/`get_auth` SQL shapes against an in-memory `(user_id, provider)` store, not a
+  mock, per the plan's stated verify. Full suite 4137 passed / 30 skipped (+8).
 
 **T-5.2 — TCX/GPX single-file ingest route (#1092)**
 - Files: `routes/garmin.py` (or a new upload route), `tests/`.
@@ -358,7 +378,8 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 (gated, next) → T-1.5. Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
-5. WS-5: independent throughout — T-5.1 → T-5.2/T-5.3 → T-5.4 → T-5.5/T-5.6 → T-5.7.
+5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 (next) → T-5.4 →
+   T-5.5/T-5.6 → T-5.7.
 
 ## 5. Bookkeeping (after approval; outside plan mode)
 
