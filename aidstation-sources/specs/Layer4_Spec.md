@@ -67,7 +67,7 @@ Boundary clarifications. Each line is a piece of work that lives elsewhere and t
 - **Does not evaluate injury risk or generate injury HITL items.** That's 2D. Layer 4 consumes 2D's exclusion/downgrade list and applies it during exercise picking; it does not generate new injury observations. If a 2D exclusion makes a planned session unworkable (e.g., wrist-loaded strength on the only strength day available), Layer 4 substitutes within the session — it does not escalate.
 - **Does not compute nutrition targets, BMR, or fueling tiers.** That's 2E. Layer 4 may surface 2E's targets in `PlanSession.session_notes` for race-rehearsal + long sessions (e.g., "Practice race-day fueling: 60g CHO/hr from gels"); it does not derive them.
 - **Does not judge goal viability or pick the periodization shape.** That's 3B. Layer 4 consumes 3B's `periodization_shape.mode + start_phase + phase_weeks` as the sizing input. Layer 4 may invoke the override path if the shape is structurally infeasible after capped re-synthesis (e.g., 3B says `compressed` but the athlete's §K schedule plus 2D exclusions leave no viable Build-week structure inside the window) — overrides are flagged via `shape_override` in `Layer4Payload` for athlete-facing rationale rendering per 3B §6.3.
-- **Does not run the 3D HITL gate.** Layer 4 only runs after 3D returns `gate_status = green`. Layer 4 may produce `notable_observations` with `elevates_to_hitl=True` that 3D considers for the NEXT plan invocation — the current run does not block on its own observations.
+- **Does not run the 3D HITL gate.** Layer 4 only runs after 3D returns `gate_status = green`. Layer 4 may produce `notable_observations` with `elevates_to_hitl=True`; these are advisory metadata surfaced on the operator inspect page (`/admin/plan/<id>/inspect`, per T-1.1) — they do not feed back into 3D on any subsequent invocation, and the current run does not block on its own observations.
 - **Does not own the plan-version table's `plan_version_id` allocation policy.** The plan-gen orchestrator allocates `plan_version_id` before invoking Layer 4 and passes it in. Layer 4 writes session rows pointing to that ID. The orchestrator owns the atomic-write boundary per D-64 §6.2 (commit-or-rollback). Plan-version table SCHEMA is defined in §7.7 below (lifting the D-64 §7.2 stub).
 - **Does not own the partial-update orchestrator.** Per Control_Spec §4, the orchestrator outside Layer 4 decides which upstream layers re-run on data changes; Layer 4 just gets called with the updated payloads.
 - **Does not coordinate joint sessions across linked athletes.** §L of the Onboarding spec carves out joint training overlays for athletes with linked accounts. Layer 4 produces solo plans only; **Layer 4.5 — Joint Session Coordinator** runs as a post-pass over multiple athletes' Layer 4 payloads and harmonizes joint-session days (picks shared session shape, adjusts per-athlete intensity within fitness levels). Layer 4.5 spec is its own work item; see §12 forward-pointer.
@@ -585,7 +585,7 @@ class Observation:
     ]
     text: str                              # Human-readable, ≤ 240 chars
     evidence_basis: list[str]
-    elevates_to_hitl: bool                 # Considered for the NEXT plan's 3D gate
+    elevates_to_hitl: bool                 # Advisory metadata only; surfaced on the operator inspect page (T-1.1), gates nothing
 ```
 
 ### 7.11 plan_versions table (lifts D-64 §7.2 stub)
@@ -1019,7 +1019,7 @@ Per Andy 2026-05-16 (Decision 8 — recorded in header): the seam reviewer carri
 | `approved` | None | Record SeamReview; no observation; continue. |
 | `flagged_minor` | None | Record SeamReview; emit `Observation(category='warning', text=<seam_issues summary>, elevates_to_hitl=False)`; continue (no retry). |
 | `flagged_major` | `re_prompt_prior` / `re_prompt_next` | If targeted phase's `retries_used < cap`: re-synthesize that phase with `seam_issues` merged into context as constraint deltas; increment counter; re-validate; re-run THIS seam review once. If cap exhausted: accept current synthesis + emit `seam_unresolved` observation; `triggered_resynthesis=False`. |
-| `flagged_major` | `accept_with_observation` | Record SeamReview; emit `Observation(category='warning')` with `elevates_to_hitl=True` (the seam is notably bad but the reviewer judges re-synthesis won't help — escalate to next-run HITL gate). |
+| `flagged_major` | `accept_with_observation` | Record SeamReview; emit `Observation(category='warning')` with `elevates_to_hitl=True` (the seam is notably bad but the reviewer judges re-synthesis won't help). This observation is advisory only — surfaced on the operator inspect page (`/admin/plan/<id>/inspect`, per T-1.1); `elevates_to_hitl` gates nothing. |
 | `patched` | `re_prompt_prior` / `re_prompt_next` | Same as `flagged_major` + `re_prompt_*`. The verdict-name distinction is informational — `patched` signals reviewer confidence that the patch direction will resolve; `flagged_major` signals reviewer is offering the patch but is less certain. |
 | `patched` | `accept_with_observation` | Invalid combination — **coerced**, not raised. A seam review is advisory (it judges a transition between two already-validated phases), so an LLM combo-mislabel must never discard valid synthesis. `_coerce_verdict_combination` (`layer4/seam_review.py`) normalizes to `flagged_major` + `accept_with_observation` (verdict name is informational; accept-with-observation intent kept), logged for observability. **History:** previously raised `Layer4OutputError('seam_reviewer_invalid_verdict_combination')`, which was NOT in the route's `_RETRYABLE_BLOCK_CODES` and killed a 70-session near-complete plan on first occurrence (pv=55, 2026-06-03). Coercion table: `flagged_major`/`patched` + null → `flagged_major` + `accept_with_observation`; `approved` + issues → `flagged_minor`; `approved` + direction → drop direction; `flagged_minor` + direction → drop direction. Only an unparseable `reviewer_verdict` enum still raises (`schema_violation`, retryable). |
 
@@ -1107,7 +1107,7 @@ Full design: `designs/Layer4_PerWeekDecomposition_D77_Design_v1.md` §5.2 / §7 
 Two distinct surfaces:
 
 - **`PlanSession.coaching_flags`** — per-session string list per §7.2; consumed by the athlete-facing plan view (rendering chips/badges next to sessions) and by Layer 3A interpretation (driving "what was this session for" rationale on re-eval). Closed set per §§8.2–8.6.
-- **`Layer4Payload.notable_observations`** — call-level `Observation` rows per §7.10; consumed by Layer 3A re-eval (forward-pointer to next call's 3D gate via `elevates_to_hitl`) and by the athlete-facing plan-diff renderer. Closed set per §7.10 `Observation.category` enum + §8.7 trigger table.
+- **`Layer4Payload.notable_observations`** — call-level `Observation` rows per §7.10; advisory only, surfaced on the operator inspect page (`/admin/plan/<id>/inspect`, per T-1.1) — `elevates_to_hitl` gates nothing and is not consumed by any subsequent 3D gate evaluation. Closed set per §7.10 `Observation.category` enum + §8.7 trigger table.
 
 ### 8.1 Convention — LLM-emitted vs. spec-auto-emitted
 
@@ -1197,6 +1197,8 @@ Maps the `Observation.category` enum per §7.10 to triggers. Unless noted, obser
 | `data_hygiene` | Validator detected an input-data hygiene issue worth surfacing to athlete (e.g., 3A `weak_links` references a discipline not in 2A inclusion — silently dropped during synthesis, but worth a note) | False | Spec-auto |
 
 The `opportunity` category is the single LLM-emitted exception. All other observation categories are orchestrator-computed.
+
+`elevates_to_hitl=True` observations are advisory metadata, not a gate — they are surfaced on the operator inspect page (`/admin/plan/<id>/inspect`, per T-1.1) and do not feed back into any subsequent 3D gate evaluation.
 
 ### 8.8 v1 scope caveats
 

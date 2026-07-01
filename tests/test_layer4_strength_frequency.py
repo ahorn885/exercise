@@ -2,7 +2,8 @@
 
 Catches the bare/empty-strength regression (Base/Build week with 0 sessions)
 and gross over-dosing, as `warning` only (never a blocker — Phase 1 lesson).
-Duck-typed payload/sessions: the rule only reads `mode`, `sessions[].kind`, and
+Duck-typed payload/sessions: the rule only reads `mode`, `sessions[].kind`,
+`sessions[].strength_substitution` (#573), and
 `sessions[].phase_metadata.{phase_name,week_in_phase}`.
 """
 from __future__ import annotations
@@ -15,8 +16,12 @@ from layer4.validator import (
 )
 
 
-def _sess(kind, phase, week):
-    return NS(kind=kind, phase_metadata=NS(phase_name=phase, week_in_phase=week))
+def _sess(kind, phase, week, strength_substitution=False):
+    return NS(
+        kind=kind,
+        strength_substitution=strength_substitution,
+        phase_metadata=NS(phase_name=phase, week_in_phase=week),
+    )
 
 
 def _payload(sessions, mode="plan_create"):
@@ -78,3 +83,15 @@ def test_all_failures_are_warnings():
 
 def test_dose_table_matches_design():
     assert _STRENGTH_SESSIONS_PER_WEEK == {"Base": 2, "Build": 2, "Peak": 1, "Taper": 1}
+
+
+def test_substitution_sessions_excluded_from_count():
+    # #573 — a failover substitution stands in for an infeasible cardio
+    # session, not an elective dose pick; excluded so failover stacking in a
+    # constrained week doesn't trip the advisory.
+    out = _rule_strength_frequency_band(_payload([
+        _sess("strength", "Peak", 1),
+        _sess("strength", "Peak", 1, strength_substitution=True),
+        _sess("strength", "Peak", 1, strength_substitution=True),
+    ]), None)
+    assert out == []

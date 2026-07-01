@@ -52,6 +52,7 @@ from layer4.plan_refresh_t1 import (
 )
 from layer4.plan_refresh_t2 import _format_weekly_aggregate
 from layer4.recovery_guidance import format_recovery_guidance
+from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 
 
 DEFAULT_MAX_TOKENS = 10000
@@ -79,7 +80,8 @@ _DELOAD_CADENCE: dict[
 }
 
 
-SYSTEM_PROMPT = """You are AIDSTATION's Layer 4 plan-refresh T3 synthesizer.
+SYSTEM_PROMPT = (
+    """You are AIDSTATION's Layer 4 plan-refresh T3 synthesizer.
 
 You are called when an athlete clicks "Refresh the next 4 weeks" on their training plan. The athlete has typed an optional free-text note explaining why they want the refresh. Your job is to produce 0-56 PlanSession records covering the next 28 calendar days that:
 
@@ -126,7 +128,13 @@ OUTPUT DISCIPLINE:
 - Strength exercises reference Layer 0B exercise IDs; populate `exercise_name`; `reps_per_set` accepts integer or string.
 - All athlete-facing text fields are bounded by `maxLength` in the schema — be concise.
 - Do not emit prose outside the tool call.
+
+# Strength programming
+
 """
+    + STRENGTH_PROGRAMMING_GUIDANCE
+    + "\n"
+)
 
 
 def _format_deload_cadence_line(
@@ -237,7 +245,8 @@ def render_user_prompt(
     # === Session feasibility (#557 — terrain routing, mirrors create #540) ===
     parts.extend(
         _format_session_feasibility(
-            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c),
+            include_grid_tag=True,
         )
     )
 

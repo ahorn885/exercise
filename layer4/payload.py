@@ -280,6 +280,11 @@ class PlanSession(_Base):
 
     cardio_blocks: list[CardioBlock] | None = None
     strength_exercises: list[StrengthExercise] | None = None
+    # #573 — set true when this strength session is a failover substitution for
+    # a terrain/craft-infeasible cardio session (per `STRENGTH_PROGRAMMING_GUIDANCE`
+    # FAILOVER STRENGTH template), so `_rule_strength_frequency_band` can exclude
+    # it from the programmed-dose count.
+    strength_substitution: bool = False
     recovery_exercises: list[RecoveryExercise] | None = None
     # #698 Track 2 (Part A) — optional drills on a cardio session, drawn from
     # the deterministic cardio drill pool. Only on kind=='cardio'; ≤1 (the

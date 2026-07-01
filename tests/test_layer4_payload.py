@@ -532,6 +532,17 @@ def test_strength_requires_strength_exercises():
         )
 
 
+def test_strength_substitution_defaults_false():
+    assert _strength_session().strength_substitution is False
+
+
+def test_strength_substitution_round_trips_true():
+    s = PlanSession(
+        **{**_strength_session().model_dump(), "strength_substitution": True}
+    )
+    assert s.strength_substitution is True
+
+
 def test_strength_forbids_cardio_blocks():
     with pytest.raises(ValidationError, match="cardio_blocks is None"):
         PlanSession(

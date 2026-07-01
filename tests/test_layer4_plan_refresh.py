@@ -549,6 +549,13 @@ class TestToolSchema:
         schema = build_record_refresh_sessions_tool("T3")
         assert schema["input_schema"]["properties"]["sessions"]["maxItems"] == 56
 
+    def test_strength_substitution_property_is_optional_boolean(self):
+        # #573 — the marker is a session-level flag, not required (defaults
+        # False on `PlanSession` when the synthesizer omits it).
+        sess_schema = build_record_refresh_sessions_tool("T1")["input_schema"]["properties"]["sessions"]["items"]
+        assert sess_schema["properties"]["strength_substitution"] == {"type": "boolean"}
+        assert "strength_substitution" not in sess_schema["required"]
+
 
 # ─── Input validation (§4.3) ─────────────────────────────────────────────────
 
@@ -1683,8 +1690,64 @@ class TestPromptRendering:
         without = render_user_prompt(**kwargs)
         assert "=== Session feasibility" in with_feas
         assert "substitute a STRENGTH session" in with_feas
+        # #573 — the failover-strength trigger tag must reach the refresh
+        # prompt (mirrors create's inline session-grid tag); without it,
+        # STRENGTH_PROGRAMMING_GUIDANCE's failover template never fires.
+        assert "[TERRAIN-INFEASIBLE" in with_feas
         # Omitted entirely when nothing was resolved (legacy/empty callers).
         assert "=== Session feasibility" not in without
+
+    def test_t2_terrain_feasibility_block_carries_grid_tag(self):
+        # #573 — same trigger-tag requirement as T1, for T2's renderer.
+        from layer4.plan_refresh_t2 import render_user_prompt
+        from layer4.session_feasibility import TerrainResolution
+
+        feas = {
+            "D-012": TerrainResolution(
+                "D-012", "strength", "Home Gym",
+                substitute_exercise_ids=["E-pull"],
+            )
+        }
+        kwargs = dict(
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_END,
+            layer1_payload=_layer1(),
+            layer2_bundle=Layer2Bundle(a=_layer2a(), c={}, d=_layer2d()),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T2_START, _T2_END),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+        )
+        with_feas = render_user_prompt(**kwargs, terrain_feasibility=feas)
+        assert "[TERRAIN-INFEASIBLE" in with_feas
+
+    def test_t3_terrain_feasibility_block_carries_grid_tag(self):
+        # #573 — same trigger-tag requirement as T1, for T3's renderer.
+        from layer4.plan_refresh_t3 import render_user_prompt
+        from layer4.session_feasibility import TerrainResolution
+
+        feas = {
+            "D-012": TerrainResolution(
+                "D-012", "strength", "Home Gym",
+                substitute_exercise_ids=["E-pull"],
+            )
+        }
+        prompt = render_user_prompt(
+            refresh_scope_start=_T2_START,
+            refresh_scope_end=_T2_START + timedelta(days=27),
+            layer1_payload=_layer1(),
+            layer2_bundle=Layer2Bundle(a=_layer2a(), c={}, d=_layer2d()),
+            layer3a_payload=_layer3a(),
+            layer3b_payload=_layer3b(),
+            prior_plan_session_window=_prior_window(_T2_START, _T2_START + timedelta(days=27)),
+            parsed_intent=ParsedIntent(),
+            retries_used=0,
+            rule_failures=[],
+            terrain_feasibility=feas,
+        )
+        assert "[TERRAIN-INFEASIBLE" in prompt
 
     def test_event_window_overlay_rendered_when_segment_overlaps(self):
         # #581 WS-H — the refresh prompt must carry the date-scoped event-window

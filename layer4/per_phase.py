@@ -958,6 +958,9 @@ def _session_schema(
                 "type": "string",
                 "enum": ["cardio", "strength", "rest", "recovery"],
             },
+            # #573 — failover strength substitution marker; excluded from the
+            # programmed-dose count in `_rule_strength_frequency_band`.
+            "strength_substitution": {"type": "boolean"},
             "discipline_id": {"type": ["string", "null"]},
             "discipline_name": {"type": ["string", "null"]},
             "locale_id": {"type": ["string", "null"]},
@@ -1564,6 +1567,7 @@ def _format_session_feasibility(
     terrain_feasibility: dict[str, TerrainResolution] | None,
     layer2a_payload: Layer2APayload | None,
     layer2c_payloads: dict[str, Layer2CPayload],
+    include_grid_tag: bool = False,
 ) -> list[str]:
     """#540 slice 2c.2 — render the deterministic per-discipline terrain-
     feasibility directive (the companion to the inline session-grid tag).
@@ -1573,7 +1577,15 @@ def _format_session_feasibility(
     athlete's locale cluster, so the synthesizer composes a session that works
     rather than one the athlete can't physically do. Skill-gated disciplines
     are absent here by construction (handled by the #336 substitution directive
-    — the orchestrator partitions the two). Empty when nothing was resolved."""
+    — the orchestrator partitions the two). Empty when nothing was resolved.
+
+    `include_grid_tag`: create's own render already appends the inline
+    `grid_annotation()` tag on its separate weekly-session-grid line (#540), so
+    it calls this with the default `False` to avoid a duplicate tag. The
+    refresh tiers have no equivalent session-grid render (#573) — they pass
+    `True` so this directive is the only place the `[TERRAIN-INFEASIBLE]` /
+    `[NO CRAFT]` trigger `STRENGTH_PROGRAMMING_GUIDANCE` depends on reaches
+    their prompts at all."""
     if not terrain_feasibility:
         return []
     names: dict[str, str] = {}
@@ -1595,13 +1607,14 @@ def _format_session_feasibility(
         "`TRN-xxx` / `discipline_id` strings:",
     ]
     for d_id in sorted(terrain_feasibility):
-        out.append(
-            feasibility_line(
-                terrain_feasibility[d_id],
-                discipline_name=names.get(d_id, d_id),
-                exercise_names=exercise_names,
-            )
+        line = feasibility_line(
+            terrain_feasibility[d_id],
+            discipline_name=names.get(d_id, d_id),
+            exercise_names=exercise_names,
         )
+        if include_grid_tag:
+            line += grid_annotation(terrain_feasibility[d_id])
+        out.append(line)
     out.append("")
     return out
 

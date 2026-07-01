@@ -185,6 +185,7 @@ def _strength_session(
     coaching_flags: list[str] | None = None,
     duration_min: int = 45,
     intensity_summary: str = "moderate",
+    strength_substitution: bool = False,
 ) -> PlanSession:
     dow_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
     if phase_metadata is _UNSET:
@@ -204,6 +205,7 @@ def _strength_session(
         duration_min=duration_min,
         intensity_summary=intensity_summary,  # type: ignore[arg-type]
         strength_exercises=exercises or [_strength_exercise()],
+        strength_substitution=strength_substitution,
         phase_metadata=phase_metadata,  # type: ignore[arg-type]
         session_notes="x",
         coaching_intent="x",
@@ -717,6 +719,45 @@ def test_driver_empty_payload_accepted():
     )
     assert result.pass_index == 0
     assert result.retried_phase_names == []
+
+
+def test_strength_frequency_band_excludes_substitution_sessions():
+    # #573 — failover substitutions must not count toward the programmed
+    # Base-phase 2/week target; 4 total strength sessions where 2 are flagged
+    # substitutions still reads as an in-band count of 2.
+    sessions = [
+        _strength_session(session_id="S-1", d=_SCOPE_START),
+        _strength_session(session_id="S-2", d=_SCOPE_START + timedelta(days=1)),
+        _strength_session(
+            session_id="S-3", d=_SCOPE_START + timedelta(days=2),
+            strength_substitution=True,
+        ),
+        _strength_session(
+            session_id="S-4", d=_SCOPE_START + timedelta(days=3),
+            strength_substitution=True,
+        ),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    result = validate_layer4_payload(payload, ValidatorContext())
+    assert not any(
+        f.rule_name.startswith("strength_frequency_band") for f in result.rule_failures
+    )
+
+
+def test_strength_frequency_band_still_fires_without_substitution_flag():
+    # Same 4-session shape, none flagged — regression guard that the
+    # exclusion doesn't silently swallow real over-dosing.
+    sessions = [
+        _strength_session(session_id="S-1", d=_SCOPE_START),
+        _strength_session(session_id="S-2", d=_SCOPE_START + timedelta(days=1)),
+        _strength_session(session_id="S-3", d=_SCOPE_START + timedelta(days=2)),
+        _strength_session(session_id="S-4", d=_SCOPE_START + timedelta(days=3)),
+    ]
+    payload = _minimal_layer4(sessions=sessions)
+    result = validate_layer4_payload(payload, ValidatorContext())
+    assert any(
+        f.rule_name.startswith("strength_frequency_band") for f in result.rule_failures
+    )
 
 
 def test_driver_pass_index_preserved():
