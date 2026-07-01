@@ -243,13 +243,30 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   any producer that sets it; confirm zero readers first (`grep`). Do NOT trim if any reader exists.
 - T-2.6 (sleep_quality): reconcile the 1–5 vs 1–10 scale where 3A reads sleep; data/mapping fix only.
 
-**T-2.9 — Single revision bump + walk (R1)**
+**T-2.9 — Single revision bump + walk (R1)** — **BUMP DONE 2026-07-01; walk owed to Andy.**
 - Preconditions: T-2.1…T-2.7 code merged to the branch.
 - Files: `layer4/hashing.py`.
 - Steps: bump `LAYER4_PROMPT_REVISION` "20" → "21" ONCE, with a comment listing the issues folded in.
 - GATE: Andy runs the one real-LLM walk (container can't). Provide the walk checklist: each rendered
   field appears; a T1/T2 refresh editing a rendered field re-runs the right layer (no stale data).
 - Verify: full suite green; walk is Andy-run.
+- **As-built:** bumped with a comment naming #301/#302/#306 (the three renders + the 3B trim) folded
+  in; #297's trim and #299's no-op carried no prompt-body change of their own, so they aren't named in
+  the tag. Suite green (4176 passed / 49 skipped, unchanged from T-3.3 — a revision-constant bump alone
+  doesn't shift test counts). **Walk checklist for Andy** (real-LLM, container can't run it):
+  1. Generate (or refresh) a plan for an athlete with race-terrain gaps that have `uncoverable_stimulus`/
+     `proxy_methods` populated → confirm the new "Terrain-gap detail" block appears in the per_phase /
+     single_session / race_week_brief / refresh-t1-t2-t3 prompts (whichever apply) and reads coherently.
+  2. Confirm `goal_viability` + its reasoning now appear in a per_phase-driven synthesis (previously
+     only in the race-week brief).
+  3. Confirm a race event with a `race_url` set shows "**Race URL:** ..." in the race-week brief.
+  4. Confirm nothing regressed from removing 3B's `notable_observations` — the LLM should no longer
+     attempt to emit it (tool schema no longer offers it), and `goal_viability`/`periodization_shape`/
+     `hitl_surface` should be unaffected.
+  5. Confirm a T1/T2 refresh that edits terrain-relevant athlete data re-runs Layer 2B and the refreshed
+     plan's terrain-gap detail reflects the change (no stale data) — Layer 2B is unconditionally
+     recomputed on every refresh already (confirmed via code trace, not gated on any `ParsedIntent`
+     trigger), so this should hold, but the real-LLM walk is the actual confirmation.
 
 ### WS-3 — Deterministic feasibility & eligibility (#831/#559/#1060/#573; #427 frame)
 
@@ -262,7 +279,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - GATE: its prompt-content effect rides T-2.9's walk (do not run a separate walk).
 - Verify: `tests/test_layer2e.py` — a >20hr event with empty sleep-dep fields yields no such flag.
 
-**T-3.2 — Prevent double-strength-same-day crash (#831)**
+**T-3.2 — Prevent double-strength-same-day crash (#831)** — **VERIFIED ALREADY FIXED 2026-07-01, no build.**
 - Files: `layer4/session_feasibility.py` (the deterministic resolution cascade — tiers
   `exact/proxy/indoor/strength/reallocate` on `ResolvedDiscipline.tier`, ~`:146`; the `strength` and
   `reallocate` tiers are where too many strength substitutions originate) and the day/week assignment
@@ -275,11 +292,29 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   the exact cap rule (read that doc first).
 - Do NOT: relax the `payload.py:713` validator; change the seam reviewers.
 - GATE: **Andy confirms the saturation-cap rule matches the Feasibility_Saturation doc** before build
-  (Trigger-#3-adjacent).
+  (Trigger-#3-adjacent). Andy: "verify, but spend time making sure the fix doesn't lead to new failure
+  routes" rather than build fresh.
 - Verify: `tests/test_layer4_session_grid_saturation.py` — a packed multi-discipline infeasible week
   produces ≤1 strength/day and the plan validates.
+- **As-built:** #831's own issue body already documents its fix as done — a shape-agnostic
+  `_normalize_day_composition` (`layer4/per_phase.py:3385`, called pre-validation at `:4024`) replaced
+  the two former guards (#579/#778) that each bailed on a day shape they didn't anticipate. Confirmed
+  live via direct read + trace-through (not just trusting the docstring): the normalizer's HARD clauses
+  independently re-derive from `_check_two_per_day`'s own clauses (`payload.py:681-718`) — verified
+  line-by-line these two independently-maintained pieces of code currently agree. A dedicated
+  regression test already exists (`tests/test_layer4_day_composition_normalizer.py::
+  test_plan78_strength_plus_strength_plus_recovery_relocates`) plus 13 sibling tests covering every
+  branch (relocation, demotion, drop, same-discipline soft-relocate, reindexing, idempotence). No new
+  failure mode found in the interaction with #590's saturation cap (the two operate at different
+  stages — weekly count capacity vs. per-day placement — and the normalizer's shape-agnostic
+  derivation catches any violation regardless of how the session counts arose upstream). **One
+  non-code risk flagged, not fixed:** the normalizer and the validator are two separately-maintained
+  implementations of "what's a valid day" — if a future edit changes one without the other, this exact
+  bug class (#831) could reopen. **Owed to Andy, not done here:** #831's own text says a "live-verify"
+  (regenerate plan #78 in prod, confirm via `/admin/logs`) is still outstanding — needs prod log
+  access. Issue left open pending that.
 
-**T-3.3 — Team-only sport gate for solo athletes (#559)**
+**T-3.3 — Team-only sport gate for solo athletes (#559)** — **DONE 2026-07-01.**
 - Files: a Layer-0 migration (`etl/migrations/layer0/*.sql`), `layer1/builder.py`, `layer2a/builder.py`,
   `tests/`.
 - Steps: (1) persist `requires_team` on the Layer-0 disciplines table; (2) add a solo/team flag to the
@@ -289,6 +324,23 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - GATE: **Layer-0 migration is Andy-gated** (`layer0-apply` workflow, one-tap approve). Its
   prompt-content effect (if any) rides T-2.9's walk.
 - Verify: `tests/test_layer2a.py` — a solo athlete's discipline set excludes a `requires_team` sport.
+- **As-built:** "solo" derives from existing data per Andy's call (no new onboarding question) — an
+  athlete counts as on a team if any `athlete_network_links` row has `relationship_types` containing
+  `"race_teammate"`; no such link means solo. `Layer1Payload.is_solo_athlete` (default `True`) computed
+  in `layer1/builder.py` from the already-loaded `network_links`, no new query. Migration
+  `0038_disciplines_requires_team.sql` adds `layer0.disciplines.requires_team boolean NOT NULL DEFAULT
+  false` (cache-neutral, no `etl_version` bump). **Every row ships `false`** — investigated
+  `layer0.sports.team_vs_solo` + `layer0.team_formats` for a discipline backed only by a team-mandatory
+  sport with no solo variant; found none (every discipline the two team-mandatory sports use — Adventure
+  Racing, Swimrun — is also practiced solo elsewhere in the canon). Per the task's own "don't hardcode a
+  guess" rule, left the column all-`false` and flagged which discipline_id(s) (if any) should flip to
+  `true` as a follow-up decision for Andy (see the migration's own comment for the full evidence trail).
+  `layer2a/builder.py::_resolve_inclusion` gets a new tier-0 hard gate (outranks race/athlete/curator):
+  `requires_team` + `is_solo_athlete` → excluded. Threaded as its own new `is_solo_athlete` parameter
+  rather than overloading the existing-but-inert `team_format` parameter (race format vs. athlete's own
+  team membership — different signals). Migration not yet applied to prod — awaiting Andy's
+  `layer0-apply` one-tap approval; until then this gate is built but inert (no row is `requires_team`
+  yet regardless). Suite +3 (4176 passed / 49 skipped).
 
 **T-3.4 — Terrain-substitute backup strength in refresh (#573)** — **DONE 2026-07-01, branch `claude/orphaned-data-partial-wiring-87rdt7`.**
 - Files: `layer4/plan_refresh.py`, `tests/`.
@@ -493,8 +545,10 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 
 1. T-4.1 (isolated quick win). — **DONE 2026-07-01, PR #1104.**
 2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 — **DONE 2026-07-01, Andy-ratified wording** → T-1.5 (next, unbuilt — the plan's most complex task; not started this session). Parallel to WS-2/3.
-3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
-4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
+3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 — **ALL DONE 2026-07-01** (T-2.2
+   resolved as a no-op — real reader in Layer 3D, nothing to trim without breaking it) → **T-2.9
+   (single bump + walk, next)**.
+4. WS-3: T-3.1 (rides T-2.9 walk, next) → T-3.2 — **VERIFIED ALREADY FIXED 2026-07-01, no build; live-verify still owed to Andy** → T-3.3 — **DONE 2026-07-01 (migration written, awaiting Andy's `layer0-apply` approval)** → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
 5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 — **DONE 2026-07-01**
    → T-5.4 — **BLOCKED-ON-PARTNER 2026-07-01, skipped** → T-5.5/T-5.6 — **DONE 2026-07-01**
    → T-5.7 — **DONE 2026-07-01. WS-5 fully closed.**

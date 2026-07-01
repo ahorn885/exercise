@@ -122,7 +122,16 @@ _LAYER2_BUNDLE_ATTRS = frozenset({"a", "b", "c", "d", "e"})
 # (`coaching_preferences`, still rendered). The `coach_notes` field also leaves
 # the Layer 1 payload, so `layer1_hash` shifts independently; this tag closes the
 # prompt-body determinant so cached plans + refreshes regenerate.
-LAYER4_PROMPT_REVISION = "20"
+# "21" = T-2.9, WS-2 upstream-signal wiring, folded in as one bump per R1
+# (never bump per-issue): #301 — new `format_terrain_gap_detail()` renders
+# per-discipline terrain-gap `uncoverable_stimulus`/`proxy_methods` across all
+# 5 synthesizer prompts; #302 — `goal_viability.reasoning_text` now also
+# renders in per_phase (race_week_brief already had it), and Layer3B's
+# `notable_observations` tool-schema field + its auto-emit prompt instructions
+# are removed (nothing downstream read it); #306 — `race_url` now renders in
+# race_week_brief. (#297's Layer2B trim and #299's no-op left no prompt-body
+# change of their own.) Cached plans + refreshes regenerate.
+LAYER4_PROMPT_REVISION = "21"
 
 # Prompt-body revision tag for the Layer 3A/3B LLM stages, mixed into the Layer 3D
 # gate's "Reading B" staleness fingerprint (`compute_gate_input_fingerprint`).
