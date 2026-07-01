@@ -339,7 +339,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   real `upsert_auth`/`get_auth` SQL shapes against an in-memory `(user_id, provider)` store, not a
   mock, per the plan's stated verify. Full suite 4137 passed / 30 skipped (+8).
 
-**T-5.2 — TCX/GPX single-file ingest route (#1092)**
+**T-5.2 — TCX/GPX single-file ingest route (#1092)** — **DONE 2026-07-01.**
 - Files: `routes/garmin.py` (or a new upload route), `tests/`.
 - Steps: `tcx_gpx_parser.py` already returns the normalized cardio dict. Add the upload route that
   detects TCX vs GPX, calls `parse_tcx`/`parse_gpx`, and feeds the shared
@@ -347,8 +347,32 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - Do NOT: modify `_bulk_insert_cardio`'s contract.
 - GATE: none.
 - Verify: upload a sample TCX and GPX → cardio_log rows via the shared path.
+- **As-built correction:** session-start audit found the *bulk* drop zone (`routes/garmin.py
+  import_bulk`, the connections-hub uploader) already dispatched `.tcx`/`.gpx` through
+  `parse_tcx`/`parse_gpx`/`detect_source` end-to-end (#767 Slice 2/5, shipped 2026-06-19/20) —
+  the plan's "add the upload route" framing was stale. The real gap #1092's own evidence pointed
+  at: the **single-file review-and-plan-match flow** (`import_fit`/`import_preview`/
+  `import_confirm` — the "Single activity" section on `garmin/import.html`, called out by name in
+  `connections/hub.html`'s own comment as "the single-file review-and-plan-match path") was still
+  hard-restricted to `.fit`/`.zip`, both in the form's `accept` attribute and the server-side
+  extension check in `import_fit`. Extended that flow: `import_fit` now dispatches
+  `.fit`/`.tcx`/`.gpx` to `parse_fit`/`parse_tcx`/`parse_gpx`, auto-detects the source via
+  `detect_source` for non-FIT uploads (mirroring the bulk path), and stores it in a new
+  `flask_session['fit_import_source']` key so `import_confirm` can tag the `provider_raw_record`
+  write with the detected source (`provider=...`) instead of the parser's generic `'manual'`
+  fallback. Also fixed the *same page's* bulk-section `accept` attribute, which was still
+  `.fit,.zip` even though it posts to the same `import_bulk` endpoint the hub's drop zone (which
+  already had the full accept list) uses — a same-endpoint UI/copy inconsistency `#1092`'s
+  evidence also flagged. Retitled the page "Import activity files" (was "Import .FIT files") since
+  it now genuinely isn't FIT-only. Deliberately did **not** retrofit dedup-before-preview onto the
+  single-file path (FIT never had it either — an interactive human-reviewed confirm step, unlike
+  the bulk backfill path's idempotency need) and did **not** touch the bulk-vs-zip .fit-only
+  extraction (`.tcx`/`.gpx` inside a zip stays a bulk-import concern). New
+  `tests/test_garmin_single_file_tcx_gpx_import.py` (4 tests) — extension gate, TCX/GPX parser
+  dispatch + source auto-detection, dedup-prefix correctness, provider_raw_record tagging with the
+  detected source.
 
-**T-5.3 — Wahoo full FIT stream (#1093)**
+**T-5.3 — Wahoo full FIT stream (#1093)** — **DONE 2026-07-01.**
 - Files: `routes/wahoo.py`, `tests/`.
 - Steps: fetch `workout_summary.file.url`, parse it with `garmin_fit_parser.parse_fit()` (reuse
   directly — do NOT extract a shared parser; keep scope minimal), feed `_bulk_insert_cardio(source=
@@ -356,6 +380,26 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - Do NOT: refactor `garmin_fit_parser` into a shared module (out of scope).
 - GATE: none.
 - Verify: a Wahoo webhook fixture with a FIT URL yields stream-level fields.
+- **As-built note:** `_ingest_workout_summary` now reads `workout_summary.file.url` (nested-first
+  under `workout`, top-level fallback — same defensive pattern `normalize_wahoo_summary` already
+  uses for other fields; BEST-EFFORT/VERIFY-OWED per Rule #14, unconfirmed against a live payload
+  that actually carries a file link), fetches it with a fresh OAuth token
+  (`provider_auth.get_fresh_access_token`, same pattern as `routes/strava_ingest.py`), and parses it
+  with `garmin_fit_parser.parse_fit()` unmodified. The FIT's stream-level fields (`max_hr`,
+  `moving_time_min`, `max_cadence`, `max_power`, `norm_power`, `aerobic_te`/`anaerobic_te`,
+  running-dynamics fields, `elev_loss_ft`, `swolf`/`active_lengths`) are overlaid onto the summary
+  dict **only where the summary itself has nothing** — discipline resolution and
+  `_provider_raw` tagging deliberately stay Wahoo's own matrix-§10.2 `workout_type_id` mapping, not
+  the FIT sport enum, so a FIT-enriched activity resolves identically to a summary-only one (the
+  plan's "feed `_bulk_insert_cardio` with the richer fields" reads as enriching the summary, not
+  replacing its already-spec'd discipline/provider identity with the FIT's). The fetch+parse is
+  best-effort end to end (no token, network failure, non-2xx, malformed FIT, or an unexpected
+  strength-type FIT all fall back silently to summary-only fields) — a stream-enrichment failure
+  must never block the base cardio_log import. New tests in `tests/test_wahoo_ingest.py` (10 new
+  tests) — `file.url` extraction (nested + top-level + absent), the field-overlay semantics
+  (fills gaps, never overrides a summary-derived value, no-ops on a non-cardio or failed parse),
+  and the full `_ingest_workout_summary` path (fetch+merge; no-token skip; no-file-url skip with no
+  fetch attempted at all).
 
 **T-5.4 — Komoot connect + ingest (#891)**  ·  **T-5.5 — Wahoo plan.json export (#1094)**  ·
 **T-5.6 — Karoo download target (#1095)**  ·  **T-5.7 — Real-DB ingest test (#754, do last)**
@@ -378,8 +422,8 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 (gated, next) → T-1.5. Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
-5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 (next) → T-5.4 →
-   T-5.5/T-5.6 → T-5.7.
+5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 — **DONE 2026-07-01**
+   → T-5.4 (next) → T-5.5/T-5.6 → T-5.7.
 
 ## 5. Bookkeeping (after approval; outside plan mode)
 
