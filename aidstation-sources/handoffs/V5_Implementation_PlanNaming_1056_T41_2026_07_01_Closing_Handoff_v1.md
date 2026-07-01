@@ -1,8 +1,8 @@
 # V5 Implementation — #1056 T-4.1: Anchor Plan Names at Creation — Closing Handoff (2026-07-01)
 
-**Branch:** `claude/issue-847-details-c5hiqi` · **Suite:** 273 passed · **PR:** not yet opened (push + bookkeep + wait for Andy's go — project rule) · **Commit:** `6efef92` · **Issue:** [#1056](https://github.com/ahorn885/exercise/issues/1056) · **Plan doc:** `aidstation-sources/plans/going-to-plan-mode-nested-wadler.md` (T-4.1 of WS-4).
+**Branch:** `claude/issue-847-details-c5hiqi` · **Suite:** 273 passed · **PR:** [#1104](https://github.com/ahorn885/exercise/pull/1104), **MERGED** · **Commit:** `6efef92` · **Issue:** [#1056](https://github.com/ahorn885/exercise/issues/1056) · **Plan doc:** `aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md` (T-4.1 of WS-4).
 
-> **T-4.1 is DONE. This is NOT the end of the plan.** The consolidated project plan (`going-to-plan-mode-nested-wadler.md`) covers WS-1 through WS-5 across ~15 tasks. T-4.1 was sequenced first as the isolated quick win (no preconditions, no GATEs, self-contained). The remaining work is gated, parallel, and ordered — read §6 for the next move.
+> **T-4.1 is DONE. This is NOT the end of the plan.** The consolidated project plan (`PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md`) covers WS-1 through WS-5 across ~15 tasks. T-4.1 was sequenced first as the isolated quick win (no preconditions, no GATEs, self-contained). The remaining work is gated, parallel, and ordered — read §6 for the next move.
 
 ---
 
@@ -72,7 +72,7 @@ python -m venv /tmp/venv && /tmp/venv/bin/pip install -r requirements.txt pytest
 
 ## 6. What's next — the plan's remaining work
 
-The full plan is at `aidstation-sources/plans/going-to-plan-mode-nested-wadler.md`. T-4.1 was first on the execution order (§4 of the plan). The remaining work, in order:
+The full plan is at `aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md`. T-4.1 was first on the execution order (§4 of the plan). The remaining work, in order:
 
 ### Ungated and ready to proceed
 - **T-1.1 + T-1.2 (one PR):** Persist `notable_observations` JSONB on `plan_versions` + render them on the operator inspect page (`/admin/plan/<id>/inspect`) + remove the `shape_override` dead code. No gates, no preconditions. Files: `init_db.py`, `routes/plan_create.py`, `routes/admin.py`, `layer4/payload.py`, 8 build-site call locations, tests. See plan §3 WS-1.
@@ -118,7 +118,7 @@ Read order:
 2. `CURRENT_STATE.md` — what just shipped + current focus
 3. `CARRY_FORWARD.md` — rolling cross-session items
 4. This handoff
-5. `aidstation-sources/plans/going-to-plan-mode-nested-wadler.md` — the full execution plan
+5. `aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md` — the full execution plan
 6. `./scripts/verify-handoff.sh` — automated anchor sweep
 
 **Do not re-plan.** The project plan is written, approved, and executor-ready. Pick up at T-1.1+T-1.2 (ungated, ready to proceed) unless Andy directs otherwise. Read the plan's §0 executor rules before touching any task.
