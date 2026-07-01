@@ -1,19 +1,22 @@
-{# Redesign (finish-the-open) — .FIT import, manual-upload path. Migrated off
-   base_legacy onto the new .app shell. Lives under Connections (§17); the hub
-   drop zone + the §07 workout rail both link here. Behaviour is unchanged:
+{# Redesign (finish-the-open) — activity import, manual-upload path. Migrated
+   off base_legacy onto the new .app shell. Lives under Connections (§17); the
+   hub drop zone + the §07 workout rail both link here. Behaviour is unchanged:
    bulk uploader (data-bulk-* → app.js) + single-activity parse → preview.
-   Brand-neutral copy per CONVENTIONS §E.4 (any device exporting .FIT). #}
+   #1092 — the single-activity section now accepts .tcx/.gpx (non-Garmin
+   per-session exports) at parity with the bulk uploader, which already did.
+   Brand-neutral copy per CONVENTIONS §E.4 (any device exporting these formats). #}
 {% extends 'base.html' %}
 {% set nav_active = 'link' %}
-{% block title %}Import .FIT{% endblock %}
-{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>Import .FIT</b>{% endblock %}
+{% block title %}Import activity files{% endblock %}
+{% block crumbs %}<a href="{{ url_for('connections.hub') }}">Data</a> <span class="sep">/</span> <b>Import activity files</b>{% endblock %}
 
 {% block content %}
 <div class="dash-head">
   <div class="races-intro">
     <p class="eyebrow accent">● Data · manual upload</p>
-    <h1 class="page-title">Import .FIT files.</h1>
-    <p class="page-sub">Upload completed activities from any device that exports <code>.fit</code>. Each file
+    <h1 class="page-title">Import activity files.</h1>
+    <p class="page-sub">Upload completed activities from any device or app that exports
+      <code>.fit</code>, <code>.tcx</code>, or <code>.gpx</code>. Each file
       is parsed and logged to your cardio or training log; re-importing the same file is skipped.</p>
   </div>
 </div>
@@ -22,20 +25,21 @@
   {# ── Bulk import ── #}
   <section class="card card-pad fit-card">
     <p class="eyebrow accent fit-sec-label">● Bulk — many activities at once</p>
-    <p class="page-sub fit-sec-sub">Select or drag a folder of <code>.fit</code> files (or <code>.zip</code> exports).
-      Each is parsed and logged. Duplicate files are skipped automatically.</p>
+    <p class="page-sub fit-sec-sub">Select or drag a folder of <code>.fit</code>, <code>.tcx</code>, or
+      <code>.gpx</code> files (or <code>.zip</code> exports). Each is parsed and logged. Duplicate files
+      are skipped automatically.</p>
 
-    <div data-bulk-upload data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.zip">
+    <div data-bulk-upload data-endpoint="{{ url_for('garmin.import_bulk') }}" data-accept=".fit,.tcx,.gpx,.zip">
       <div data-bulk-drop class="fit-drop">
-        <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.zip</code> files here</p>
+        <p class="fit-drop-hint">Drag &amp; drop <code>.fit</code> / <code>.tcx</code> / <code>.gpx</code> / <code>.zip</code> files here</p>
         <div class="fit-drop-actions">
           <label class="btn btn-ghost btn-sm fit-file-btn">
             Choose files
-            <input data-bulk-files type="file" accept=".fit,.zip" multiple hidden>
+            <input data-bulk-files type="file" accept=".fit,.tcx,.gpx,.zip" multiple hidden>
           </label>
           <label class="btn btn-ghost btn-sm fit-file-btn">
             Choose folder
-            <input data-bulk-folder type="file" accept=".fit,.zip" webkitdirectory hidden>
+            <input data-bulk-folder type="file" accept=".fit,.tcx,.gpx,.zip" webkitdirectory hidden>
           </label>
         </div>
       </div>
@@ -64,14 +68,14 @@
   {# ── Single activity (with plan matching) ── #}
   <section class="card card-pad fit-card">
     <p class="eyebrow accent fit-sec-label">● Single activity — review &amp; match to a plan</p>
-    <p class="page-sub fit-sec-sub">Upload one <code>.fit</code> file (or a <code>.zip</code>) to preview it
-      and optionally mark a planned workout complete.</p>
+    <p class="page-sub fit-sec-sub">Upload one <code>.fit</code>, <code>.tcx</code>, or <code>.gpx</code> file
+      (or a <code>.zip</code>) to preview it and optionally mark a planned workout complete.</p>
 
     <form method="post" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label class="field">
-        <span class="lbl">.FIT file <span class="req">*</span></span>
-        <input type="file" name="fit_file" accept=".fit,.zip" class="form-control" required>
+        <span class="lbl">Activity file <span class="req">*</span></span>
+        <input type="file" name="fit_file" accept=".fit,.tcx,.gpx,.zip" class="form-control" required>
       </label>
       <label class="field">
         <span class="lbl">Activity name / route <span class="dim">(optional override)</span></span>
@@ -93,7 +97,7 @@
     <p class="eyebrow accent fit-sec-label">● Supported activity types</p>
     <div class="table-scroll">
       <table class="data">
-        <thead><tr><th>.FIT sport</th><th>Logged as</th></tr></thead>
+        <thead><tr><th>Sport</th><th>Logged as</th></tr></thead>
         <tbody>
           <tr><td>Running / Trail / Treadmill</td><td class="dim">Cardio log</td></tr>
           <tr><td>Cycling (road, MTB, gravel, indoor)</td><td class="dim">Cardio log</td></tr>

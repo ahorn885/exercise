@@ -1,9 +1,17 @@
 """Wahoo integration — OAuth connect + webhook ingest (#681 (B) live wiring).
 
 Wahoo Cloud API (api.wahooligan.com). Unlike Strava/Whoop's thin pointers, a
-Wahoo `workout_summary` webhook pushes the summary metrics inline (the detailed
-streams are a FIT file at `workout_summary.file.url`, deferred), so the ingest is
-synchronous-from-payload (like COROS) — no REST fetch needed for the summary.
+Wahoo `workout_summary` webhook pushes the summary metrics inline, so the base
+ingest is synchronous-from-payload (like COROS) — no REST fetch needed for the
+summary. When the payload links a full FIT file (`workout_summary.file.url`,
+#1093), that's fetched too (fresh OAuth token, `garmin_fit_parser.parse_fit`
+reused as-is — FIT is a vendor-neutral format) and its stream-level fields
+(max HR/power/cadence, normalized power, training effect, running dynamics)
+enrich the summary's rolled-up averages. Discipline resolution + provider
+tagging always stay Wahoo's own matrix-§10.2 `workout_type_id` mapping, not
+the FIT sport enum, so a FIT-enriched activity resolves identically to a
+summary-only one. The FIT fetch/parse is best-effort — any failure falls back
+to the summary-only fields, never blocking the base import.
 
 - `GET  /wahoo/oauth/start`     — CSRF state + return_to → redirect to consent.
 - `GET  /wahoo/oauth/callback`  — exchange code for tokens; the token response
@@ -436,9 +444,82 @@ def normalize_wahoo_summary(summary: dict) -> dict:
     }
 
 
+def _wahoo_fit_url(summary: dict) -> str | None:
+    """The linked full-FIT-file URL (#1093), nested-first under `workout` (the
+    live shape observed 2026-06-22 for other fields, see normalize_wahoo_summary)
+    with a top-level fallback. BEST-EFFORT/VERIFY-OWED (Rule #14) — unconfirmed
+    against a live payload that actually carries a file link."""
+    workout = summary.get('workout') or {}
+    return ((workout.get('file') or {}).get('url')
+            or (summary.get('file') or {}).get('url'))
+
+
+# Fields the FIT stream carries that Wahoo's inline JSON summary doesn't (or
+# only as a rolled-up average) — max HR/cadence/power, normalized power,
+# training effect, running dynamics. Overlaid onto the summary dict only where
+# the summary itself has nothing (never overrides a summary-derived value).
+_FIT_STREAM_FIELDS = (
+    'max_hr', 'moving_time_min', 'elev_loss_ft', 'max_cadence',
+    'max_power', 'norm_power', 'aerobic_te', 'anaerobic_te',
+    'swolf', 'active_lengths', 'stride_length_m',
+    'vert_oscillation_cm', 'vert_ratio_pct', 'gct_ms', 'gct_balance',
+)
+
+
+def _fetch_wahoo_fit_stream(db: Any, user_id: int, file_url: str) -> bytes | None:
+    """Best-effort GET of the FIT file linked from a workout_summary (#1093)
+    using a fresh OAuth token. Returns None on any failure (no token, network,
+    non-2xx) — the summary fields alone are still a complete cardio_log row, so
+    a fetch failure must never block that base import."""
+    token = pa.get_fresh_access_token(
+        db, user_id, 'wahoo',
+        token_url=_WAHOO_TOKEN_URL,
+        client_id=os.environ.get('WAHOO_CLIENT_ID'),
+        client_secret=os.environ.get('WAHOO_CLIENT_SECRET'),
+    )
+    if not token:
+        return None
+    try:
+        resp = requests.get(file_url, headers={'Authorization': f'Bearer {token}'},
+                            timeout=15)
+        resp.raise_for_status()
+        return resp.content
+    except requests.RequestException as exc:
+        current_app.logger.warning('Wahoo FIT stream fetch failed: %s', exc)
+        return None
+
+
+def _merge_fit_stream_fields(data: dict, fit_bytes: bytes) -> bool:
+    """Parse the linked FIT (reusing `garmin_fit_parser.parse_fit` directly —
+    FIT is a vendor-neutral format, not extracting a shared module per the
+    plan's scope) and overlay its stream-level fields onto the Wahoo summary
+    dict. Discipline resolution + provider tagging are left untouched (Wahoo's
+    own matrix §10.2 mapping, not the FIT sport enum). Returns whether any
+    field was added; any parse failure (malformed FIT, strength-only session)
+    is swallowed — best-effort enrichment, not a required input."""
+    from garmin_fit_parser import parse_fit
+    try:
+        parsed = parse_fit(fit_bytes)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never break the import
+        current_app.logger.warning('Wahoo FIT stream parse failed: %s', exc)
+        return False
+    if parsed.get('log_type') != 'cardio':
+        return False
+    fit_data = parsed['data']
+    added = False
+    for field in _FIT_STREAM_FIELDS:
+        val = fit_data.get(field)
+        if val is not None and data.get(field) is None:
+            data[field] = val
+            added = True
+    return added
+
+
 def _ingest_workout_summary(db: Any, user_id: int, workout_id: str, summary: dict) -> bool:
     """Write a Wahoo workout_summary to cardio_log (idempotent on
-    (user_id, wahoo_workout_id))."""
+    (user_id, wahoo_workout_id)). When the payload links a full FIT file
+    (#1093), fetch + parse it to fill in the stream-level fields the inline
+    summary doesn't carry (see module docstring)."""
     if db.execute(
         'SELECT id FROM cardio_log WHERE wahoo_workout_id = ? AND user_id = ?',
         (workout_id, user_id),
@@ -447,8 +528,14 @@ def _ingest_workout_summary(db: Any, user_id: int, workout_id: str, summary: dic
         return False
     from routes.garmin import _bulk_insert_cardio
     data = normalize_wahoo_summary(summary)
+    fit_stream_used = False
+    file_url = _wahoo_fit_url(summary)
+    if file_url:
+        fit_bytes = _fetch_wahoo_fit_stream(db, user_id, file_url)
+        if fit_bytes:
+            fit_stream_used = _merge_fit_stream_fields(data, fit_bytes)
     _bulk_insert_cardio(db, data, user_id, workout_id, source='wahoo')
     print(f'[wahoo-ingest] workout={workout_id} user={user_id} '  # noqa: T201
           f'-> cardio_log discipline={data.get("discipline_id")} '
-          f'bucket={data["_provider_raw"]["bucket"]}')
+          f'bucket={data["_provider_raw"]["bucket"]} fit_stream_used={fit_stream_used}')
     return True

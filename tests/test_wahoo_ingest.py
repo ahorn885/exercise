@@ -143,6 +143,140 @@ class TestIngest:
         assert captured['data']['discipline_id'] == 'D-002'
 
 
+# ── FIT-stream enrichment (#1093) ──────────────────────────────────────
+
+class TestFitStreamUrl:
+    def test_top_level_file_url(self):
+        from routes.wahoo import _wahoo_fit_url
+        assert _wahoo_fit_url({'file': {'url': 'https://x/a.fit'}}) == 'https://x/a.fit'
+
+    def test_nested_under_workout(self):
+        from routes.wahoo import _wahoo_fit_url
+        assert _wahoo_fit_url(
+            {'workout': {'file': {'url': 'https://x/b.fit'}}}
+        ) == 'https://x/b.fit'
+
+    def test_absent_is_none(self):
+        from routes.wahoo import _wahoo_fit_url
+        assert _wahoo_fit_url({'id': 88}) is None
+
+
+class TestMergeFitStreamFields:
+    def test_fills_fields_the_summary_is_missing(self, monkeypatch):
+        import routes.wahoo as wahoo
+        monkeypatch.setattr(
+            'garmin_fit_parser.parse_fit',
+            lambda raw: {'log_type': 'cardio', 'data': {
+                'max_hr': 178, 'norm_power': 210, 'gct_ms': 245,
+            }})
+        data = {'avg_hr': 150, 'max_hr': None, 'norm_power': None, 'gct_ms': None}
+        added = wahoo._merge_fit_stream_fields(data, b'fake-fit-bytes')
+        assert added is True
+        assert data['max_hr'] == 178
+        assert data['norm_power'] == 210
+        assert data['gct_ms'] == 245
+        assert data['avg_hr'] == 150  # untouched — not a FIT-stream field
+
+    def test_never_overrides_a_value_the_summary_already_has(self, monkeypatch):
+        import routes.wahoo as wahoo
+        monkeypatch.setattr(
+            'garmin_fit_parser.parse_fit',
+            lambda raw: {'log_type': 'cardio', 'data': {'max_hr': 999}})
+        data = {'max_hr': 178}
+        wahoo._merge_fit_stream_fields(data, b'fake-fit-bytes')
+        assert data['max_hr'] == 178
+
+    def test_non_cardio_parse_is_a_no_op(self, monkeypatch):
+        import routes.wahoo as wahoo
+        monkeypatch.setattr(
+            'garmin_fit_parser.parse_fit',
+            lambda raw: {'log_type': 'strength', 'data': []})
+        data = {'max_hr': None}
+        assert wahoo._merge_fit_stream_fields(data, b'fake-fit-bytes') is False
+        assert data['max_hr'] is None
+
+    def test_parse_failure_is_swallowed(self, monkeypatch):
+        import routes.wahoo as wahoo
+        monkeypatch.setattr(
+            'garmin_fit_parser.parse_fit',
+            lambda raw: (_ for _ in ()).throw(ValueError('no session message')))
+        data = {'max_hr': None}
+        app = _make_app(wahoo.bp)
+        with app.app_context():
+            assert wahoo._merge_fit_stream_fields(data, b'garbage') is False
+        assert data['max_hr'] is None
+
+
+class TestIngestWithFitStream:
+    def test_full_path_fetches_and_merges_stream_fields(self, monkeypatch):
+        import routes.wahoo as wahoo
+        import routes.garmin as garmin
+        captured = {}
+        monkeypatch.setattr(
+            garmin, '_bulk_insert_cardio',
+            lambda db, data, uid, gid, source='garmin', **k:
+                captured.update(data=data, gid=gid, source=source) or 1)
+        monkeypatch.setattr(wahoo.pa, 'get_fresh_access_token', lambda *a, **k: 'AT')
+        monkeypatch.setattr(
+            wahoo.requests, 'get',
+            lambda url, headers=None, timeout=None: _FakeFitResp(b'fake-fit-bytes'))
+        monkeypatch.setattr(
+            'garmin_fit_parser.parse_fit',
+            lambda raw: {'log_type': 'cardio', 'data': {'max_hr': 182, 'norm_power': 215}})
+        app = _make_app(wahoo.bp)
+        with app.app_context():
+            ok = wahoo._ingest_workout_summary(_DB(), 7, '88', {
+                'id': 88, 'workout_type_id': 1, 'distance_accum': 5000,
+                'duration_total_accum': 1500,
+                'file': {'url': 'https://api.wahooligan.com/files/88.fit'},
+            })
+        assert ok is True
+        assert captured['data']['max_hr'] == 182
+        assert captured['data']['norm_power'] == 215
+        # Discipline resolution stays Wahoo's own matrix mapping, untouched by
+        # the FIT enrichment.
+        assert captured['data']['discipline_id'] == 'D-002'
+
+    def test_no_token_skips_fetch_without_error(self, monkeypatch):
+        import routes.wahoo as wahoo
+        import routes.garmin as garmin
+        captured = {}
+        monkeypatch.setattr(
+            garmin, '_bulk_insert_cardio',
+            lambda db, data, uid, gid, source='garmin', **k:
+                captured.update(data=data, gid=gid, source=source) or 1)
+        monkeypatch.setattr(wahoo.pa, 'get_fresh_access_token', lambda *a, **k: None)
+        ok = wahoo._ingest_workout_summary(_DB(), 7, '88', {
+            'id': 88, 'workout_type_id': 1,
+            'file': {'url': 'https://api.wahooligan.com/files/88.fit'},
+        })
+        assert ok is True
+        assert captured['data'].get('max_hr') is None
+
+    def test_no_file_url_never_attempts_a_fetch(self, monkeypatch):
+        import routes.wahoo as wahoo
+        import routes.garmin as garmin
+        monkeypatch.setattr(garmin, '_bulk_insert_cardio', lambda *a, **k: 1)
+
+        def _boom(*a, **k):
+            raise AssertionError('should not fetch when there is no file url')
+        monkeypatch.setattr(wahoo.pa, 'get_fresh_access_token', _boom)
+        ok = wahoo._ingest_workout_summary(_DB(), 7, '88', {
+            'id': 88, 'workout_type_id': 1})
+        assert ok is True
+
+
+class _FakeFitResp:
+    def __init__(self, content, status=200):
+        self.content = content
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.RequestException(f'status {self.status_code}')
+
+
 # ── OAuth connect ─────────────────────────────────────────────────────
 
 class TestOAuth:

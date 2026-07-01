@@ -72,11 +72,13 @@ def test_import_landing_on_shell(monkeypatch):
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert 'app-shell' in html
-    assert 'Import .FIT files.' in html
+    assert 'Import activity files.' in html
     # Bulk uploader hooks (data-bulk-* → app.js) survive the migration.
     assert 'data-bulk-upload' in html
     assert 'data-bulk-drop' in html
     assert '/garmin/import/bulk' in html
+    # #1092 — the single-activity form accepts .tcx/.gpx too, not just .fit.
+    assert 'accept=".fit,.tcx,.gpx,.zip"' in html
     # Single-activity parse form + supported-types table.
     assert 'name="fit_file"' in html
     assert 'Parse file' in html

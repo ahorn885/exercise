@@ -43,8 +43,9 @@ def import_fit():
             return redirect(url_for('garmin.import_fit'))
         fit_file = request.files['fit_file']
         fname = secure_filename(fit_file.filename or '').lower()
-        if not (fname.endswith('.fit') or fname.endswith('.zip')):
-            flash('File must be a .fit or .zip file.', 'danger')
+        ext = next((e for e in _ACTIVITY_EXTS if fname.endswith('.' + e)), None)
+        if ext is None and not fname.endswith('.zip'):
+            flash('File must be a .fit, .tcx, .gpx, or .zip file.', 'danger')
             return redirect(url_for('garmin.import_fit'))
         try:
             raw = fit_file.read()
@@ -56,17 +57,25 @@ def import_fit():
                         flash('No .fit file found inside the zip.', 'danger')
                         return redirect(url_for('garmin.import_fit'))
                     raw = zf.read(fit_names[0])
+                ext = 'fit'
             from garmin_fit_parser import parse_fit
-            result = parse_fit(raw)
+            from tcx_gpx_parser import parse_tcx, parse_gpx, detect_source
+            parser = {'fit': parse_fit, 'tcx': parse_tcx, 'gpx': parse_gpx}[ext]
+            result = parser(raw)
+            # #1092 — .tcx/.gpx are non-Garmin per-session exports; auto-detect the
+            # source from the file's own metadata (same as the bulk path) so the
+            # dedup prefix + provider_raw_record tagging below line up correctly.
+            source = 'garmin' if ext == 'fit' else detect_source(raw, ext)
             # Stable dedup key so the cardio provider_raw_record write (Slice 2c,
             # in import_confirm) keys on the same id the bulk path uses.
-            result['fit_dedup_id'] = _fit_dedup_id(raw)
+            result['fit_dedup_id'] = _fit_dedup_id(raw, _source_prefix(source))
             flask_session['fit_import'] = result
+            flask_session['fit_import_source'] = source
             flask_session['fit_name_override'] = request.form.get('activity_name', '')
             flask_session['fit_notes'] = request.form.get('notes', '')
             return redirect(url_for('garmin.import_preview'))
         except Exception as e:
-            flash(f'Error parsing FIT file: {e}', 'danger')
+            flash(f'Error parsing file: {e}', 'danger')
             return redirect(url_for('garmin.import_fit'))
     return render_template('garmin/import.html')
 
@@ -266,13 +275,15 @@ def import_confirm():
         )
         log_id = cur.lastrowid
         _record_provider_raw_cardio(
-            db, data.get('_provider_raw'), uid, result.get('fit_dedup_id'))
+            db, data.get('_provider_raw'), uid, result.get('fit_dedup_id'),
+            provider=flask_session.get('fit_import_source'))
         _record_disposition_for_import(
             db, disposition, plan_item_id, raw_plan_item_id,
             log_type='cardio', log_id=log_id, reason=swap_reason, user_id=uid,
         )
         db.commit()
         flask_session.pop('fit_import', None)
+        flask_session.pop('fit_import_source', None)
         flash(_disposition_flash('cardio', disposition, raw_plan_item_id), 'success')
         return redirect(url_for('cardio.list_entries'))
 
@@ -357,6 +368,7 @@ def import_confirm():
             )
         db.commit()
         flask_session.pop('fit_import', None)
+        flask_session.pop('fit_import_source', None)
         flash(_disposition_flash('strength', disposition, raw_plan_item_id) +
               f' ({inserted} exercise entries added.)', 'success')
         return redirect(url_for('training.list_entries'))
