@@ -448,12 +448,31 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   `.FIT` button tooltip + `templates/plan_create/view.html`'s Zwift link (relabeled "↓ .zwo (Zwift,
   Karoo)") now note Karoo compatibility. No logic changes; suite unaffected.
 
-**T-5.7 — Real-DB ingest test (#754, do last)**
+**T-5.7 — Real-DB ingest test (#754, do last)** — **DONE 2026-07-01.**
 - Files: `tests/test_cardio_ingest.py` (not yet created).
 - Steps: add `tests/test_cardio_ingest.py` (real-DB) covering `_bulk_insert_cardio` + dedup +
   provider_raw across all sources.
 - No-ops: **#890** verify already-live; **#747** already fixed; **#833** blocked on partner — do not
   build.
+- **As-built:** used the local `postgres:16` cluster already installed in the container (start it,
+  bootstrap a scratch `aidstation_test` DB via `init_db.init_postgres()`) rather than reaching for a
+  new CI job in this PR — the recipe the predecessor handoff left. Added a `requires_real_postgres`
+  skipif marker to `tests/conftest.py` (mirrors `requires_anthropic_api_key`'s pattern exactly): gated
+  on a `TEST_DATABASE_URL` env var, so `pytest tests/` stays $0/side-effect-free by default and the new
+  file collects but skips (19 skipped) unless the var is set. New `tests/test_cardio_ingest.py` (19
+  tests) runs `_bulk_insert_cardio` + `_record_provider_raw_cardio` + `_already_imported` against the
+  real bootstrapped schema (not a fake connection that just records SQL strings): gid lands in the
+  right per-source column (garmin/coros/wahoo/polar/strava); `provider_raw_record` is tagged with the
+  true source and upserts (not duplicates) on a second write for the same external_id — proving the
+  `ON CONFLICT (user_id, provider, data_type, external_id)` arbiter actually matches the table's real
+  unique constraint; the #752 regression class itself (a blank `observed_at` string, which is not a
+  valid Postgres TIMESTAMP literal) stores NULL rather than raising, against a real server this time;
+  the partial UNIQUE index each of coros/wahoo/polar/strava has on `(user_id, <col>)` really exists and
+  raises `UniqueViolation` on a same-user duplicate, and really is scoped per-user (a different user
+  can reuse the same external id); `_already_imported` (the caller-side dedup guard `garmin` relies on,
+  since it has no DB-level unique index) is correctly scoped to the authenticated user only. **CI
+  job deliberately NOT wired this session** (the predecessor handoff flagged deciding this as part of
+  T-5.7 itself) — filed as a fast-follow, see §5.
 
 ---
 
@@ -465,7 +484,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
 5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 — **DONE 2026-07-01**
    → T-5.4 — **BLOCKED-ON-PARTNER 2026-07-01, skipped** → T-5.5/T-5.6 — **DONE 2026-07-01**
-   → T-5.7 (next, do last).
+   → T-5.7 — **DONE 2026-07-01. WS-5 fully closed.**
 
 ## 5. Bookkeeping (after approval; outside plan mode)
 
@@ -476,3 +495,8 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   T-1.2 removed the dead code in the same PR, so there was nothing left to track.
 - Re-scope on GitHub: #302 → Layer-3B/sleep_quality only; #306 → race_url only; #284 → resolved by
   #249; #890/#747 → close after verify; update #1060 description.
+- **T-5.7 (#754) — DONE 2026-07-01:** closed `completed`. Filed
+  [#1125](https://github.com/ahorn885/exercise/issues/1125) for the CI-wiring fast-follow (the tests
+  exist and pass locally against `TEST_DATABASE_URL`, but nothing in CI sets that var yet — deciding
+  whether to reuse/extend `layer0-gate`'s Postgres service or add a new job is its own scoped piece,
+  not a T-5.7 sub-step). **WS-5 is now fully closed** — every task DONE or BLOCKED-ON-PARTNER.
