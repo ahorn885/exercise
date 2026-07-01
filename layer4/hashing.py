@@ -707,6 +707,78 @@ def compute_seam_resynth_block_cache_key(
     return _sha256_hex("||".join(components))
 
 
+def compute_week_seam_resynth_block_cache_key(
+    *,
+    call_cache_key: str,
+    phase_name: str,
+    phase_index: int,
+    week_in_phase: int,
+    prior_week_sessions: list[PlanSession],
+    week_seam_index: int,
+    seam_issues: list[str],
+    seam_direction: str | None,
+) -> str:
+    """T-1.5 (#847) — cache key for a WEEK-SEAM-driven single-week
+    re-synthesis block.
+
+    Mirrors `compute_seam_resynth_block_cache_key` (the phase-seam analogue)
+    but at week granularity: the re-synth targets exactly ONE week-block
+    (`week_range=(k, k)`), so instead of chaining through a whole-phase
+    `prev_accepted_output_hash`, this hashes the actual `prior_week_sessions`
+    (the week immediately before the targeted week — sourced live from
+    `results_by_index`, which may itself already reflect an earlier
+    resynth/splice, per CW-c). `week_seam_index` disambiguates two different
+    week seams that could target the same (phase, week) (e.g. `re_prompt_next`
+    from week-seam g and `re_prompt_prior` from week-seam g+1), mirroring the
+    phase-seam key's `seam_index` component. The block is stored under a
+    disjoint `phase_idx` namespace (see `_week_seam_resynth_block_phase_idx`
+    in `plan_create.py`) so it can never collide with — or false-HIT — the
+    original primary block at the same (phase, week).
+    """
+    components = [
+        call_cache_key,
+        "week_seam_resynth",
+        phase_name,
+        str(phase_index),
+        str(week_in_phase),
+        _sha256_hex(canonical_json([s.model_dump(mode="json") for s in prior_week_sessions])),
+        str(week_seam_index),
+        seam_direction or "",
+        _sha256_hex("␟".join(seam_issues)),
+    ]
+    return _sha256_hex("||".join(components))
+
+
+def compute_sessions_content_hash(sessions: list[PlanSession]) -> str:
+    """T-1.5 (#847) CW-b — SHA-256 of canonical-JSON of a `list[PlanSession]`,
+    excluding `session_id` + `plan_version_id`. Used to detect whether a
+    week-seam-driven re-synthesis actually CHANGED a week's session CONTENT
+    vs. its pre-resynth state.
+
+    Deliberately narrower than `compute_accepted_output_hash` in two ways:
+    it drops `synthesis_metadata` (token counts differ across any two real
+    LLM calls even when the sessions are otherwise identical, which would
+    make an "unchanged" comparison against it vacuously always-changed), and
+    it drops `session_id` (per-call synthetic, derived from the caller's
+    `session_id_prefix` — see `per_phase.py::synthesize_phase` — which
+    differs between a primary block and its week-seam-resynth block by
+    construction, so it would ALSO make "unchanged" vacuously always-changed)
+    + `plan_version_id` (rebindable per §9.4, never real content — mirrors
+    `_rebind_payload_dict` treating it the same way)."""
+    return _sha256_hex(
+        canonical_json(
+            [
+                {
+                    k: v
+                    for k, v in s.model_dump(mode="json").items()
+                    if k not in ("session_id", "plan_version_id")
+                }
+                for s in sessions
+            ]
+        )
+    )
+
+
 def race_week_brief_key(
     *,
     user_id: int,

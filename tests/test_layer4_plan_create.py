@@ -1428,6 +1428,326 @@ class TestSeamReview:
         assert len(seen) == 5 * 20
 
 
+# ─── T-1.5 (#847) — week-seam auto-resynth ───────────────────────────────────
+
+
+def _single_phase_layer3b(weeks: int = 3) -> Layer3BPayload:
+    """A plan with exactly ONE phase (Base, `weeks` weeks) — zero phase-seams,
+    so `seam_caller` below is exercised ONLY by week-seam reviews, keeping the
+    call sequence fully deterministic (paired with `_SequentialExecutor`)."""
+    return Layer3BPayload(
+        user_id=42,
+        as_of=datetime(2026, 5, 31, 10, 0, 0),
+        model="claude-opus-4-7",
+        temperature=0.0,
+        prompt_hash="abc",
+        latency_ms=1500,
+        input_tokens=3000,
+        output_tokens=800,
+        etl_version_set={"layer0": "v7"},
+        mode="no-event",
+        goal_viability=GoalViability(
+            viability="achievable",
+            confidence="high",
+            reasoning_text="solid base",
+            evidence_basis=["e"],
+            suggested_adjustments=[],
+        ),
+        periodization_shape=PeriodizationShape(
+            mode="custom",
+            start_phase="Base",
+            phase_weeks={"Base": weeks},
+            reasoning_text="r",
+            evidence_basis=["e"],
+        ),
+        hitl_surface=[],
+    )
+
+
+def _week_seam_call_kwargs(weeks: int = 3) -> dict[str, Any]:
+    kwargs = _call_kwargs()
+    kwargs["layer3b_payload"] = _single_phase_layer3b(weeks)
+    return kwargs
+
+
+def _week_output(
+    *, week_num: int, n_sessions: int = 3, duration_min: int = 60, note: str = ""
+) -> dict[str, Any]:
+    wk_start = _PLAN_START + timedelta(days=(week_num - 1) * 7)
+    offsets = sorted([0, 2, 4, 1, 3, 5, 6][:n_sessions])
+    sessions = [
+        _cardio_session(d=wk_start + timedelta(days=off), idx=0, duration_min=duration_min)
+        for off in offsets
+    ]
+    return {"sessions": sessions, "phase_synthesis_notes": note, "opportunities": []}
+
+
+class _CountingPhaseSeqStub:
+    """Sequential + counting phase-synthesis stub: call i returns
+    `outputs[min(i, len(outputs) - 1)]`, exposing `.calls` so a test can
+    assert exactly how many synthesizer calls fired (primary week-blocks +
+    any week-seam-resynth / CW-b downstream-rebuild blocks)."""
+
+    def __init__(self, outputs: list[dict[str, Any]]) -> None:
+        self.outputs = outputs
+        self.calls = 0
+
+    def __call__(self, *_a, **_kw) -> _PhaseOut:
+        i = self.calls
+        self.calls += 1
+        return _PhaseOut(
+            tool_args=self.outputs[min(i, len(self.outputs) - 1)],
+            input_tokens=6000,
+            output_tokens=2000,
+            latency_ms=8000,
+        )
+
+
+def _week_seam_stub(script: list[dict[str, Any]]):
+    """Sequential week-seam-review stub — call i returns `script[i]` (clamped
+    to the last entry). Paired with `_SequentialExecutor` so the iter-1 calls
+    (normally concurrent) fire in deterministic, scriptable order."""
+    state = {"i": 0}
+
+    def _call(*_a, **_kw) -> _SeamOut:
+        out = script[min(state["i"], len(script) - 1)]
+        state["i"] += 1
+        return _SeamOut(
+            tool_args=out, input_tokens=500, output_tokens=50, latency_ms=500
+        )
+
+    return _call
+
+
+class _SequentialExecutor:
+    """Runs `.map()` synchronously in submission order — makes the normally-
+    concurrent iter-1 week-seam-review dispatch deterministic for the
+    call-order-scripted stubs above."""
+
+    def map(self, fn, iterable):
+        return [fn(item) for item in list(iterable)]
+
+
+_APPROVED_VERDICT: dict[str, Any] = {
+    "reviewer_verdict": "approved",
+    "seam_issues": [],
+    "proposed_patch_direction": None,
+}
+
+
+class TestWeekSeamAutoResynth:
+    """T-1.5 (#847) — a `flagged_major`/`patched` week-seam verdict with a
+    re-prompt direction auto-resynthesizes the ONE targeted week-block."""
+
+    def test_flagged_cliff_re_prompt_next_corrects_the_block(self):
+        """(a) A mid-phase cliff at week 2 is flagged (re_prompt_next) by the
+        wk1->wk2 seam and re-synthesized; the corrected content lands in the
+        final result in place of the original cliff content. The wk2->wk3
+        seam approves on iter-1 (no resynth of its own)."""
+        week1 = _week_output(week_num=1, note="week1-normal")
+        week2_cliff = _week_output(
+            week_num=2, n_sessions=1, duration_min=20, note="week2-cliff"
+        )
+        week3 = _week_output(week_num=3, note="week3-normal")
+        week2_corrected = _week_output(
+            week_num=2, n_sessions=3, duration_min=55, note="week2-corrected"
+        )
+        # Week 2's content genuinely changes (cliff -> corrected), so CW-b
+        # fires exactly one bounded downstream rebuild of week 3 (re_prompt_next
+        # target+1) — script its call (5th) with valid week-3-dated content.
+        week3_rebuilt = _week_output(week_num=3, note="week3-rebuilt")
+        phase_caller = _CountingPhaseSeqStub(
+            [week1, week2_cliff, week3, week2_corrected, week3_rebuilt]
+        )
+        seam_caller = _week_seam_stub(
+            [
+                {
+                    "reviewer_verdict": "flagged_major",
+                    "seam_issues": ["Week 2 volume cliff with no stated rationale."],
+                    "proposed_patch_direction": "re_prompt_next",
+                },
+                _APPROVED_VERDICT,  # wk2->wk3 iter-1: approved, no resynth
+                _APPROVED_VERDICT,  # wk1->wk2 iter-2: approved, cycle closes
+            ]
+        )
+
+        result = llm_layer4_plan_create(
+            **_week_seam_call_kwargs(3),
+            phase_caller=phase_caller,
+            seam_caller=seam_caller,
+            executor=_SequentialExecutor(),
+        )
+
+        def _week(n: int) -> list:
+            return [
+                s
+                for s in result.sessions
+                if s.phase_metadata is not None and s.phase_metadata.week_in_phase == n
+            ]
+
+        week2_sessions = _week(2)
+        assert len(week2_sessions) == 3
+        assert all(s.duration_min == 55 for s in week2_sessions)
+        # week 1 is untouched; week 3 was rebuilt (CW-b, bounded to 1 hop)
+        # since week 2's content changed, but still lands valid content.
+        assert len(_week(1)) == 3 and all(s.duration_min == 60 for s in _week(1))
+        assert len(_week(3)) == 3 and all(s.duration_min == 60 for s in _week(3))
+        # 3 primary calls + 1 targeted resynth + 1 bounded downstream rebuild —
+        # never a whole-phase re-run, never a 2nd downstream hop.
+        assert phase_caller.calls == 5
+        # iter-2 closed the loop clean — no seam_unresolved escalation.
+        assert not any(
+            o.category == "seam_unresolved" for o in result.notable_observations
+        )
+
+    def test_planned_recovery_week_no_resynth(self):
+        """(b) Both week seams approve on iter-1 (the reviewer recognizes the
+        dip as a planned recovery week, not a cliff) -> no resynth call fires;
+        the primary content is untouched and no seam observation is raised."""
+        week1 = _week_output(week_num=1, note="week1-normal")
+        week2_recovery = _week_output(
+            week_num=2, n_sessions=1, duration_min=30, note="week2-planned-recovery"
+        )
+        week3 = _week_output(week_num=3, note="week3-normal")
+        phase_caller = _CountingPhaseSeqStub([week1, week2_recovery, week3])
+        seam_caller = _week_seam_stub([_APPROVED_VERDICT, _APPROVED_VERDICT])
+
+        result = llm_layer4_plan_create(
+            **_week_seam_call_kwargs(3),
+            phase_caller=phase_caller,
+            seam_caller=seam_caller,
+            executor=_SequentialExecutor(),
+        )
+
+        week2_sessions = [
+            s
+            for s in result.sessions
+            if s.phase_metadata is not None and s.phase_metadata.week_in_phase == 2
+        ]
+        assert len(week2_sessions) == 1
+        assert week2_sessions[0].duration_min == 30
+        # No 4th (resynth) call fired.
+        assert phase_caller.calls == 3
+        assert not any(
+            o.category in ("warning", "seam_unresolved")
+            for o in result.notable_observations
+        )
+
+    def test_resynth_cache_row_counted_by_stall_backstop_band(self):
+        """(c) R4: a week-seam-resynth cache row lands in
+        [_WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE, _SEAM_CACHE_PHASE_IDX_BASE) — i.e.
+        inside [0, _SEAM_CACHE_PHASE_IDX_BASE), the exact range
+        `routes.plan_create._count_cached_blocks` counts as generation
+        progress."""
+        from layer4.plan_create import (
+            _SEAM_CACHE_PHASE_IDX_BASE,
+            _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE,
+        )
+
+        week1 = _week_output(week_num=1, note="week1")
+        week2_cliff = _week_output(
+            week_num=2, n_sessions=1, duration_min=20, note="week2-cliff"
+        )
+        week3 = _week_output(week_num=3, note="week3")
+        week2_corrected = _week_output(week_num=2, note="week2-corrected")
+        phase_caller = _CountingPhaseSeqStub(
+            [week1, week2_cliff, week3, week2_corrected]
+        )
+        seam_caller = _week_seam_stub(
+            [
+                {
+                    "reviewer_verdict": "patched",
+                    "seam_issues": ["Week 2 under-loaded relative to the ramp."],
+                    "proposed_patch_direction": "re_prompt_next",
+                },
+                _APPROVED_VERDICT,
+                _APPROVED_VERDICT,
+            ]
+        )
+        cache = Layer4Cache(InMemoryCacheBackend())
+
+        llm_layer4_plan_create(
+            **_week_seam_call_kwargs(3),
+            phase_caller=phase_caller,
+            seam_caller=seam_caller,
+            executor=_SequentialExecutor(),
+            cache=cache,
+            call_cache_key="call-week-seam-resynth",
+        )
+
+        backend: Any = cache.backend
+        resynth_rows = [
+            idx
+            for (_k, idx) in backend._rows.keys()
+            if _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE
+        ]
+        assert resynth_rows, "expected a week-seam-resynth cache row"
+        assert all(0 <= idx < _SEAM_CACHE_PHASE_IDX_BASE for idx in resynth_rows)
+
+    def test_week_seam_resynth_phase_idx_stays_in_disjoint_band(self):
+        """Direct band-membership check for `_week_seam_resynth_block_phase_idx`,
+        mirroring `test_seam_resynth_phase_idx_stays_in_disjoint_band` for the
+        phase-seam analogue: every (week_seam_index, downstream) pair lands
+        inside [1000, 1500) and distinct pairs never collide."""
+        from layer4.plan_create import (
+            _SEAM_CACHE_PHASE_IDX_BASE,
+            _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE,
+            _week_seam_resynth_block_phase_idx,
+        )
+
+        seen = set()
+        for ws_idx in range(200):
+            for downstream in (False, True):
+                idx = _week_seam_resynth_block_phase_idx(ws_idx, downstream=downstream)
+                assert _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE
+                seen.add(idx)
+        assert len(seen) == 200 * 2
+
+    def test_unchanged_resynth_output_does_not_invalidate_downstream_week(self):
+        """(d) CW-b: when the re_prompt_next resynth reproduces week 2's
+        content unchanged (modulo `session_id`/`plan_version_id`, which are
+        per-call synthetic — see `compute_sessions_content_hash`), NO
+        downstream (week 3) rebuild fires: exactly 4 synthesizer calls total
+        (3 primary + the 1 resynth), and week 3 keeps its original content."""
+        week1 = _week_output(week_num=1, note="week1")
+        week2 = _week_output(week_num=2, n_sessions=2, duration_min=45, note="week2-same")
+        week3 = _week_output(week_num=3, note="week3-original")
+        # The resynth call (4th) returns the SAME dict as the primary week-2
+        # call (2nd) — byte-identical session content; only `session_id` will
+        # differ downstream (stamped from the caller's session_id_prefix,
+        # which differs between a primary and a resynth call by construction).
+        phase_caller = _CountingPhaseSeqStub([week1, week2, week3, week2])
+        seam_caller = _week_seam_stub(
+            [
+                {
+                    "reviewer_verdict": "flagged_major",
+                    "seam_issues": ["Week 2 looks flat relative to the ramp."],
+                    "proposed_patch_direction": "re_prompt_next",
+                },
+                _APPROVED_VERDICT,  # wk2->wk3 iter-1: approved
+                _APPROVED_VERDICT,  # wk1->wk2 iter-2: approved
+            ]
+        )
+
+        result = llm_layer4_plan_create(
+            **_week_seam_call_kwargs(3),
+            phase_caller=phase_caller,
+            seam_caller=seam_caller,
+            executor=_SequentialExecutor(),
+        )
+
+        week3_sessions = [
+            s
+            for s in result.sessions
+            if s.phase_metadata is not None and s.phase_metadata.week_in_phase == 3
+        ]
+        assert len(week3_sessions) == 3
+        assert all(s.duration_min == 60 for s in week3_sessions)
+        # Exactly 4 calls fired: 3 primary + 1 resynth — the CW-b downstream
+        # rebuild of week 3 did NOT fire because content was unchanged.
+        assert phase_caller.calls == 4
+
+
 # ─── Layer4Payload composition invariants ────────────────────────────────────
 
 

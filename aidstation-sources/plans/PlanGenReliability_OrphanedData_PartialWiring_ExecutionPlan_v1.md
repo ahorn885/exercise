@@ -170,7 +170,8 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   touched files — 0 new findings (2 pre-existing unused-`Any`-import findings confirmed unchanged via
   `git stash` diff).
 
-**T-1.5 — Week-seam auto-resynth (#847)**
+**T-1.5 — Week-seam auto-resynth (#847)** — **CODE DONE 2026-07-01; real-LLM walk still owed to
+Andy (folds into the same T-2.9 walk already pending — see as-built).**
 - Preconditions: T-1.4 merged (R3).
 - Files: `layer4/plan_create.py`, `layer4/hashing.py`, `aidstation-sources/specs/Layer4_Spec.md`,
   `tests/`.
@@ -202,6 +203,67 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   mid-phase cliff → `re_prompt` → corrected block; (b) planned recovery week → no re-synth; (c) a
   week-seam re-synth cache row is counted by `_count_cached_blocks` (R4); (d) unchanged re-prompt
   output does not invalidate downstream weeks (CW-b).
+- **As-built:** built exactly per steps 1-7, no scope deviation. **Step 3 (R4 band):** `[0,1000)` was
+  already fully claimed (`[0,500)` primary + `[500,1000)` phase-seam resynth, tightly packed via
+  `_SEAM_RESYNTH_BLOCK_IDX_BASE`/`_STRIDE`) — no literal gap existed inside it. Resolved by WIDENING
+  the counted range instead: `_SEAM_CACHE_PHASE_IDX_BASE` bumped `1000` → `1500` (all 3 downstream
+  consumers — `_SEAM_ITER2_CACHE_PHASE_IDX_BASE`, `routes/plan_create.py::_count_cached_blocks`,
+  `_generation_stalled` — reference it symbolically, confirmed via repo-wide grep, so nothing hardcodes
+  the old literal), carving out a genuinely new `[1000,1500)` sub-band for week-seam-resynth blocks
+  (`_WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE = 1000`, stride 2: primary-target slot + a reserved
+  CW-b-downstream-rebuild slot). `_SEAM_ITER2_CACHE_PHASE_IDX_BASE` bumped `2000` → `2500` in lockstep
+  (stays `>= _SEAM_CACHE_PHASE_IDX_BASE`); `_WEEK_SEAM_CACHE_PHASE_IDX_BASE` (week-seam-REVIEW rows,
+  distinct from resynth-BLOCK rows) stays `3000`, untouched per "do NOT reuse the `[3000,)` review
+  band." New key helper `compute_week_seam_resynth_block_cache_key` (`hashing.py`) mirrors
+  `compute_seam_resynth_block_cache_key` but hashes the actual live `prior_week_sessions` rather than
+  chaining a whole-phase `prev_accepted_output_hash` (a week-seam resynth threads off
+  `results_by_index`'s CURRENT state, which may already reflect an earlier splice, not a static
+  pre-resynth snapshot).
+  **Step 4 (CW-c splice-back):** new `_splice_week_into_phase_result()` + `_sessions_before_week()` +
+  `_merge_week_resynth_meta()` helpers — replace only the targeted week's sessions (matched via
+  `phase_metadata.week_in_phase`) inside the phase's existing `PhaseSynthesisResult`, combine the
+  aggregate fields (tokens/latency/llm_call_count summed, retries_used maxed, cap_hit OR'd, notes
+  joined) mirroring `_aggregate_block_results`'s own combine rule for a 2-item list.
+  **Step 5 (CW-b containment):** added `compute_sessions_content_hash()` (`hashing.py`) — deliberately
+  narrower than `compute_accepted_output_hash`, excluding `synthesis_metadata` (token counts differ
+  across any two real LLM calls even on identical sessions, which would make "unchanged" vacuously
+  always-false) AND excluding `session_id`/`plan_version_id` (per-call synthetic — `session_id` is
+  stamped from the caller's own `session_id_prefix`, which by construction differs between a primary
+  block and its resynth block, so leaving it in would ALSO make "unchanged" vacuously always-false; a
+  test written against the naive full-session hash caught this before it shipped). Bounded to exactly
+  one hop, and only fires for `direction=="re_prompt_next"`: for `re_prompt_prior`, `target_week+1` IS
+  the OTHER side of the SAME seam (`ws.next_week`), already re-evaluated by the iter-2 re-review in
+  step 6 — a mechanical downstream rebuild there would duplicate that judgment call, so it's skipped in
+  that direction (not literally "≤1 downstream rebuild" applied blindly in both directions — a
+  scoped reading of what "downstream" means relative to the seam already under review).
+  **Retry budget:** per the task text's own "(phase, week)" framing (not "(phase)"), tracked as a
+  SEPARATE dict `retries_used_per_week_seam: dict[tuple[phase_index, week], int]`, distinct from
+  `retries_used_per_phase` (the validator + phase-seam shared pool) — two different week seams can
+  target the same (phase, week) (e.g. `re_prompt_next` from seam g + `re_prompt_prior` from seam g+1),
+  mirroring how two adjacent phase-seams can share a phase's budget. Each individual resynth call gets
+  its OWN fresh internal validator-retry budget (`retries_already_used=0`), mirroring the PRIMARY
+  per-week-block loop's convention (not the phase-seam path's shared-counter convention, which is
+  specific to whole-phase re-synth) — reuses `capped_retries_per_phase` as the cap value, no new config
+  surface. **Tests:** 5 new tests in `tests/test_layer4_plan_create.py::TestWeekSeamAutoResynth`
+  (verify (a)-(d) plus a direct band-membership unit test mirroring the phase-seam analogue); a
+  single-phase (`periodization_shape.mode="custom"`, one Base phase) 3-week fixture keeps phase-seam
+  review out of the picture entirely (0 phase-seams), and a `_SequentialExecutor` test double forces
+  the normally-concurrent iter-1 week-seam review dispatch into deterministic, scriptable call order.
+  Suite 4181 passed / 49 skipped (+5 over the T-3.3/WS-2 baseline of 4176/49); `ruff check` on both
+  touched files — 0 new findings (2 pre-existing findings — `plan_create.py`'s unused
+  `Layer4OutputError` import, `test_layer4_plan_create.py`'s unused `RaceDayFueling` import —
+  confirmed unchanged via `git stash` diff). **No `LAYER4_PROMPT_REVISION` bump** — this is a pure
+  orchestrator change; the week-seam reviewer's `SYSTEM_PROMPT` text is untouched (issue #847's own
+  scope note: "orchestrator-only change — no prompt revision").
+  **Real-LLM walk still owed, not done this session** (container can't run one — same constraint as
+  T-2.9): issue #847's own text gates cascade-containment specifically on "only act on containment IF
+  the real-LLM walk shows re-prompt churn," and its §14 gut check on whether the reviewer fires often
+  enough / whether re-prompt actually resolves seams to be judged live, not by mocked-LLM unit tests.
+  The code is built + tested to the extent mockable (verify (a)-(d) above); whether it behaves well
+  against a REAL LLM (does re-prompt actually fix cliffs in practice, does cascade churn show up, is
+  the per-seam cap of 2 enough) is Andy's call on the next real-LLM walk — recommend folding it into
+  the SAME walk already pending for T-2.9 rather than a separate one, since both are Layer 4
+  synthesis-loop behavior best judged together on one real plan generation.
 
 ### WS-2 — Upstream-signal wiring + partial-update (#297/#299/#301/#302/#306 + #305)
 
@@ -549,7 +611,7 @@ everything rather than one per session).**
 ## 4. Global order
 
 1. T-4.1 (isolated quick win). — **DONE 2026-07-01, PR #1104.**
-2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 — **DONE 2026-07-01, Andy-ratified wording** → T-1.5 (next, unbuilt — the plan's most complex task; not started this session). Parallel to WS-2/3.
+2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 — **DONE 2026-07-01, Andy-ratified wording** → T-1.5 — **CODE DONE 2026-07-01 (the plan's most complex task); real-LLM walk still owed, folds into T-2.9's pending walk.** Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 — **ALL DONE 2026-07-01** (T-2.2
    resolved as a no-op — real reader in Layer 3D, nothing to trim without breaking it) → **T-2.9
    (single bump + walk, next)**.
