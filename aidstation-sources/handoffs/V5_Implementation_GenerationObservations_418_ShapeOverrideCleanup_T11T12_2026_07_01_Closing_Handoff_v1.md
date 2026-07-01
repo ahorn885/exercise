@@ -4,7 +4,7 @@
 **Date:** 2026-07-01
 **Plan doc:** [`plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md) §3 WS-1 (T-1.1, T-1.2)
 **Predecessor handoff:** [`V5_Implementation_PlanNaming_1056_T41_2026_07_01_Closing_Handoff_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/handoffs/V5_Implementation_PlanNaming_1056_T41_2026_07_01_Closing_Handoff_v1.md)
-**Branch:** `claude/plan-mode-nested-wadler-4h6bzf` · **PR:** [#1108](https://github.com/ahorn885/exercise/pull/1108), auto-merge armed (merge commit, Andy's go 2026-07-01)
+**Branch:** `claude/plan-mode-nested-wadler-4h6bzf` · **PR:** [#1108](https://github.com/ahorn885/exercise/pull/1108), **MERGED** (merge commit `a8539e0`, Andy's go 2026-07-01) — required a merge-and-resolve pass after PR #1106 (passkeys) landed on `main` first; see §7 addendum below
 **Status:** 12 substantive files (over the nominal 5-file ceiling, but the plan itself pre-scoped T-1.1+T-1.2 as "one PR" touching `payload.py` + all 8-10 `shape_override=None` construction sites + the migration + repo helper + 2 route files — see plan §3 WS-1 file lists). Suite: **4093 passed / 30 skipped, 0 failed** (one pre-existing fixture in `tests/test_redesign_admin_render.py` needed a new key added — see §3).
 
 ---
@@ -110,6 +110,18 @@ Per the execution plan's §4 Global order, after T-1.1+T-1.2:
 | Suite | — | 4093 passed / 30 skipped |
 | Neon | — | No `layer0-apply` owed — public-schema, auto-applies on deploy |
 | GitHub | — | #1056 closed; #418 commented + checklist updated; #1107 filed |
-| Branch | — | `claude/plan-mode-nested-wadler-4h6bzf`, pushed; PR [#1108](https://github.com/ahorn885/exercise/pull/1108), auto-merge armed (merge commit) |
+| Branch | — | `claude/plan-mode-nested-wadler-4h6bzf`; PR [#1108](https://github.com/ahorn885/exercise/pull/1108), **MERGED** (merge commit `a8539e0`) |
+
+## 7. Addendum — merge-conflict resolution (2026-07-01, post-Andy's-go)
+
+Andy said "merge the work." Auto-merge was armed clean, but the first attempt reported **merge failed**: PR [#1106](https://github.com/ahorn885/exercise/pull/1106) (#267 passkeys) merged into `main` while #1108 was pending, so `main` moved out from under it (`mergeable_state: "dirty"`) and the required CI checks never even triggered.
+
+Conflicts (both textual-adjacency, not semantic):
+- `init_db.py` — both branches appended a new entry to `_PG_MIGRATIONS`. Resolved by keeping both (passkeys' `user_webauthn_credentials` table first, since #1106 merged first; `generation_observations` column after).
+- `aidstation-sources/CURRENT_STATE.md` — both updated "Last shipped session." Resolved by keeping this session's T-1.1+T-1.2 entry on top and demoting the passkeys entry to a `### Predecessor` section alongside T-4.1.
+
+`routes/admin.py` merged clean automatically (disjoint edits — passkeys touched the cascade-delete list, this session touched the `plan_inspect` route). Resolved on a local merge commit, re-ran the full suite with both changesets present (**4118 passed / 30 skipped**), pushed, and the required checks (Python unit suite, JS harness, Layer 0 integrity gate) then ran and passed — auto-merge landed it as commit `a8539e0`.
+
+**Lesson:** when a PR sits open for more than a few minutes on this repo, another concurrent session's PR merging into `main` first is a live risk — auto-merge alone doesn't rebase; a "merge failed" report means check for a conflicting predecessor merge before assuming CI broke.
 
 **End of handoff.**
