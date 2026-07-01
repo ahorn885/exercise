@@ -3360,6 +3360,17 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
+    # #272 — SMS / WhatsApp invites, in addition to email. An invite now
+    # carries a `channel` ('email' | 'sms' | 'whatsapp') and is delivered to
+    # either `email` or the new `phone` column depending on it — so `email`
+    # drops its NOT NULL (a phone-channel invite has no email until the
+    # athlete enters one at registration). Existing rows are all
+    # channel='email' with email already set, so the column default needs no
+    # backfill.
+    "ALTER TABLE user_invites ALTER COLUMN email DROP NOT NULL",
+    "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS phone TEXT",
+    "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email' "
+    "CHECK (channel IN ('email', 'sms', 'whatsapp'))",
 ]
 
 _CLOTHING_SEEDS = [
