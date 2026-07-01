@@ -401,15 +401,56 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   and the full `_ingest_workout_summary` path (fetch+merge; no-token skip; no-file-url skip with no
   fetch attempted at all).
 
-**T-5.4 — Komoot connect + ingest (#891)**  ·  **T-5.5 — Wahoo plan.json export (#1094)**  ·
-**T-5.6 — Karoo download target (#1095)**  ·  **T-5.7 — Real-DB ingest test (#754, do last)**
-- T-5.4: new `routes/komoot.py` modeled on `routes/strava.py`/`polar.py` (provider_auth + a
-  normalizer feeding `_bulk_insert_cardio(source='komoot')`).
-- T-5.5: add `to_wahoo_plan_json(session)` in `routes/outbound_workout.py` reusing `Step`/
+**T-5.4 — Komoot connect + ingest (#891)** — **BLOCKED-ON-PARTNER 2026-07-01, not built.**
+- Files: `routes/komoot.py` (not created), `tests/`.
+- Steps (as planned): new `routes/komoot.py` modeled on `routes/strava.py`/`polar.py`
+  (provider_auth + a normalizer feeding `_bulk_insert_cardio(source='komoot')`).
+- **As-built correction:** session-start check found Komoot's OAuth2 API (`komoot.de/b2b/connect`)
+  requires an approved business partnership — there's no self-serve developer-registration path
+  like Strava/Polar/Wahoo have, so there's no `client_id`/`client_secret` to build against. Same
+  shape as **#833** (TrainingPeaks inbound) below. Andy's call: skip, same precedent as #833 —
+  don't write OAuth/ingest code against an API we can't reach. #891 labeled `status:blocked`,
+  left open (not closed — matches #833's convention). Unblocks when partner access is approved.
+
+**T-5.5 — Wahoo plan.json export (#1094)** — **DONE 2026-07-01.**
+- Files: `routes/outbound_workout.py`, `routes/wahoo.py`, `tests/`.
+- Steps: add `to_wahoo_plan_json(session)` in `routes/outbound_workout.py` reusing `Step`/
   `session_to_steps` (`~60-111`) + a download route.
-- T-5.6: verify `fit_workout_generator.generate_workout_fit` output imports to Karoo; surface the
+- **As-built correction:** the issue's own scope note called this a passive file download ("not a
+  push API"), matching Zwift's `.zwo` pattern — wrong per both the matrix §10.2 ("`plans_write`
+  pushes a Wahoo-proprietary `plan.json`") and Wahoo's real Cloud API docs: it's a genuine push
+  (create a `plan`, attach to a `workout` dated within 6 days of today, Wahoo syncs it to the
+  ELEMNT/RIVAL device in ~30s). A passive download has no known manual-import path on Wahoo
+  hardware (unlike Zwift's folder-drop) — would have shipped something unusable. Andy confirmed:
+  build the real push. Built `to_wahoo_plan_json` (flat `intervals[]`, reps expanded rather than a
+  fabricated repeat-wrapper — the matrix's source doesn't document one) + `POST
+  /wahoo/push/<pv>/<date>/<idx>` in `routes/wahoo.py` (two-step plan→workout push, idempotent via
+  `provider_outbound_ref`, refuses pushes outside the 6-day sync window). Bumped `_WAHOO_SCOPES`
+  to add `plans_write` (scope version bumped — already-connected athletes must reconnect once).
+  Added a real "Send to Wahoo" button on the plan session view (`routes/plan_create.py` +
+  `templates/plan_create/view.html`) gated on an active `plans_write`-carrying connection — unlike
+  the still-gated TP connector (backend-only, no UI), Wahoo OAuth is already live, so this ships
+  something usable today. BEST-EFFORT/VERIFY-OWED (Rule #14): exact `plan.json`/endpoint field
+  names are this session's best reading of the matrix's terse source note, not live-confirmed.
+  New tests: `TestWahooPlanJson` in `tests/test_outbound_workout.py` (8) + new
+  `tests/test_wahoo_outbound.py` (10). Suite 4169 passed / 30 skipped (+18).
+
+**T-5.6 — Karoo download target (#1095)** — **DONE 2026-07-01.**
+- Files: `templates/plans/item.html`, `templates/dashboard.html`, `templates/plan_create/view.html`.
+- Steps: verify `fit_workout_generator.generate_workout_fit` output imports to Karoo; surface the
   existing FIT/ZWO links as Karoo-compatible. No new serializer.
-- T-5.7: add `tests/test_cardio_ingest.py` (real-DB) covering `_bulk_insert_cardio` + dedup +
+- **As-built:** confirmed as scoped — `download_item_fit` already calls `generate_workout_fit`
+  (proper `WorkoutMessage` FIT, not an activity recording); `_build_steps`'s distance-only branch
+  correctly emits a `WorkoutStepDuration.DISTANCE` step (valid FIT, not a bug — Karoo's own
+  "may not import as expected" caveat is a Karoo-side behavior on spec-correct input, not ours to
+  fix); the Layer4 `.zwo` export is 100% time-based already (no distance field in `CardioBlock`).
+  Pure UI-labeling change: `templates/plans/item.html`'s FIT rail-note + `templates/dashboard.html`'s
+  `.FIT` button tooltip + `templates/plan_create/view.html`'s Zwift link (relabeled "↓ .zwo (Zwift,
+  Karoo)") now note Karoo compatibility. No logic changes; suite unaffected.
+
+**T-5.7 — Real-DB ingest test (#754, do last)**
+- Files: `tests/test_cardio_ingest.py` (not yet created).
+- Steps: add `tests/test_cardio_ingest.py` (real-DB) covering `_bulk_insert_cardio` + dedup +
   provider_raw across all sources.
 - No-ops: **#890** verify already-live; **#747** already fixed; **#833** blocked on partner — do not
   build.
@@ -423,7 +464,8 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
 5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 — **DONE 2026-07-01**
-   → T-5.4 (next) → T-5.5/T-5.6 → T-5.7.
+   → T-5.4 — **BLOCKED-ON-PARTNER 2026-07-01, skipped** → T-5.5/T-5.6 — **DONE 2026-07-01**
+   → T-5.7 (next, do last).
 
 ## 5. Bookkeeping (after approval; outside plan mode)
 

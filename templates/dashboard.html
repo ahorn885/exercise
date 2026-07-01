@@ -52,7 +52,8 @@
     </button>
   </form>
   {% if fit %}
-  <a class="btn btn-ghost btn-sm" href="{{ url_for('plans.download_item_fit', plan_id=w.plan_id, item_id=w.id) }}">
+  <a class="btn btn-ghost btn-sm" title="Compatible with Garmin and Hammerhead Karoo"
+     href="{{ url_for('plans.download_item_fit', plan_id=w.plan_id, item_id=w.id) }}">
     <svg class="icon" width="11" height="11" aria-hidden="true"><use href="#i-download"></use></svg> .FIT
   </a>
   {% endif %}

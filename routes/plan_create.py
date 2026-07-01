@@ -110,6 +110,7 @@ from layer5 import (
     generate_and_persist_plan_nutrition,
     generate_and_persist_plan_conditions,
 )
+from routes import provider_auth as pa
 from routes.auth import cron_authorized, current_user_id
 from routes.outbound_workout import is_zwift_exportable
 
@@ -1299,6 +1300,16 @@ def view_plan(plan_version_id: int):
     # carries the cross-node context. Fail-safe inside the helper.
     coaching_notes = _plan_coaching_notes(db, uid, plan_version_id)
 
+    # #1094 — gate the "Send to Wahoo" button on an active connection that
+    # actually carries plans_write (an athlete connected before the 2026-07-01
+    # scope bump has a token missing it; the push route re-checks this too,
+    # but hiding the button avoids a guaranteed-to-flash-reconnect click).
+    wahoo_auth = pa.get_auth(db, uid, 'wahoo')
+    wahoo_connected = bool(
+        wahoo_auth and wahoo_auth.get('status') == pa.STATUS_ACTIVE
+        and 'plans_write' in (wahoo_auth.get('scopes') or '').split()
+    )
+
     return render_template(
         'plan_create/view.html',
         plan_version=plan_version,
@@ -1315,6 +1326,7 @@ def view_plan(plan_version_id: int):
         conditions_by_date=conditions_by_date,
         upcoming_extremes=upcoming_extremes,
         zwift_exportable=is_zwift_exportable,
+        wahoo_connected=wahoo_connected,
         race_week_brief_available=race_week_brief_available,
         race_week_brief_exists=race_week_brief_exists,
         days_to_event=days_to_event,

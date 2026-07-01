@@ -1,11 +1,16 @@
 """Provider outbound — structured-workout serializers (#681 Wave 3b).
 
 Turns a Layer-4 `PlanSession` (kind=='cardio') into a structured workout for a
-destination platform. Two formats, one shared step model:
+destination platform. Three formats, one shared step model:
 
   - `to_zwo`            — Zwift `.zwo` XML (file download; no push API).
   - `to_tp_structure`   — TrainingPeaks `Structure` JSON (`POST /v2/workouts/plan`;
                           dispatched by the gated TP connector, Slice 2).
+  - `to_wahoo_plan_json` — Wahoo-native `plan.json` (matrix §10.2 outbound; `POST
+                          /v1/plans` then `/v1/workouts`); dispatched by
+                          `routes/wahoo.py`'s push route (#1094) — unlike TP, Wahoo
+                          OAuth is already live (T-5.1/T-5.3), so this one actually
+                          ships to a device today, not just a speculative connector.
 
 Design: `designs/ProviderOutbound_StructuredWorkout_681_Wave3b_BuildDesign_v1.md`.
 Mappings transcribed from `specs/Provider_Inbound_Matrix_v2.md` §11.
@@ -252,3 +257,78 @@ def _tp_step(kind: str, duration_s: int, zone: str,
             'MaxValue': round(hi * 100, 1),
         },
     }
+
+
+# ─── Wahoo plan.json (#1094, dispatched by routes/wahoo.py) ───────────────
+
+# zone → Wahoo TARGET_TYPE (matrix §10.2 enum: wu/tempo/lt/map/ac/nm/ftp/cd/
+# recover/rest). `nm`/`ftp`/`rest` have no zone equivalent in our Z1-Z5 model
+# (no-effort rest and FTP-test are structural, not intensity bands; `nm`
+# would need a 6th zone above Z5 we don't have) — documented default, tunable.
+_ZONE_TO_WAHOO_TARGET_TYPE: dict[str, str] = {
+    'Z1': 'recover', 'Z2': 'tempo', 'Z3': 'lt', 'Z4': 'map', 'Z5': 'ac',
+}
+
+
+def _wahoo_target_type(kind: str, zone: str) -> str:
+    if kind == 'warmup':
+        return 'wu'
+    if kind == 'cooldown':
+        return 'cd'
+    return _ZONE_TO_WAHOO_TARGET_TYPE.get(_zone(zone), 'tempo')
+
+
+def _wahoo_interval(kind: str, duration_s: int, zone: str,
+                     table: dict[str, tuple[float, float]], label: str) -> dict[str, Any]:
+    lo, hi = _band(table, zone)
+    return {
+        'name': (label or kind)[:64],
+        'triggers': [{'type': 'time', 'value': int(duration_s)}],
+        'targets': [{
+            'type': _wahoo_target_type(kind, zone),
+            'low': round(lo, 3),
+            'high': round(hi, 3),
+        }],
+    }
+
+
+def to_wahoo_plan_json(session: dict[str, Any]) -> dict[str, Any]:
+    """Serialize a cardio session to a Wahoo-native `plan.json` structure
+    (matrix §10.2: `header` + `intervals[]`, each with `targets`/`triggers`;
+    time in seconds; TARGET_TYPE enum). %FTP for cycling, %LTHR otherwise —
+    same anchor as `to_zwo`/`to_tp_structure`; no discipline gate (unlike
+    Zwift's bike/run-only software limit, Wahoo's ELEMNT+RIVAL hardware family
+    covers the same broad sport set TP does, so this mirrors `to_tp_structure`'s
+    no-gate behavior rather than `to_zwo`'s).
+
+    `interval_set` reps are expanded into flat repeated work/rest interval
+    entries rather than a nested repeat wrapper — the matrix's own source note
+    (a PDF + an OpenAPI mirror, not a live payload) doesn't document a repeat
+    construct for `intervals[]`, so this avoids fabricating one.
+
+    BEST-EFFORT/VERIFY-OWED (Rule #14): field names inside `targets`/`triggers`
+    are this module's best reading of the matrix's terse §10.2 note, not
+    confirmed against a live Wahoo push — owed a live verify at go-live, same
+    caveat the matrix itself carries for this row.
+    """
+    steps = session_to_steps(session)
+    coarse = _coarse_sport(session)
+    table = _ZONE_TO_PCT_FTP if coarse == 'cycling' else _ZONE_TO_PCT_LTHR
+
+    intervals: list[dict[str, Any]] = []
+    for s in steps:
+        if s.kind == 'interval_set':
+            for _ in range(int(s.reps or 1)):
+                intervals.append(_wahoo_interval(s.kind, s.duration_s, s.zone, table, s.label))
+                intervals.append(_wahoo_interval(
+                    'transition', s.rest_duration_s or 0, s.rest_zone or 'Z1',
+                    table, 'recovery'))
+        else:
+            intervals.append(_wahoo_interval(s.kind, s.duration_s, s.zone, table, s.label))
+
+    plan = {'header': {'name': _workout_title(session)[:64]}, 'intervals': intervals}
+    print(
+        f"[outbound-wahoo] session={session.get('session_id')} coarse={coarse} "
+        f"intervals={len(intervals)}"
+    )
+    return plan

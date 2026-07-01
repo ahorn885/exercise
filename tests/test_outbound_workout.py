@@ -162,6 +162,63 @@ class TestTpStructure:
         assert wu['Steps'][0]['IntensityClass'] == 'WarmUp'
 
 
+# ── Wahoo plan.json ──────────────────────────────────────────────────
+
+class TestWahooPlanJson:
+    def test_cycling_uses_percent_of_ftp_band(self):
+        out = ow.to_wahoo_plan_json(_bike_session())
+        wu = out['intervals'][0]
+        # Z1 band low/high (0.50/0.55), same %FTP table as to_zwo
+        assert wu['targets'][0]['low'] == 0.5
+        assert wu['targets'][0]['high'] == 0.55
+
+    def test_running_uses_percent_of_lthr_band(self):
+        out = ow.to_wahoo_plan_json(_run_session())
+        wu = out['intervals'][0]
+        # Z1 LTHR band low/high (0.70/0.85)
+        assert wu['targets'][0]['low'] == 0.7
+        assert wu['targets'][0]['high'] == 0.85
+
+    def test_warmup_and_cooldown_target_types(self):
+        out = ow.to_wahoo_plan_json(_bike_session())
+        assert out['intervals'][0]['targets'][0]['type'] == 'wu'
+        assert out['intervals'][-1]['targets'][0]['type'] == 'cd'
+
+    def test_zone_maps_to_target_type(self):
+        out = ow.to_wahoo_plan_json(_bike_session())
+        main_set = out['intervals'][1]  # Z3 main_set
+        assert main_set['targets'][0]['type'] == 'lt'
+
+    def test_interval_reps_expand_to_flat_work_rest_pairs(self):
+        out = ow.to_wahoo_plan_json(_bike_session())
+        # warmup, main_set, then 5x(work, rest), then cooldown = 2 + 10 + 1 = 13
+        assert len(out['intervals']) == 13
+        work = out['intervals'][2]
+        rest = out['intervals'][3]
+        assert work['triggers'][0] == {'type': 'time', 'value': 240}
+        assert work['targets'][0]['type'] == 'ac'  # Z5
+        assert rest['triggers'][0] == {'type': 'time', 'value': 120}
+        assert rest['targets'][0]['type'] == 'recover'  # Z1
+
+    def test_header_has_name(self):
+        out = ow.to_wahoo_plan_json(_bike_session())
+        assert out['header']['name']
+
+    def test_non_cardio_raises(self):
+        try:
+            ow.to_wahoo_plan_json({'kind': 'strength'})
+            assert False
+        except ValueError:
+            pass
+
+    def test_no_discipline_gate_hiking_still_serializes(self):
+        # Unlike Zwift's bike/run-only gate, Wahoo has no discipline restriction.
+        s = _bike_session()
+        s['discipline_id'] = 'D-003'  # hiking
+        out = ow.to_wahoo_plan_json(s)
+        assert out['intervals']
+
+
 class TestIsZwiftExportable:
     def test_bike_and_run_disciplines_exportable(self):
         assert ow.is_zwift_exportable('D-006')  # cycling
