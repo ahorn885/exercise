@@ -3375,6 +3375,11 @@ _PG_MIGRATIONS = [
     "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS phone TEXT",
     "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email' "
     "CHECK (channel IN ('email', 'sms', 'whatsapp'))",
+    # #418 — persist a plan's Layer-4 `notable_observations` so the operator
+    # inspect page can surface them (previously read by nothing but the
+    # now-removed `shape_override` validator). One JSONB blob written once at
+    # generation-ready time; nullable so pre-migration/legacy rows read NULL.
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_observations JSONB",
 ]
 
 _CLOTHING_SEEDS = [

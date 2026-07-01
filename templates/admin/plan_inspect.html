@@ -33,6 +33,26 @@
   </div>
 </div>
 
+{% if observations %}
+<div class="card mb-3">
+  <div class="card-header">Generation observations</div>
+  <ul class="list-group list-group-flush">
+    {% for obs in observations %}
+    <li class="list-group-item d-flex flex-wrap gap-2 align-items-start">
+      <span class="badge bg-{{ 'danger' if obs.category in ('best_effort_plan', 'seam_unresolved') else 'secondary' }}">
+        {{ obs.category }}
+      </span>
+      {% if obs.elevates_to_hitl %}<span class="badge bg-warning text-dark">elevates_to_hitl</span>{% endif %}
+      <span class="small">{{ obs.text }}</span>
+      {% if obs.evidence_basis %}
+      <span class="text-muted small">({{ obs.evidence_basis|join(', ') }})</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
 {% if not blocks %}
   <p class="text-muted">
     No per-block snapshot yet, and no persisted sessions to fall back on.

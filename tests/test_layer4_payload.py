@@ -38,7 +38,6 @@ from layer4.payload import (
     RuleFailure,
     SeamReview,
     SessionPhaseMetadata,
-    ShapeOverride,
     StrengthExercise,
     StrokeRateTarget,
     SwimPaceTarget,
@@ -861,7 +860,7 @@ def test_more_than_two_per_day_rejected():
         )
 
 
-# ─── §7.12 ValidatorResult + ShapeOverride rules ────────────────────────────
+# ─── §7.12 ValidatorResult rules ────────────────────────────────────────────
 
 
 def test_empty_validator_results_rejected():
@@ -888,38 +887,6 @@ def test_unaccepted_final_pass_rejected():
                 )
             ]
         )
-
-
-def test_shape_override_requires_observation():
-    override = ShapeOverride(
-        original_shape_mode="standard",
-        original_start_phase="Base",
-        overridden_mode="compressed",
-        overridden_start_phase="Build",
-        rationale_text="Athlete onboarded 6 weeks out from event.",
-        evidence_basis=["3b_payload.time_to_event_weeks"],
-    )
-    with pytest.raises(ValidationError, match="shape_override non-None requires"):
-        _plan_create_payload(shape_override=override, notable_observations=[])
-
-
-def test_shape_override_with_observation_ok():
-    override = ShapeOverride(
-        original_shape_mode="standard",
-        original_start_phase="Base",
-        overridden_mode="compressed",
-        overridden_start_phase="Build",
-        rationale_text="Athlete onboarded 6 weeks out from event.",
-        evidence_basis=["3b_payload.time_to_event_weeks"],
-    )
-    obs = Observation(
-        category="shape_override",
-        text="Layer 4 overrode 3B shape mode.",
-        evidence_basis=["3b_payload.time_to_event_weeks"],
-        elevates_to_hitl=False,
-    )
-    p = _plan_create_payload(shape_override=override, notable_observations=[obs])
-    assert p.shape_override is not None
 
 
 # ─── §7.12 phase_metadata-per-mode rule ─────────────────────────────────────

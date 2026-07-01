@@ -430,18 +430,6 @@ class SeamReview(_Base):
     reviewer_model: str
 
 
-# ─── §7.8 ShapeOverride ────────────────────────────────────────────────────
-
-
-class ShapeOverride(_Base):
-    original_shape_mode: str
-    original_start_phase: str
-    overridden_mode: str
-    overridden_start_phase: str
-    rationale_text: str
-    evidence_basis: list[str]
-
-
 # ─── §7.9 ValidatorResult / RuleFailure ────────────────────────────────────
 
 
@@ -469,7 +457,6 @@ class Observation(_Base):
         "opportunity",
         "data_gap",
         "data_hygiene",
-        "shape_override",
         "best_effort_plan",
         "seam_unresolved",
         "intensity_modulated",
@@ -610,8 +597,6 @@ class Layer4Payload(_Base):
     phase_structure: PhaseStructure | None = None
     seam_reviews: list[SeamReview] | None = None
 
-    shape_override: ShapeOverride | None = None
-
     validator_results: list[ValidatorResult]
 
     notable_observations: list[Observation]
@@ -733,15 +718,6 @@ class Layer4Payload(_Base):
             raise ValueError("validator_results must be non-empty")
         if not self.validator_results[-1].accepted:
             raise ValueError("validator_results[-1].accepted must be True")
-        return self
-
-    @model_validator(mode="after")
-    def _check_shape_override_observation(self) -> "Layer4Payload":
-        if self.shape_override is not None:
-            if not any(o.category == "shape_override" for o in self.notable_observations):
-                raise ValueError(
-                    "shape_override non-None requires notable_observations with category=='shape_override'"
-                )
         return self
 
     @model_validator(mode="after")

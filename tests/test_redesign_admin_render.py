@@ -351,6 +351,9 @@ def _pv_ready_row():
         'scope_start_date': '2026-06-01', 'scope_end_date': '2026-08-24',
         'pattern': 'A', 'generation_status': 'ready',
         'generation_error': None, 'generation_units_cached': 12,
+        # #418 — load_generation_observations fires its own SELECT against
+        # plan_versions, routed to this same canned row by _PlanInspectConn.
+        'generation_observations': None,
     }
 
 

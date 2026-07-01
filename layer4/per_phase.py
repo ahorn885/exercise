@@ -3574,7 +3574,6 @@ def _build_payload_for_validation(
         sessions=sessions,
         phase_structure=phase_structure,
         seam_reviews=[],
-        shape_override=None,
         validator_results=[
             ValidatorResult(
                 pass_index=0,

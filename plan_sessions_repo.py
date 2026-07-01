@@ -143,6 +143,45 @@ def load_hitl_gate(db: Any, user_id: int, plan_version_id: int) -> Any | None:
     return Layer3DGate.model_validate(data)
 
 
+# ─── Layer-4 generation observations persistence (#418) ──────────────────────
+
+
+def save_generation_observations(
+    db: Any, user_id: int, plan_version_id: int, observations: list[Any]
+) -> None:
+    """Persist a plan's Layer-4 `notable_observations` (list[Observation]) to
+    `plan_versions.generation_observations` — one JSONB blob, read whole by the
+    operator inspect page. Caller owns the transaction (no commit here)."""
+    db.execute(
+        "UPDATE plan_versions SET generation_observations = ? WHERE id = ? AND user_id = ?",
+        (
+            json.dumps([o.model_dump(mode="json") for o in observations]),
+            plan_version_id,
+            user_id,
+        ),
+    )
+
+
+def load_generation_observations(db: Any, plan_version_id: int) -> list[dict[str, Any]]:
+    """Load a plan's persisted `generation_observations` (#418) for the operator
+    inspect page — NOT user-scoped (admin reads any user's plan). Empty list
+    when NULL or pre-migration (mirrors `load_hitl_gate`'s tolerance for a
+    missing column)."""
+    try:
+        row = db.execute(
+            "SELECT generation_observations FROM plan_versions WHERE id = ?",
+            (plan_version_id,),
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — pre-migration column absence is non-fatal
+        return []
+    if row is None:
+        return []
+    raw = row["generation_observations"]
+    if raw is None:
+        return []
+    return _decode_json(raw)
+
+
 def load_prior_resolutions(
     db: Any, user_id: int, plan_version_id: int
 ) -> dict[str, Any]:
