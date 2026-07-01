@@ -215,7 +215,8 @@ def render_user_prompt(
     # === Session feasibility (#557 — terrain routing, mirrors create #540) ===
     parts.extend(
         _format_session_feasibility(
-            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c)
+            terrain_feasibility, layer2_bundle.a, dict(layer2_bundle.c),
+            include_grid_tag=True,
         )
     )
 

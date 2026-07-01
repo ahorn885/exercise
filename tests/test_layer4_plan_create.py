@@ -930,6 +930,14 @@ class TestRecordPhaseSessionsTool:
             "recovery",
         }
 
+    def test_strength_substitution_property_is_optional_boolean(self):
+        # #573 — the marker is a session-level flag, not required (defaults
+        # False on `PlanSession` when the synthesizer omits it).
+        t = build_record_phase_sessions_tool()
+        sess_items = t["input_schema"]["properties"]["sessions"]["items"]
+        assert sess_items["properties"]["strength_substitution"] == {"type": "boolean"}
+        assert "strength_substitution" not in sess_items["required"]
+
     def test_intensity_target_oneof_nine_shapes(self):
         t = build_record_phase_sessions_tool()
         cb_items = (

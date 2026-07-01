@@ -264,6 +264,9 @@ def _session_schema(
                 "enum": ["morning", "afternoon", "evening", "unspecified"],
             },
             "kind": {"type": "string", "enum": ["cardio", "strength"]},
+            # #573 — failover strength substitution marker; excluded from the
+            # programmed-dose count in `_rule_strength_frequency_band`.
+            "strength_substitution": {"type": "boolean"},
             "discipline_id": {"type": ["string", "null"]},
             "discipline_name": {"type": ["string", "null"]},
             "locale_id": {"type": ["string", "null"]},

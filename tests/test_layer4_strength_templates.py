@@ -16,6 +16,7 @@ from layer4.strength_guidance import STRENGTH_PROGRAMMING_GUIDANCE
 from layer4.per_phase import SYSTEM_PROMPT as PER_PHASE_SYSTEM_PROMPT
 from layer4.plan_refresh_t1 import SYSTEM_PROMPT as T1_SYSTEM_PROMPT
 from layer4.plan_refresh_t2 import SYSTEM_PROMPT as T2_SYSTEM_PROMPT
+from layer4.plan_refresh_t3 import SYSTEM_PROMPT as T3_SYSTEM_PROMPT
 
 
 # ─── Shared guidance content ────────────────────────────────────────────────
@@ -49,6 +50,14 @@ def test_guidance_failover_is_muscular_endurance_and_uncapped():
     assert "do NOT count toward the programmed" in g
 
 
+def test_guidance_instructs_strength_substitution_marker():
+    # #573 — the failover template must tell the synthesizer to flag the
+    # session so the validator can exclude it from the programmed-dose count.
+    g = STRENGTH_PROGRAMMING_GUIDANCE
+    assert "strength_substitution: true" in g
+    assert "PROGRAMMED session" in g
+
+
 # ─── Fan-out: every strength-authoring prompt embeds the shared guidance ─────
 
 
@@ -56,11 +65,13 @@ def test_per_phase_prompt_embeds_shared_guidance():
     assert STRENGTH_PROGRAMMING_GUIDANCE in PER_PHASE_SYSTEM_PROMPT
 
 
-def test_both_refresh_prompts_embed_shared_guidance():
-    # The fan-out requirement: refresh paths must carry the same strength logic
-    # as plan-gen, not drift to their own (older, shallower) instructions.
+def test_all_three_refresh_prompts_embed_shared_guidance():
+    # #573 — the fan-out requirement: all three refresh tiers must carry the
+    # same strength logic as plan-gen, not drift to their own (older,
+    # shallower, or in T3's case entirely absent) instructions.
     assert STRENGTH_PROGRAMMING_GUIDANCE in T1_SYSTEM_PROMPT
     assert STRENGTH_PROGRAMMING_GUIDANCE in T2_SYSTEM_PROMPT
+    assert STRENGTH_PROGRAMMING_GUIDANCE in T3_SYSTEM_PROMPT
 
 
 def test_old_shallow_structure_line_is_gone():

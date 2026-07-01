@@ -132,7 +132,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - GATE: none.
 - Verify: full `tests/test_layer4_*.py` green after removal.
 
-**T-1.3 — Drop the unwired HITL-escalation claim (#418, part 2 — spec only)**
+**T-1.3 — Drop the unwired HITL-escalation claim (#418, part 2 — spec only)** — **DONE 2026-07-01, commit `e87cd8d` on branch `claude/orphaned-data-partial-wiring-87rdt7`.**
 - Preconditions: T-1.1.
 - Files: `aidstation-sources/specs/Layer4_Spec.md`.
 - Steps: in §6.2 / §8.7, replace "escalate to next-run HITL gate" language with: Layer-4
@@ -277,13 +277,30 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   prompt-content effect (if any) rides T-2.9's walk.
 - Verify: `tests/test_layer2a.py` — a solo athlete's discipline set excludes a `requires_team` sport.
 
-**T-3.4 — Terrain-substitute backup strength in refresh (#573)**
+**T-3.4 — Terrain-substitute backup strength in refresh (#573)** — **DONE 2026-07-01, branch `claude/orphaned-data-partial-wiring-87rdt7`.**
 - Files: `layer4/plan_refresh.py`, `tests/`.
 - Steps: enable the backup-strength substitution on the refresh path when terrain rules out the
   original (mirror the create-path behavior). Confirm the create-path equivalent first.
 - Do NOT: change create-path behavior.
 - GATE: none.
 - Verify: a refresh test where terrain-infeasibility triggers the backup strength.
+- **As-built correction (session-start verification caught this):** the file list above was wrong —
+  `layer4/plan_refresh.py` only dispatches; the actual renderers are the tier files. Also, the
+  create-path terrain-feasibility *data* wiring (#557) had already shipped, but the failover
+  *trigger tag* it depends on (`grid_annotation()`) was never wired into any refresh renderer, so the
+  failover template was still dormant on refresh despite #557. Actually touched:
+  `layer4/per_phase.py` (`_format_session_feasibility` gained an `include_grid_tag` param, default
+  `False` — create's own call site is unchanged), `layer4/plan_refresh_t1.py` /
+  `plan_refresh_t2.py` (pass `include_grid_tag=True`), `layer4/plan_refresh_t3.py` (same, plus it was
+  missing `STRENGTH_PROGRAMMING_GUIDANCE` entirely — added). Bundled in the same PR (same
+  `Layer4Payload`/`PlanSession` touch, per Rule #12 T-1.1+T-1.2 precedent): the issue #573
+  "advisory-quality tail" flagged in `CARRY_FORWARD.md` — added `PlanSession.strength_substitution:
+  bool = False` (`layer4/payload.py`), the matching tool-schema property in both
+  `per_phase.py::_session_schema` and `plan_refresh.py::_session_schema`, one new sentence in
+  `layer4/strength_guidance.py::STRENGTH_PROGRAMMING_GUIDANCE` instructing the LLM to set it on a
+  failover composition (Trigger #1 — Andy ratified the exact wording in plan mode before this
+  landed), and excluded `strength_substitution=True` sessions from
+  `layer4/validator.py::_rule_strength_frequency_band`'s count.
 
 > #427 (assemble-from-pre-checked-options) is the DESIGN FRAME for WS-3, not a code task here. Build
 > T-3.1–T-3.4 deterministically/upstream so #427's later ratified reframe reuses them. Do not attempt
@@ -338,9 +355,9 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 ## 4. Global order
 
 1. T-4.1 (isolated quick win). — **DONE 2026-07-01, PR #1104.**
-2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 (next, ungated) → T-1.4 (gated) → T-1.5. Parallel to WS-2/3.
+2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 (gated, next) → T-1.5. Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
-4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4.
+4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
 5. WS-5: independent throughout — T-5.1 → T-5.2/T-5.3 → T-5.4 → T-5.5/T-5.6 → T-5.7.
 
 ## 5. Bookkeeping (after approval; outside plan mode)

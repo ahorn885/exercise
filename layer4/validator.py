@@ -1849,7 +1849,11 @@ def _rule_strength_frequency_band(
             continue
         key = (pm.phase_name, pm.week_in_phase)
         weeks.add(key)
-        if s.kind == "strength":
+        # #573 — failover substitutions stand in for an infeasible cardio
+        # session, not an elective dose pick; excluded from the count so
+        # legitimate failover stacking in a constrained week doesn't trip
+        # this advisory.
+        if s.kind == "strength" and not s.strength_substitution:
             counts[key] = counts.get(key, 0) + 1
     out: list[RuleFailure] = []
     for phase_name, week in sorted(weeks):

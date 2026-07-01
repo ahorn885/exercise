@@ -503,6 +503,29 @@ def test_format_session_feasibility_block_renders_names_and_skips_when_empty():
     assert "Rock Climbing" in text and "Weighted Pull-up" in text
 
 
+def test_format_session_feasibility_include_grid_tag_flag():
+    # #573 — create's own call site never passes `include_grid_tag` (defaults
+    # False) since it already appends the tag via its separate weekly-grid
+    # renderer; refresh has no such renderer, so it passes True to get the
+    # `[TERRAIN-INFEASIBLE]`/`[NO CRAFT]` trigger `STRENGTH_PROGRAMMING_GUIDANCE`
+    # depends on.
+    feas = {
+        "D-012": TerrainResolution(
+            "D-012", "strength", "Home", substitute_exercise_ids=["EX-PULL"]
+        )
+    }
+    l2a = SimpleNamespace(
+        disciplines=[SimpleNamespace(discipline_id="D-012", discipline_name="Rock Climbing")]
+    )
+    default_text = "\n".join(per_phase._format_session_feasibility(feas, l2a, {}))
+    assert "[TERRAIN-INFEASIBLE" not in default_text
+
+    tagged_text = "\n".join(
+        per_phase._format_session_feasibility(feas, l2a, {}, include_grid_tag=True)
+    )
+    assert "[TERRAIN-INFEASIBLE" in tagged_text
+
+
 # ─── cache key ───────────────────────────────────────────────────────────────
 
 
