@@ -313,8 +313,9 @@ live — see "✅ SendGrid email" under Carry-forward operator items._
 
 ### Parked
 
-- **Garmin per-user OAuth.** `garmin_auth` rows scoped per-user but
-  `/tmp/garth_session` file caching is process-shared.
+- **Garmin per-user OAuth.** `provider_auth` rows scoped per-user (moved
+  off `garmin_auth` 2026-07-01, T-5.1/#249) but `/tmp/garth_session`
+  file caching is still process-shared.
 - **MFA (TOTP).** `pyotp` + setup on `/profile`.
 - **Passkeys / WebAuthn.**
 - **BYOK Anthropic API key** per-user.

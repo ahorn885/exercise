@@ -182,17 +182,20 @@ conventions every new table must follow (`?` placeholders, branch on
 
 Constraint: `UNIQUE (user_id, provider)` — UPSERT target.
 
-Replaces the per-provider `garmin_auth` pattern. **Plan:** when Garmin
-API access reopens (Garmin temporarily closed new API onboarding as
-of 2026-05-14), Garmin migrates to `provider_auth` with a new
-`session_blob TEXT` column on `provider_auth` to carry the `garth`
-session JSON. The legacy `garmin_auth` table is dropped at that point
-(cleanup, not a data migration — there is no production data and no
-Garmin-connected users to preserve). Until the API reopens,
-`garmin_auth` stays in `init_db.py` as-is and the existing
-`routes/garmin.py` / `garmin_connect.py` continue to use it. New
-providers (Polar, Wahoo, COROS, RWGPS, Strava, Whoop, TrainingPeaks,
-Zwift, etc.) all go straight into `provider_auth`.
+Replaces the per-provider `garmin_auth` pattern. **Done (2026-07-01,
+T-5.1/#249):** Garmin now stores its `garth` session JSON in this
+table's `session_blob TEXT` column (provider `'garmin'`) —
+`garmin_connect.py` + `routes/garmin.py`'s auth-import endpoints go
+through `routes/provider_auth.py`'s `upsert_auth`/`get_auth`, same as
+every other provider. This landed ahead of the original "wait for
+Garmin API access to reopen" plan — the migration is storage-layer
+only (garth is not OAuth, so the API closure doesn't block it); a
+read-only `neon-query` confirmed 0 rows in `garmin_auth` before the
+cutover, so no data migration was needed. The legacy `garmin_auth`
+table itself is **not yet dropped** (kept as a harmless unused table
+pending a separate DDL follow-up) — nothing reads or writes it
+anymore. All providers (Polar, Wahoo, COROS, RWGPS, Strava, Whoop,
+Garmin, TrainingPeaks, Zwift, etc.) now go through `provider_auth`.
 
 Reconciled with `aidstation-sources/Athlete_Data_Integration_Spec_v3`
 §2.3 in the 2026-05-14 single-repo reconciliation pass — both
@@ -322,14 +325,12 @@ Worked example for `slug = "ride-with-gps"`:
 
 ## 7. What stays out of this schema
 
-- **`garmin_auth`** — pre-OAuth, uses `garth` username/password flow.
-  **Currently still in use** in `init_db.py` and `routes/garmin.py`.
-  **Planned for removal** once Garmin API access reopens — Garmin
-  will then move to `provider_auth` with a `session_blob TEXT`
-  column for the `garth` session JSON. Tracked as D-55 in
-  `aidstation-sources/Project_Backlog_v12` (status: ⏸ Paused).
-  Until then, `garmin_auth` stays as documented in
-  `DATABASE.md:garmin_auth`.
+- **`garmin_auth`** — pre-OAuth, `garth` username/password flow.
+  **Retired as of 2026-07-01 (T-5.1/#249):** Garmin now stores its
+  session in `provider_auth.session_blob` like every other provider
+  (§5.1 above); `init_db.py` and `routes/garmin.py` no longer read or
+  write this table. The table itself is still physically present
+  (empty; not yet dropped — that DDL is a separate follow-up).
 - **Per-provider migration files** — all schema changes are additive
   via `_PG_MIGRATIONS` / `_SQLITE_MIGRATIONS` lists in `init_db.py`.
   No Alembic, no per-table migration files.
