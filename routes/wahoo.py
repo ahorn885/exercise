@@ -40,39 +40,78 @@ BEST-EFFORT / VERIFY-OWED (Rule #14): the OAuth/token/user/webhook surface +
 the webhook payload shape are Wahoo's documented form, env-overridable, unverified
 against live payloads from the container — confirm at go-live. `ftp_w` from the
 power-zones endpoint is a later refinement (the workout webhook doesn't carry it).
+
+Outbound (#1094, matrix §10.2 `plan.json`): `POST /wahoo/push/<pv>/<date>/<idx>`
+pushes one cardio plan-session to Wahoo as a structured planned workout —
+`outbound_workout.to_wahoo_plan_json` serializes it, a two-step Cloud API call
+(create a `plan` record, then a `workout` record dated `date` referencing it)
+lands it in the ELEMNT/RIVAL Planned Workouts view. Requires the `plans_write`
+scope added below (`_WAHOO_SCOPES`/`_WAHOO_SCOPE_VERSION` bumped 2026-07-01) —
+an athlete who connected Wahoo before this bump must reconnect before a push
+will work; the route checks the stored `scopes` and flashes a reconnect prompt
+rather than attempting a push Wahoo would reject. Idempotent via
+`provider_outbound_ref` (mirrors `routes/trainingpeaks.py`'s Slice-2 pattern).
+UI-driven (the plan view's "Send to Wahoo" button) rather than a bare JSON API
+like the still-gated TP connector — Wahoo OAuth is already live, so every
+outcome flashes + redirects back to the plan instead of returning raw JSON.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import hmac
 import json
 import os
 import secrets
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from typing import Any
 
 import requests
 from flask import (
-    Blueprint, abort, current_app, jsonify, redirect, request, session, url_for,
+    Blueprint, abort, current_app, flash, jsonify, redirect, request, session,
+    url_for,
 )
 
 from database import get_db
-from provider_cardio_resolve import resolve_cardio_discipline
+from plan_sessions_repo import load_plan_session_payload
+from provider_cardio_resolve import DISCIPLINE_TO_PLAN_SPORT, resolve_cardio_discipline
 from routes import account_merge
 from routes import provider_auth as pa
 from routes import provider_identity as pi
 from routes.auth import current_user_id, send_verification_email
+from routes.outbound_workout import session_to_steps, to_wahoo_plan_json
 
 bp = Blueprint('wahoo', __name__, url_prefix='/wahoo')
 
 _WAHOO_AUTH_URL = os.environ.get('WAHOO_AUTH_URL', 'https://api.wahooligan.com/oauth/authorize')
 _WAHOO_TOKEN_URL = os.environ.get('WAHOO_TOKEN_URL', 'https://api.wahooligan.com/oauth/token')
 _WAHOO_USER_URL = os.environ.get('WAHOO_USER_URL', 'https://api.wahooligan.com/v1/user')
+_WAHOO_PLANS_URL = os.environ.get('WAHOO_PLANS_URL', 'https://api.wahooligan.com/v1/plans')
+_WAHOO_WORKOUTS_URL = os.environ.get('WAHOO_WORKOUTS_URL', 'https://api.wahooligan.com/v1/workouts')
 
 # Read scopes per matrix §10.2 + offline_data (refresh token + the workout
-# webhook). Space-separated. Bump the version on change.
-_WAHOO_SCOPES = 'user_read workouts_read power_zones_read offline_data'
-_WAHOO_SCOPE_VERSION = '2026-06-20'
+# webhook) + plans_write (#1094 outbound push, added 2026-07-01). Space-
+# separated. Bump the version on change — forces re-consent so an
+# already-connected athlete's token actually carries the new scope.
+_WAHOO_SCOPES = 'user_read workouts_read power_zones_read offline_data plans_write'
+_WAHOO_SCOPE_VERSION = '2026-07-01'
+
+# coarse `_plan_sport_type` → Wahoo `workout_type_family_id` (matrix §10.2:
+# 0 bike / 1 run / 2 swim / 9 walk / … — a partial enum; hiking has no
+# distinct family documented, mapped to walk, same judgment call
+# `routes/trainingpeaks.py`'s `_TP_WORKOUT_TYPE` already makes for hiking→walk).
+_WAHOO_FAMILY_ID = {'cycling': 0, 'running': 1, 'swimming': 2, 'hiking': 9}
+
+# Wahoo only syncs a workout to the ELEMNT/RIVAL Planned Workouts view when
+# it's scheduled within [today, today+6] (support.wahoofitness.com, checked
+# 2026-07-01) — refuse the push outside that window rather than shipping
+# something that silently never appears on the device.
+_PUSH_WINDOW_DAYS = 6
+
+
+def _today() -> _date:
+    return _date.today()
 
 _OAUTH_STATE = 'wahoo_oauth_state'
 _OAUTH_RETURN_TO = 'wahoo_oauth_return_to'
@@ -539,3 +578,135 @@ def _ingest_workout_summary(db: Any, user_id: int, workout_id: str, summary: dic
           f'-> cardio_log discipline={data.get("discipline_id")} '
           f'bucket={data["_provider_raw"]["bucket"]} fit_stream_used={fit_stream_used}')
     return True
+
+
+# ── Outbound push (#1094) ────────────────────────────────────────────
+
+@bp.route('/push/<int:plan_version_id>/<date>/<int:idx>', methods=['POST'])
+def push_session(plan_version_id: int, date: str, idx: int):
+    """Push one cardio plan-session to Wahoo as a structured planned workout.
+
+    Two-step Wahoo Cloud API call: create a `plan` record (the Base64
+    `plan.json` body from `outbound_workout.to_wahoo_plan_json`), then a
+    `workout` record dated `date` referencing the plan id — Wahoo syncs it to
+    the ELEMNT/RIVAL Planned Workouts view within ~30s. Idempotent via
+    `provider_outbound_ref` (user, 'wahoo', session_id): unchanged payload
+    hash -> no-op.
+
+    404 only for an unknown session (no safe redirect target without it);
+    every other outcome (non-exportable, outside the 6-day sync window, not
+    connected, missing the `plans_write` scope, or a push failure) flashes a
+    reason and redirects back to the plan rather than dead-ending on a bare
+    error page — this route is UI-driven, unlike the still-gated TP connector.
+    """
+    uid = current_user_id()
+    db = get_db()
+    dest = url_for('plan_create.view_plan', plan_version_id=plan_version_id)
+
+    payload = load_plan_session_payload(db, uid, plan_version_id, date, idx)
+    if payload is None:
+        print(f'[wahoo-push] user={uid} pv={plan_version_id} {date}#{idx} -> 404')  # noqa: T201
+        abort(404)
+
+    try:
+        sess_date = _date.fromisoformat(date)
+    except ValueError:
+        abort(404)
+    today = _today()
+    if not (today <= sess_date <= today + timedelta(days=_PUSH_WINDOW_DAYS)):
+        print(f'[wahoo-push] user={uid} {date} -> out of sync window')  # noqa: T201
+        flash(f'Wahoo only syncs planned workouts dated within '
+              f'{_PUSH_WINDOW_DAYS} days of today.', 'warning')
+        return redirect(dest)
+
+    auth = pa.get_auth(db, uid, 'wahoo')
+    if not auth or auth.get('status') != pa.STATUS_ACTIVE:
+        flash('Connect Wahoo before pushing a planned workout.', 'warning')
+        return redirect(dest)
+    if 'plans_write' not in (auth.get('scopes') or '').split():
+        flash('Reconnect Wahoo to grant planned-workout push access.', 'warning')
+        return redirect(dest)
+
+    try:
+        plan_body = to_wahoo_plan_json(payload)
+    except ValueError as exc:
+        print(f'[wahoo-push] user={uid} pv={plan_version_id} {date}#{idx} -> 400 {exc}')  # noqa: T201
+        flash(str(exc), 'warning')
+        return redirect(dest)
+
+    coarse = DISCIPLINE_TO_PLAN_SPORT.get(payload.get('discipline_id') or '')
+    session_id = payload.get('session_id') or f'{plan_version_id}:{date}:{idx}'
+    payload_hash = hashlib.sha256(
+        json.dumps(plan_body, sort_keys=True, default=str).encode()).hexdigest()
+
+    existing = db.execute(
+        'SELECT id, pushed_payload_hash, external_id FROM provider_outbound_ref '
+        'WHERE user_id = ? AND provider = ? AND session_id = ?',
+        (uid, 'wahoo', session_id),
+    ).fetchone()
+    if existing and existing['pushed_payload_hash'] == payload_hash:
+        print(f'[wahoo-push] user={uid} session={session_id} -> no-op (unchanged)')  # noqa: T201
+        flash('Already up to date on Wahoo.', 'info')
+        return redirect(dest)
+
+    token = pa.get_fresh_access_token(
+        db, uid, 'wahoo', token_url=_WAHOO_TOKEN_URL,
+        client_id=os.environ.get('WAHOO_CLIENT_ID'),
+        client_secret=os.environ.get('WAHOO_CLIENT_SECRET'),
+    )
+    if not token:
+        flash('Wahoo token unavailable; reconnect Wahoo.', 'warning')
+        return redirect(dest)
+
+    plan_b64 = base64.b64encode(json.dumps(plan_body).encode()).decode()
+    try:
+        plan_resp = requests.post(
+            _WAHOO_PLANS_URL,
+            json={'plan': {'file': plan_b64, 'filename': f'{session_id}.json',
+                            'external_id': session_id}},
+            headers={'Authorization': f'Bearer {token}'}, timeout=15)
+        plan_resp.raise_for_status()
+        wahoo_plan_id = (plan_resp.json() or {}).get('id')
+
+        workout_resp = requests.post(
+            _WAHOO_WORKOUTS_URL,
+            json={'workout': {
+                'plan_id': wahoo_plan_id,
+                'starts': f'{date}T00:00:00Z',
+                'minutes': sum(s.duration_s for s in session_to_steps(payload)) // 60,
+                'workout_type_family_id': _WAHOO_FAMILY_ID.get(coarse),
+            }},
+            headers={'Authorization': f'Bearer {token}'}, timeout=15)
+        workout_resp.raise_for_status()
+        external_id = str((workout_resp.json() or {}).get('id') or wahoo_plan_id or '')
+    except requests.RequestException as exc:
+        current_app.logger.exception('Wahoo plan push failed: %s', exc)
+        _record_outbound(db, existing, uid, session_id, payload_hash, None, pa.STATUS_ERROR)
+        flash('Sending the workout to Wahoo failed. Try again shortly.', 'danger')
+        return redirect(dest)
+
+    status = 'updated' if existing else 'pushed'
+    _record_outbound(db, existing, uid, session_id, payload_hash, external_id, status)
+    print(f'[wahoo-push] user={uid} session={session_id} -> {status} '  # noqa: T201
+          f'wahoo_workout={external_id} family={_WAHOO_FAMILY_ID.get(coarse)}')
+    flash('Sent to Wahoo — check Planned Workouts on your device shortly.', 'success')
+    return redirect(dest)
+
+
+def _record_outbound(db, existing, uid, session_id, payload_hash, external_id, status):
+    """Upsert the `provider_outbound_ref` ledger row (tier-2 = structured
+    workout push; mirrors `routes/trainingpeaks.py`'s identical helper)."""
+    if existing:
+        db.execute(
+            'UPDATE provider_outbound_ref SET external_id = ?, '
+            'pushed_payload_hash = ?, status = ?, updated_at = NOW() WHERE id = ?',
+            (external_id, payload_hash, status, existing['id']),
+        )
+    else:
+        db.execute(
+            'INSERT INTO provider_outbound_ref '
+            '(user_id, provider, session_id, external_id, tier, '
+            ' pushed_payload_hash, status) VALUES (?, ?, ?, ?, 2, ?, ?)',
+            (uid, 'wahoo', session_id, external_id, payload_hash, status),
+        )
+    db.commit()

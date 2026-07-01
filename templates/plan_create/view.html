@@ -274,8 +274,18 @@
               {% endfor %}
             </ol>
             {% if zwift_exportable is defined and zwift_exportable(sess.discipline_id) %}
-            <a class="rail-note sess-export" download
-               href="{{ url_for('zwift.export_zwo', plan_version_id=plan_version_id, date=sess.date, idx=sess.session_index_in_day) }}">↓ Zwift .zwo</a>
+            <a class="rail-note sess-export" download title="Also compatible with the Hammerhead Karoo dashboard's workout import"
+               href="{{ url_for('zwift.export_zwo', plan_version_id=plan_version_id, date=sess.date, idx=sess.session_index_in_day) }}">↓ .zwo (Zwift, Karoo)</a>
+            {% endif %}
+            {% if wahoo_connected is defined and wahoo_connected %}
+            {# #1094 — Wahoo plan.json is a push (OAuth, not a file download),
+               so this is a form/button, not an anchor like the Zwift link. #}
+            <form method="post" class="sess-export"
+                  action="{{ url_for('wahoo.push_session', plan_version_id=plan_version_id, date=sess.date, idx=sess.session_index_in_day) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="rail-note sess-export-btn btn-link"
+                      style="background:none;border:none;padding:0;font:inherit;cursor:pointer;text-decoration:underline;">↑ Send to Wahoo</button>
+            </form>
             {% endif %}
             {% endif %}
 
