@@ -11,7 +11,7 @@ import zipfile
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, current_app
 from database import get_db
 from routes.auth import current_user_id
-from plan_naming import target_race_name, generated_plan_name
+from plan_naming import target_race_name, plan_display_name
 from athlete_event_windows_repo import resolve_weather_location
 
 bp = Blueprint('plans', __name__, url_prefix='/plans')
@@ -247,7 +247,7 @@ def list_plans():
     gen_rows = db.execute(
         '''SELECT pv.id, pv.created_at, pv.created_via, pv.scope_start_date,
                   pv.scope_end_date, pv.pattern, pv.generation_status,
-                  pv.completed_at, pv.archived_at,
+                  pv.completed_at, pv.archived_at, pv.display_name,
                   COUNT(s.id) AS session_count
            FROM plan_versions pv
            LEFT JOIN plan_sessions s ON s.plan_version_id = pv.id
@@ -264,8 +264,9 @@ def list_plans():
     # the whole list; each plan's week-suffix comes from its own scope dates.
     race_name = target_race_name(db, current_user_id())
     gen_rows = [
-        {**dict(r), 'display_name': generated_plan_name(
-            race_name, r['scope_start_date'], r['scope_end_date'])}
+        {**dict(r), 'display_name': plan_display_name(
+            r.get('display_name'), race_name,
+            r['scope_start_date'], r['scope_end_date'])}
         for r in gen_rows
     ]
 

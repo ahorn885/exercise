@@ -63,3 +63,15 @@ def generated_plan_name(race_name, scope_start, scope_end) -> str:
         return "Training plan"
     weeks = _scope_weeks(scope_start, scope_end)
     return f"{race_name} — {weeks}-week build" if weeks else race_name
+
+
+def plan_display_name(stored_name, race_name, scope_start, scope_end) -> str:
+    """Athlete-facing plan label, preferring the name snapshotted on the plan at
+    creation (`plan_versions.display_name`, #1056) so changing the target race
+    later can't rename it. Falls back to the derived default when there's no
+    snapshot (rows created before the column, or a passthrough dict that didn't
+    carry it)."""
+    stored = (stored_name or "").strip()
+    if stored:
+        return stored
+    return generated_plan_name(race_name, scope_start, scope_end)

@@ -188,7 +188,8 @@ class TestAllocatePlanVersionRow:
         sql, params = conn.calls[0]
         assert "INSERT INTO plan_versions" in sql
         assert "RETURNING id" in sql
-        # params: (user_id, created_via, scope_start, scope_end, pattern, notes)
+        # params: (user_id, created_via, scope_start, scope_end, pattern, notes,
+        #          display_name)
         assert params == (
             _USER_ID,
             "plan_create",
@@ -196,6 +197,7 @@ class TestAllocatePlanVersionRow:
             date(2026, 8, 24),
             "A",
             None,  # notes is None → NULL
+            None,  # display_name not passed → NULL (#1056)
         )
         # Caller owns the transaction — repo does not commit.
         assert conn.committed is False
@@ -215,10 +217,27 @@ class TestAllocatePlanVersionRow:
         )
 
         sql, params = conn.calls[0]
-        # Notes serialized as JSON string for JSONB column.
-        assert params[-1] == json.dumps(
+        # Notes serialized as JSON string for JSONB column (now second-to-last;
+        # display_name is the trailing param, #1056).
+        assert params[-2] == json.dumps(
             {"refresh_reason": "athlete-tired", "tier": "T2"}
         )
+
+    def test_display_name_snapshot_passed_through(self):
+        # #1056 — the caller's snapshotted name is written as the trailing param.
+        conn = _FakeConn()
+        conn.queue(row={"id": 7})
+        allocate_plan_version_row(
+            conn,
+            _USER_ID,
+            created_via="plan_create",
+            scope_start_date=date(2026, 6, 1),
+            scope_end_date=date(2026, 8, 24),
+            pattern="A",
+            display_name="Pocket Gopher — 12-week build",
+        )
+        _sql, params = conn.calls[0]
+        assert params[-1] == "Pocket Gopher — 12-week build"
 
     def test_rejects_unknown_created_via(self):
         conn = _FakeConn()

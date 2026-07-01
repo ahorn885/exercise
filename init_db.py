@@ -2367,6 +2367,10 @@ _PG_MIGRATIONS = [
     # 'generating'. generation_error carries the user-facing failure copy.
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_status TEXT NOT NULL DEFAULT 'ready'",
     "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS generation_error TEXT",
+    # #1056 — snapshot the athlete-facing plan name at creation so adding a new
+    # target race later doesn't rename existing plans (reads fall back to the
+    # derived name when NULL, e.g. rows created before this column).
+    "ALTER TABLE plan_versions ADD COLUMN IF NOT EXISTS display_name TEXT",
     """DO $$
     BEGIN
         IF NOT EXISTS (
