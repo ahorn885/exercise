@@ -7,7 +7,7 @@ from database import get_db
 from datetime import date, timedelta
 from routes.auth import current_user_id
 from plan_sessions_repo import load_active_window_with_rest
-from plan_naming import target_race_name, generated_plan_name
+from plan_naming import target_race_name, plan_display_name
 from athlete_event_windows_repo import resolve_weather_location
 
 bp = Blueprint('dashboard', __name__)
@@ -27,13 +27,14 @@ def _v2_plan_names(db, user_id: int, sessions) -> dict:
     race_name = target_race_name(db, user_id)
     placeholders = ','.join('?' * len(ids))
     rows = db.execute(
-        f"SELECT id, scope_start_date, scope_end_date FROM plan_versions "
+        f"SELECT id, scope_start_date, scope_end_date, display_name FROM plan_versions "
         f"WHERE id IN ({placeholders}) AND user_id = ?",
         list(ids) + [user_id],
     ).fetchall()
     return {
-        r['id']: generated_plan_name(
-            race_name, r['scope_start_date'], r['scope_end_date'])
+        r['id']: plan_display_name(
+            r.get('display_name'), race_name,
+            r['scope_start_date'], r['scope_end_date'])
         for r in rows
     }
 
@@ -136,8 +137,9 @@ def _fill_rest_days(
         def _card(dp):
             return _rest_day_card(
                 dp.plan['id'],
-                generated_plan_name(
-                    race_name, dp.plan['scope_start_date'],
+                plan_display_name(
+                    dp.plan.get('display_name'), race_name,
+                    dp.plan['scope_start_date'],
                     dp.plan['scope_end_date']),
                 dp.date,
             )

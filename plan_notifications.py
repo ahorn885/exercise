@@ -30,7 +30,7 @@ from __future__ import annotations
 from email_helper import send_email
 from email_templates import render_email, public_base_url
 from notification_prefs import type_for_plan_status as notif_type_for_plan_status
-from plan_naming import generated_plan_name, target_race_name
+from plan_naming import plan_display_name, target_race_name
 
 
 def _email_channel_enabled(db, user_id: int, type_key: str) -> bool:
@@ -72,9 +72,11 @@ def claim_terminal_notification(db, user_id: int, plan_version_id: int) -> bool:
 
 def _plan_display_name(db, user_id: int, plan_version: dict) -> str:
     """The athlete-facing plan label, matching the plans list / header / badge
-    (#620). Best-effort — any read miss degrades to the plain fallback."""
+    (#620). Prefers the name snapshotted at creation (#1056); falls back to the
+    derived name. Best-effort — any read miss degrades to the plain fallback."""
     try:
-        return generated_plan_name(
+        return plan_display_name(
+            plan_version.get('display_name'),
             target_race_name(db, user_id),
             plan_version.get('scope_start_date'),
             plan_version.get('scope_end_date'),
@@ -227,7 +229,7 @@ def get_unseen_plan_notifications(db, user_id: int) -> list[dict]:
         return []
     rows = db.execute(
         "SELECT id, generation_status, generation_error, "
-        "scope_start_date, scope_end_date "
+        "scope_start_date, scope_end_date, display_name "
         "FROM plan_versions "
         "WHERE user_id = ? AND notified_at IS NOT NULL "
         "AND notification_seen_at IS NULL "
@@ -256,6 +258,7 @@ def get_unseen_plan_notifications(db, user_id: int) -> list[dict]:
             'plan_name': _plan_display_name(db, user_id, {
                 'scope_start_date': r['scope_start_date'],
                 'scope_end_date': r['scope_end_date'],
+                'display_name': r.get('display_name'),
             }),
             'error': r['generation_error'] if status == 'failed' else None,
             'category': 'good' if status == 'ready' else 'bad',

@@ -51,6 +51,7 @@ def allocate_plan_version_row(
     scope_end_date: date,
     pattern: str,
     notes: dict[str, Any] | None = None,
+    display_name: str | None = None,
 ) -> int:
     """Allocate a new `plan_versions` row and return the assigned id.
 
@@ -79,8 +80,8 @@ def allocate_plan_version_row(
     cur = db.execute(
         """INSERT INTO plan_versions
                (user_id, created_via, scope_start_date, scope_end_date,
-                pattern, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
+                pattern, notes, display_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             RETURNING id""",
         (
             user_id,
@@ -89,6 +90,7 @@ def allocate_plan_version_row(
             scope_end_date,
             pattern,
             json.dumps(notes) if notes is not None else None,
+            display_name,
         ),
     )
     row = cur.fetchone()

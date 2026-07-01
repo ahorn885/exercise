@@ -72,6 +72,7 @@ from plan_sessions_repo import (
     load_prior_plan_session_window,
     persist_layer4_sessions,
 )
+from plan_naming import generated_plan_name, target_race_name
 from routes.auth import current_user_id
 
 
@@ -556,6 +557,9 @@ def refresh():
         scope_end_date=scope_end_date,
         pattern="B",
         notes=None,
+        display_name=generated_plan_name(
+            target_race_name(db, uid), scope_start_date, scope_end_date
+        ),
     )
     db.execute(
         "UPDATE plan_versions SET generation_status = 'generating', "

@@ -94,7 +94,7 @@ from plan_sessions_repo import (
     snapshot_progress_blocks,
 )
 from race_events_repo import load_target_race_event_payload
-from plan_naming import target_race_name, generated_plan_name
+from plan_naming import target_race_name, generated_plan_name, plan_display_name
 from plan_notifications import notify_plan_terminal
 from athlete_event_windows_repo import load_event_windows
 from plan_nutrition_repo import load_plan_nutrition_by_version
@@ -309,6 +309,7 @@ def _load_plan_version(db, user_id: int, plan_version_id: int) -> dict | None:
     row = db.execute(
         "SELECT id, user_id, created_at, created_via, scope_start_date, "
         "scope_end_date, pattern, generation_status, generation_error, "
+        "display_name, "
         "generation_units_cached, generation_stall_passes, "
         "completed_at, archived_at, "
         "refresh_nl_text, refresh_parent_version_id, "
@@ -1065,12 +1066,18 @@ def new_plan():
         race_event = load_target_race_event_payload(db, uid)
         scope_end_date = _resolve_plan_scope_end_date(plan_start_date, race_event)
 
+        # #1056 — snapshot the display name now so adding a new target race later
+        # doesn't rename this plan; reads fall back to the derived name when NULL.
+        plan_display = generated_plan_name(
+            target_race_name(db, uid), plan_start_date, scope_end_date
+        )
         plan_version_id = allocate_plan_version_row(
             db, uid,
             created_via='plan_create',
             scope_start_date=plan_start_date,
             scope_end_date=scope_end_date,
             pattern='A',
+            display_name=plan_display,
             notes=None,
         )
 
@@ -1232,7 +1239,8 @@ def view_plan(plan_version_id: int):
         )
         upcoming_extremes = []
 
-    plan_name = generated_plan_name(
+    plan_name = plan_display_name(
+        plan_version.get('display_name'),
         target_race_name(db, uid),
         plan_version['scope_start_date'],
         plan_version['scope_end_date'],
