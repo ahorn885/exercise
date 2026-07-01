@@ -324,6 +324,61 @@
   </div>
 </form>
 
+{# #223 — pregnancy status. Source of truth: health_screening.flags / PREGNANCY
+   flag. Toggled here without re-running the full screening flow so athletes
+   can update mid-plan. Layer 2E HITL-gate wiring deferred (#518). #}
+<form method="post" action="{{ url_for('profile.save_pregnancy') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="card card-pad stack pf-nutrition">
+    <div>
+      <p class="eyebrow">● Reproductive health</p>
+      <p class="pf-hint">Affects nutrition safety reviews. All optional.</p>
+    </div>
+    <label class="pf-chip pf-pregnancy">
+      <input type="checkbox" name="pregnancy_status" value="yes"
+             id="pf-pregnancy-check"
+             {% if pregnancy_status %}checked{% endif %}>
+      <span>Currently pregnant or within 6 months postpartum</span>
+    </label>
+    <div><button type="submit" class="btn btn-primary btn-sm">Save</button></div>
+  </div>
+</form>
+
+{# #394 D-82/D-85 — health screening read-view + voluntary update entry point.
+   `screening` is `health_screening_repo.get_screening()` (None if no
+   acknowledged screening on file — shouldn't normally happen post-Phase-0,
+   but the screening flow is mandatory-at-onboarding, not enforced here).
+   "Update health screening" re-enters the existing onboarding flow, which
+   already pre-fills prior answers (Spec §9.3 voluntary reassessment). #}
+<div class="card card-pad stack pf-nutrition" id="health-screening">
+  <div class="supp-card-head">
+    <div>
+      <p class="eyebrow">● Health screening</p>
+      <p class="pf-hint">Your last screening — re-run it any time something changes.</p>
+    </div>
+    <a href="{{ url_for('onboarding.health_screening') }}" class="btn btn-primary btn-sm">Update health screening</a>
+  </div>
+  {% if screening %}
+  {% if screening.reassessment_overdue %}
+  <p class="chip warn">⚠ Reassessment overdue</p>
+  {% endif %}
+  {% if screening_flag_descriptions %}
+  <p class="rail-note">Flagged for physician consultation:</p>
+  <ul class="hs-flag-list">
+    {% for d in screening_flag_descriptions %}<li>{{ d }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="rail-note">No items flagged for physician consultation.</p>
+  {% endif %}
+  <p class="rail-note">
+    Last assessed {{ (screening.last_assessed_at|string)[:10] }}
+    {% if screening.reassessment_due_at %}· next due {{ (screening.reassessment_due_at|string)[:10] }}{% endif %}
+  </p>
+  {% else %}
+  <p class="rail-note">No health screening on file yet.</p>
+  {% endif %}
+</div>
+
 {# Structured supplements · health conditions · medications (#619). #}
 {% include 'profile/_health_tab.html' %}
 

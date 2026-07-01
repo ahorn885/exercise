@@ -43,11 +43,14 @@ class _Conn:
     misc-list shapes are served via keyword maps; everything else returns an
     empty cursor (the page tolerates empty schedule/skills/connection lists)."""
 
-    def __init__(self, profile=None, memory=(), user=None, pack_loads=()):
+    def __init__(self, profile=None, memory=(), user=None, pack_loads=(),
+                 pregnancy_flags=None, screening=None):
         self._profile = profile or {}
         self._memory = list(memory)
         self._user = user
         self._pack_loads = list(pack_loads)
+        self._pregnancy_flags = pregnancy_flags  # list[str] | None
+        self._screening = screening  # dict | None — get_screening() row shape
 
     def execute(self, sql, *a, **k):
         s = ' '.join(sql.split())
@@ -65,6 +68,17 @@ class _Conn:
             return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
         if 'pack_load_history' in s:
             return _Cursor([_FakeRow(r) for r in self._pack_loads])
+        if 'health_screening' in s:
+            # #394 D-85 — get_screening()'s read-view query is distinguishable
+            # from get_pregnancy_flag()'s simpler `SELECT flags` by its
+            # computed `reassessment_overdue` column.
+            if 'reassessment_overdue' in s:
+                if self._screening is None:
+                    return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+                return _Cursor([], one=_FakeRow(self._screening))
+            if self._pregnancy_flags is None:
+                return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+            return _Cursor([], one=_FakeRow(flags=self._pregnancy_flags))
         if 'athlete_profile' in s:
             return _Cursor([], one=_FakeRow(self._profile) if self._profile else None)
         if 'discipline_baseline_' in s:
@@ -164,6 +178,81 @@ def test_profile_pack_load_form_collapses_once_filled(monkeypatch):
     assert 'Add another pack weight' in html
     assert '/profile/pack-load/7/delete' in html   # per-row delete reachable
     assert '/profile/pack-load/add' in html        # form still present, inside
+
+
+def test_profile_pregnancy_field_renders_on_health_tab(monkeypatch):
+    # #223 — the pregnancy checkbox is always visible on the health tab.
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.get('/profile/?tab=health')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'pf-pregnancy' in html
+    assert 'pf-pregnancy-check' in html
+    assert 'pregnancy_status' in html
+    assert 'pregnant' in html.lower()
+    assert '/profile/pregnancy' in html
+
+
+def test_profile_pregnancy_field_checked_when_flagged(monkeypatch):
+    # #223 — checkbox is checked when PREGNANCY flag is set in health_screening.
+    client = _client(monkeypatch, _Conn(profile={}, pregnancy_flags=["PREGNANCY"]))
+    resp = client.get('/profile/?tab=health')
+    html = resp.get_data(as_text=True)
+    assert 'pf-pregnancy' in html
+    assert 'checked' in html
+
+
+def test_profile_health_screening_card_no_screening_on_file(monkeypatch):
+    # #394 D-82/D-85 — no acknowledged screening yet: the card still renders
+    # with the update link, but shows the "no screening on file" message.
+    client = _client(monkeypatch, _Conn(profile={}))
+    resp = client.get('/profile/?tab=health')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'health-screening' in html
+    assert 'Update health screening' in html
+    assert '/onboarding/health-screening' in html
+    assert 'No health screening on file yet.' in html
+
+
+def test_profile_health_screening_card_renders_flags_and_dates(monkeypatch):
+    # #394 D-85 — a screening with flags shows plain-language descriptions +
+    # last-assessed / due dates; not overdue ⇒ no overdue chip.
+    screening = {
+        'flags': ['CARDIO_CONDITION'],
+        'details': {},
+        'details_optin': False,
+        'acknowledged': True,
+        'last_assessed_at': '2026-06-01 12:00:00',
+        'reassessment_due_at': '2027-06-01 12:00:00',
+        'reassessment_overdue': False,
+    }
+    client = _client(monkeypatch, _Conn(profile={}, screening=screening))
+    resp = client.get('/profile/?tab=health')
+    html = resp.get_data(as_text=True)
+    assert 'Diagnosed heart condition' in html
+    assert '2026-06-01' in html
+    assert '2027-06-01' in html
+    assert 'Reassessment overdue' not in html
+
+
+def test_profile_health_screening_card_overdue_chip(monkeypatch):
+    # #394 D-83/D-85 — an overdue screening shows the warning chip.
+    screening = {
+        'flags': [],
+        'details': {},
+        'details_optin': False,
+        'acknowledged': True,
+        'last_assessed_at': '2025-01-01 00:00:00',
+        'reassessment_due_at': '2026-01-01 00:00:00',
+        'reassessment_overdue': True,
+    }
+    client = _client(monkeypatch, _Conn(profile={}, screening=screening))
+    resp = client.get('/profile/?tab=health')
+    html = resp.get_data(as_text=True)
+    assert 'Reassessment overdue' in html
+    assert 'chip warn' in html
+    assert 'No items flagged for physician consultation.' in html
 
 
 def test_profile_locations_tab_redirects_to_locales(monkeypatch):

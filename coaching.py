@@ -821,18 +821,22 @@ def get_clothing_context(db, plan_id: int, location: str, days_ahead: int = 7) -
 def _get_performance_delta(db, plan_id: int, lookback_days: int) -> list:
     """Return planned-vs-actual comparison for completed sessions in the lookback window."""
     cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    # Joins canonical_cardio_feed (#196 Slice 4), not raw cardio_log: a ride
+    # synced from N providers all matching the same plan item would otherwise
+    # surface N near-duplicate rows and break the MAX() de-correlation below
+    # (#920 fix). The feed collapses each cluster to one row first.
     rows = db.execute(
         '''SELECT pi.id, pi.item_date, pi.workout_name, pi.sport_type, pi.intensity,
                   pi.target_duration_min, pi.target_distance_mi, pi.status,
                   SUM(tl.actual_sets) as actual_sets,
                   AVG(tl.rpe) as avg_rpe,
-                  GROUP_CONCAT(tl.outcome) as outcomes,
-                  cl.duration_min as actual_cardio_min,
-                  cl.distance_mi as actual_cardio_mi,
-                  cl.avg_hr, cl.aerobic_te
+                  STRING_AGG(tl.outcome, ',') as outcomes,
+                  MAX(cl.duration_min) as actual_cardio_min,
+                  MAX(cl.distance_mi) as actual_cardio_mi,
+                  MAX(cl.avg_hr) as avg_hr, MAX(cl.aerobic_te) as aerobic_te
            FROM plan_items pi
            LEFT JOIN training_log tl ON tl.plan_item_id = pi.id
-           LEFT JOIN cardio_log cl ON cl.plan_item_id = pi.id
+           LEFT JOIN canonical_cardio_feed cl ON cl.plan_item_id = pi.id
            WHERE pi.user_id = ? AND pi.plan_id = ? AND pi.item_date >= ?
              AND pi.status IN ('completed', 'skipped')
            GROUP BY pi.id

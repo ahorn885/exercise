@@ -81,6 +81,17 @@ def test_questions_render(monkeypatch):
     assert 'chest pain' in html.lower()
 
 
+def test_questions_detail_field_has_privacy_indicator(monkeypatch):
+    """#394 D-80 — the sensitive-detail opt-in reads as a deliberate privacy
+    control (a chip badge + a bordered card), not just inline text."""
+    c, _ = _client(monkeypatch)
+    resp = c.get('/onboarding/health-screening')
+    html = resp.get_data(as_text=True)
+    assert 'chip accent' in html
+    assert '🔒' in html
+    assert 'hs-optin card card-pad' in html
+
+
 def test_acknowledge_no_flags(monkeypatch):
     c, _ = _client(monkeypatch)
     form = {f'q{i}': 'no' for i in range(1, 11)}
@@ -90,6 +101,36 @@ def test_acknowledge_no_flags(monkeypatch):
     assert 'No items in this screening require physician consultation' in html
     assert 'I acknowledge and continue' in html
     assert 'name="acknowledge" value="1"' in html
+
+
+def test_acknowledge_no_flags_has_no_anti_skim_script(monkeypatch):
+    """#394 D-84 — the anti-skim delay only applies when a real medical
+    recommendation is shown; a clean screening gets an immediately-usable
+    button."""
+    c, _ = _client(monkeypatch)
+    form = {f'q{i}': 'no' for i in range(1, 11)}
+    resp = c.post('/onboarding/health-screening', data=form)
+    html = resp.get_data(as_text=True)
+    assert 'hs-ack-btn' not in html
+
+
+def test_acknowledge_flagged_has_anti_skim_script(monkeypatch):
+    """#394 D-84 — when flags are present, the acknowledgment button ships a
+    nonce'd countdown script. The button itself carries no server-rendered
+    `disabled` — only the script disables it, so a no-JS browser still gets a
+    working (un-delayed) button rather than a permanently stuck one."""
+    c, _ = _client(monkeypatch)
+    form = {f'q{i}': 'no' for i in range(1, 11)}
+    form['q3'] = 'yes'
+    resp = c.post('/onboarding/health-screening', data=form)
+    html = resp.get_data(as_text=True)
+    assert 'id="hs-ack-btn"' in html
+    assert 'nonce="' in html
+    assert '<script nonce="{{ csp_nonce() }}">' not in html  # rendered, not raw
+    btn_start = html.index('id="hs-ack-btn"')
+    btn_tag = html[max(0, btn_start - 200):btn_start + 20]
+    assert 'disabled' not in btn_tag
+    assert 'style="' not in html and 'onclick=' not in html  # still CSP-clean
 
 
 def test_acknowledge_pregnancy_paragraph(monkeypatch):

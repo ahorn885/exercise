@@ -56,9 +56,7 @@ def _discipline(
         discipline_name=name,
         inclusion=inclusion,  # type: ignore[arg-type]
         role="Primary",
-        is_conditional=False,
         load_weight=_weight(load_weight),
-        sleep_deprivation_relevant=False,
         rationale="test",
         phase_load=PhaseLoadBands(
             base_low=base_pct[0],
@@ -81,14 +79,12 @@ def _layer2a(disciplines: list[Layer2ADiscipline]) -> Layer2APayload:
         disciplines=disciplines,
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-06-06T00:00:00Z"
+            generated_at="2026-06-06T00:00:00Z"
         ),
         # Per-phase weekly hour totals (low, high) — what's left of `capacity_hours`
         # after the phase_load percentages are renormalized.

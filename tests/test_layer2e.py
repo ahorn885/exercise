@@ -209,17 +209,10 @@ def _ar_discipline(
         primary_movement=primary_movement or _CANON_MOVEMENT.get(discipline_id),
         inclusion="included",
         role=role,
-        is_conditional=False,
-        conditional_resolution=None,
         load_weight=WeightResult(
             value=weight, source="system_default", system_default=weight
         ),
-        race_time_pct_low=None,
-        race_time_pct_high=None,
-        sport_specific_context=None,
         phase_load=PhaseLoadBands(default_inclusion="included"),
-        sleep_deprivation_relevant=False,
-        training_gap=None,
         rationale="test fixture",
     )
 

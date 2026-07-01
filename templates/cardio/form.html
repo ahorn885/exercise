@@ -148,10 +148,11 @@
 {% block log_scripts %}
 <script nonce="{{ csp_nonce() }}">
 const BIKE_ACTIVITIES = ['Road Cycling','Mountain Biking','Gravel Cycling','Indoor Bike Trainer',
-                         'Kayak Ergometer','Rowing Ergometer'];
-const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Kayak Ergometer','Rowing Ergometer',
-                           'Swimming Pool','Swimming Open'];
-const RUN_ACTIVITIES  = ['Running','Trail Running','Treadmill','Hiking','Stair Climbing'];
+                         'Kayak Ergometer','Rowing Ergometer','Rowing'];
+const PADDLE_ACTIVITIES = ['Kayaking','Pack Rafting','Canoeing','Stand Up Paddleboarding','Rowing',
+                           'Kayak Ergometer','Rowing Ergometer','Swimming Pool','Swimming Open'];
+const RUN_ACTIVITIES  = ['Running','Trail Running','Treadmill','Walking','Hiking','Stair Climbing',
+                         'Mountaineering','Snowshoeing'];
 
 function toggleFields(activity) {
   const isBike   = BIKE_ACTIVITIES.includes(activity);

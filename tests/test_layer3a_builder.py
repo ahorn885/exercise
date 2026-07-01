@@ -150,27 +150,22 @@ def _make_layer2a(disciplines: int = 3) -> Layer2APayload:
                 discipline_name=f"Discipline {i}",
                 inclusion="included",
                 role="Primary" if i == 1 else "Secondary",
-                is_conditional=False,
                 load_weight=WeightResult(
                     value=0.4 if i == 1 else 0.3,
                     source="system_default",
                     system_default=0.4 if i == 1 else 0.3,
                 ),
-                sleep_deprivation_relevant=False,
                 rationale="test fixture rationale",
             )
             for i in range(1, disciplines + 1)
         ],
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1",
             generated_at="2026-05-20T12:00:00",
         ),
     )

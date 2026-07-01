@@ -37,8 +37,8 @@
           {{ 'checked' if q.code not in prior_flags }}> No</label>
       </div>
       <label class="hs-detail">
-        <span class="hs-detail-label">Optional detail (private — only stored if
-          you opt in below)</span>
+        <span class="hs-detail-label">Optional detail
+          <span class="chip accent">🔒 private — opt-in only</span></span>
         <input type="text" name="detail_{{ q.code }}"
           value="{{ prior_details.get(q.code, '') }}"
           placeholder="Share more if you wish — you can skip this">
@@ -47,12 +47,14 @@
     {% endfor %}
   </ol>
 
-  <label class="hs-optin">
+  {# #394 D-80 — make the sensitive-storage opt-in visually distinct, not just
+     inline text, so it reads as a deliberate privacy control. #}
+  <label class="hs-optin card card-pad">
     <input type="checkbox" name="details_optin" value="on"
       {{ 'checked' if prior_optin }}>
-    Store the optional details I provide above. These are sensitive health notes;
-    leave unchecked and no free text is stored — your Yes/No answers are kept
-    either way.
+    <span>🔒 Store the optional details I provide above. These are sensitive
+      health notes; leave unchecked and no free text is stored — your Yes/No
+      answers are kept either way.</span>
   </label>
 
   <div class="onb-nav">
@@ -101,8 +103,38 @@
 
   <div class="onb-nav">
     <a href="{{ url_for('onboarding.health_screening') }}" class="btn btn-ghost">Back</a>
-    <button type="submit" class="btn btn-primary">I acknowledge and continue</button>
+    <button type="submit" class="btn btn-primary"
+      {% if flags %}id="hs-ack-btn"{% endif %}>I acknowledge and continue</button>
   </div>
 </form>
+
+{# #394 D-84 — anti-skim guard: when a real medical recommendation is shown
+   (flags present), hold the acknowledgment button disabled for a few seconds
+   so it can't be reflex-clicked past. The button disables itself only once
+   this script runs — never server-rendered `disabled` — so an athlete with
+   JS unavailable still gets a working (un-delayed) button rather than a
+   stuck one. No-op when there are no flags. #}
+{% if flags %}
+<script nonce="{{ csp_nonce() }}">
+  (function () {
+    const btn = document.getElementById('hs-ack-btn');
+    if (!btn) return;
+    const label = btn.textContent;
+    let remaining = 3;
+    btn.disabled = true;
+    btn.textContent = label + ' (' + remaining + ')';
+    const tick = setInterval(function () {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(tick);
+        btn.textContent = label;
+        btn.disabled = false;
+        return;
+      }
+      btn.textContent = label + ' (' + remaining + ')';
+    }, 1000);
+  })();
+</script>
+{% endif %}
 {% endif %}
 {% endblock %}

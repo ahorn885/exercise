@@ -186,6 +186,28 @@ NUDGE_REGISTRY = {
         'category': 'warning',
         'notification_type': 'conditions_advisory',
     },
+    # #394 D-83 — health-screening annual reassessment (Health Screening Spec v2
+    # §9.2). Fires from 14 days before `reassessment_due_at` through however
+    # long it stays overdue (one persistent condition — the spec's "soft
+    # notice" / "due-date banner" / "overdue banner" states all collapse to
+    # "due date is within 14 days or has passed"); clears once a voluntary
+    # reassessment (`onboarding.health_screening`, also surfaced on the
+    # profile Health tab) pushes the due date back out. `warning` — same
+    # liability-relevant class as `conditions_advisory`, not a passive
+    # staleness nudge. No dedicated `notification_type`: rolls up under the
+    # 'account_reminders' catch-all like the onboarding nudges above, rather
+    # than claiming an independently-mutable settings toggle this session
+    # doesn't build.
+    'health_screening_due': {
+        'message': (
+            'Your annual health screening is due for review. Takes about a '
+            "minute and keeps your coaching context current — it never "
+            'blocks your plan.'
+        ),
+        'cta_label': 'Review screening',
+        'cta_endpoint': 'onboarding.health_screening',
+        'category': 'warning',
+    },
     # ─── #964 recurring time-of-day sends ───────────────────────────────────
     # Fired on a per-user clock by `scan_scheduled_sends` (not a standing DB
     # condition), once per local day per `notification_schedules` row. Each
@@ -559,6 +581,7 @@ LOG_MIN_ACCOUNT_DAYS = 7      # skip brand-new accounts still onboarding
 BODY_STALE_DAYS = 30          # no body-metric entry in this window ⇒ refresh
 BODY_MIN_ACCOUNT_DAYS = 14
 INJURY_REVIEW_DAYS = 30       # injury active+untouched this long ⇒ review
+SCREENING_REASSESS_LEAD_DAYS = 14  # health_screening due within this window ⇒ health_screening_due
 RACE_WEEK_DUE_DAYS = 14       # target race within this window + no brief ⇒ nudge
 
 # Conditions advisory (#964 × #289) — alert-worthy weather extremes in the live
@@ -774,6 +797,36 @@ _STALENESS_RECONCILE = [
                   SELECT 1 FROM injury_log il WHERE il.user_id = an.user_id
                     AND il.status = 'Active'
                     AND il.start_date <= TO_CHAR(NOW() - INTERVAL '{INJURY_REVIEW_DAYS} days', 'YYYY-MM-DD')
+              )
+            RETURNING id
+        ''',
+    },
+    {
+        'nudge_type': 'health_screening_due',
+        # #394 D-83 — `health_screening.reassessment_due_at` is a real TIMESTAMP
+        # (unlike the ISO-text `date` columns above), so this compares directly
+        # against NOW() + INTERVAL rather than the TO_CHAR text-cast pattern.
+        # Fires once the due date is within the lead window; clears once a
+        # voluntary reassessment (`save_screening`) pushes it back out.
+        'insert': f'''
+            INSERT INTO account_nudges (user_id, nudge_type)
+            SELECT hs.user_id, 'health_screening_due'
+            FROM health_screening hs
+            WHERE hs.reassessment_due_at IS NOT NULL
+              AND hs.reassessment_due_at <= NOW() + INTERVAL '{SCREENING_REASSESS_LEAD_DAYS} days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM account_nudges an
+                  WHERE an.user_id = hs.user_id AND an.nudge_type = 'health_screening_due'
+              )
+            ON CONFLICT (user_id, nudge_type) DO NOTHING
+            RETURNING id
+        ''',
+        'delete': f'''
+            DELETE FROM account_nudges an
+            WHERE an.nudge_type = 'health_screening_due'
+              AND EXISTS (
+                  SELECT 1 FROM health_screening hs WHERE hs.user_id = an.user_id
+                    AND hs.reassessment_due_at > NOW() + INTERVAL '{SCREENING_REASSESS_LEAD_DAYS} days'
               )
             RETURNING id
         ''',
