@@ -47,6 +47,8 @@ from layer4.hashing import (
     compute_seam_resynth_block_cache_key,
     compute_seam_review_cache_key,
     compute_seam_review_iter2_cache_key,
+    compute_sessions_content_hash,
+    compute_week_seam_resynth_block_cache_key,
     compute_week_seam_review_cache_key,
 )
 from layer4.payload import (
@@ -437,22 +439,129 @@ def _aggregate_block_results(
     return result, meta
 
 
+def _merge_week_resynth_meta(
+    existing_meta: SynthesisMetadata,
+    week_meta: SynthesisMetadata,
+) -> SynthesisMetadata:
+    """T-1.5 (#847) — fold a week-seam-driven single-week re-synth's
+    `SynthesisMetadata` into the phase's existing aggregate meta. Mirrors
+    `_aggregate_block_results`'s META combine rule (sum tokens/latency, max
+    retries_used, OR cap_hit) — META always retains real accounting (never
+    cache-zeroed, unlike RESULT), so this ADDS the new call's real cost on
+    top of the phase's existing real cost rather than replacing it."""
+    return SynthesisMetadata(
+        model=existing_meta.model,
+        temperature=existing_meta.temperature,
+        input_tokens=existing_meta.input_tokens + week_meta.input_tokens,
+        output_tokens=existing_meta.output_tokens + week_meta.output_tokens,
+        latency_ms=existing_meta.latency_ms + week_meta.latency_ms,
+        retries_used=max(existing_meta.retries_used, week_meta.retries_used),
+        cap_hit=existing_meta.cap_hit or week_meta.cap_hit,
+    )
+
+
+def _sessions_before_week(
+    phase_index: int,
+    week_in_phase: int,
+    *,
+    results_by_index: dict[int, PhaseSynthesisResult],
+    carryover_sessions_by_phase_index: dict[int, list[PlanSession]],
+) -> list[PlanSession]:
+    """T-1.5 (#847) — the live `prior_block_sessions` context for
+    re-synthesizing `week_in_phase` within `phase_index`: sourced from
+    `results_by_index`'s CURRENT state (which may already reflect an earlier
+    week-seam splice, per CW-c) rather than a static pre-resynth snapshot, so
+    a resynth threads off the freshest known content. `week_in_phase == 1`
+    steps back to the prior phase (synthesized this call, or carryover);
+    phase 0's first week has no prior context (empty list, matching the
+    primary loop's own `prior_block_sessions` seed)."""
+    if week_in_phase <= 1:
+        prev_idx = phase_index - 1
+        if prev_idx < 0:
+            return []
+        if prev_idx in results_by_index:
+            return results_by_index[prev_idx].sessions
+        return carryover_sessions_by_phase_index.get(prev_idx, [])
+    phase_sessions = (
+        results_by_index[phase_index].sessions if phase_index in results_by_index else []
+    )
+    return [
+        s
+        for s in phase_sessions
+        if s.phase_metadata is not None
+        and s.phase_metadata.week_in_phase == week_in_phase - 1
+    ]
+
+
+def _splice_week_into_phase_result(
+    existing: PhaseSynthesisResult,
+    week_result: PhaseSynthesisResult,
+    target_week: int,
+) -> PhaseSynthesisResult:
+    """T-1.5 (#847) CW-c — splice a week-seam-driven single-week re-synthesis
+    into an already-aggregated phase result: replace ONLY `target_week`'s
+    sessions (matched via `phase_metadata.week_in_phase`), keep every other
+    week's sessions, and rebuild the phase-level aggregate fields by combining
+    `existing` + `week_result` — mirrors `_aggregate_block_results`'s
+    two-item combine (sum tokens/latency/llm_call_count, max retries_used, OR
+    cap_hit, notes joined with ' | ', opportunities extended + capped at 3).
+    RESULT token/latency fields are cache-zeroed on a cache hit (§9.6) same as
+    every other per-block RESULT, so this sum stays correct either way."""
+    kept = [
+        s
+        for s in existing.sessions
+        if s.phase_metadata is None or s.phase_metadata.week_in_phase != target_week
+    ]
+    sessions = kept + week_result.sessions
+    sessions.sort(key=lambda s: (s.date, s.session_index_in_day))
+    notes = " | ".join(
+        n
+        for n in (existing.phase_synthesis_notes, week_result.phase_synthesis_notes)
+        if n
+    )
+    return PhaseSynthesisResult(
+        phase_name=existing.phase_name,
+        sessions=sessions,
+        phase_synthesis_notes=notes,
+        opportunities=(existing.opportunities + week_result.opportunities)[:3],
+        validator_results=existing.validator_results + week_result.validator_results,
+        cap_hit=existing.cap_hit or week_result.cap_hit,
+        retries_used=max(existing.retries_used, week_result.retries_used),
+        input_tokens=existing.input_tokens + week_result.input_tokens,
+        output_tokens=existing.output_tokens + week_result.output_tokens,
+        latency_ms=existing.latency_ms + week_result.latency_ms,
+        llm_call_count=existing.llm_call_count + week_result.llm_call_count,
+    )
+
+
 # Cache `phase_idx` namespaces (all share the `plan_create`/`plan_refresh`
 # entry_point storage; disjoint ranges keep the row classes from colliding):
 #   [0, 500)     — primary per-week-block synthesis (the global block index `u`,
 #                  0..W-1; W = total synthesized weeks, far below 500).
-#   [500, 1000)  — D-77 Slice 3 SEAM-DRIVEN re-synthesis blocks, sub-keyed by
-#                  the triggering seam (base + seam_idx*stride + week-1). Kept
-#                  BELOW the seam-review base (i.e. still < _SEAM_CACHE_PHASE_IDX_BASE)
-#                  ON PURPOSE: the stall-backstop progress counter
+#   [500, 1000)  — D-77 Slice 3 PHASE-SEAM-DRIVEN re-synthesis blocks, sub-keyed
+#                  by the triggering seam (base + seam_idx*stride + week-1).
+#   [1000, 1500) — T-1.5 (#847) WEEK-SEAM-DRIVEN re-synthesis blocks, sub-keyed
+#                  by the triggering week-seam (base + week_seam_idx*stride +
+#                  0/1 for the primary-target/CW-b-downstream-rebuild slot). A
+#                  NEW band carved out below the (bumped) seam-review base so it
+#                  stays inside the stall-backstop's counted range alongside the
+#                  other two synthesis-block bands above — see next paragraph.
+#                  Kept BELOW the seam-review base (i.e. still <
+#                  _SEAM_CACHE_PHASE_IDX_BASE) ON PURPOSE, same reason as the
+#                  phase-seam band: the stall-backstop progress counter
 #                  (`routes._count_cached_blocks` / `_generation_stalled`) counts
 #                  rows in [0, _SEAM_CACHE_PHASE_IDX_BASE), so a long seam
 #                  re-synth registers as progress and resumes instead of stalling
 #                  — no route SQL change needed.
-#   [1000, 2000) — iter-1 PHASE-seam-review cache rows (base + seam_idx).
-#   [2000, 3000) — iter-2 (re-synthesis-driven) PHASE-seam-review cache rows
+#   [1500, 2500) — iter-1 PHASE-seam-review cache rows (base + seam_idx).
+#                  _SEAM_CACHE_PHASE_IDX_BASE bumped 1000 -> 1500 by T-1.5 to
+#                  make room for the new week-seam-resynth band directly below
+#                  it without colliding with either of the two bands that
+#                  preceded it ([0,500) primary / [500,1000) phase-seam-resynth).
+#   [2500, 3000) — iter-2 (re-synthesis-driven) PHASE-seam-review cache rows
 #                  (base + seam_idx). Like iter-1, kept >= _SEAM_CACHE_PHASE_IDX_BASE
-#                  so it stays OFF the [0, 1000) stall-backstop progress band.
+#                  so it stays OFF the [0, _SEAM_CACHE_PHASE_IDX_BASE) stall-backstop
+#                  progress band.
 #   [3000, ...)  — iter-1 WEEK-seam-review cache rows (base + week_seam_idx),
 #                  the D-77 Slice 3 intra-phase reviewer. Disjoint from the
 #                  phase-seam rows; like them, NOT counted by the stall-backstop
@@ -460,24 +569,51 @@ def _aggregate_block_results(
 #                  since a review is not a synthesis block.
 _SEAM_RESYNTH_BLOCK_IDX_BASE = 500
 _SEAM_RESYNTH_BLOCK_IDX_STRIDE = 100
-_SEAM_CACHE_PHASE_IDX_BASE = 1000
-_SEAM_ITER2_CACHE_PHASE_IDX_BASE = 2000
+_WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE = 1000
+_WEEK_SEAM_RESYNTH_BLOCK_IDX_STRIDE = 2
+_SEAM_CACHE_PHASE_IDX_BASE = 1500
+_SEAM_ITER2_CACHE_PHASE_IDX_BASE = 2500
 _WEEK_SEAM_CACHE_PHASE_IDX_BASE = 3000
 
 
 def _seam_resynth_block_phase_idx(seam_idx: int, week_in_phase: int) -> int:
-    """Disjoint per-(seam, week) cache `phase_idx` for a seam-driven re-synth
-    block, in [500, 1000). `week_in_phase` is 1-based. Asserts the result stays
-    inside the seam-resynth band so it can never alias a primary block (< 500)
-    or a seam-review row (>= 1000) under realistic phase counts/lengths."""
+    """Disjoint per-(seam, week) cache `phase_idx` for a phase-seam-driven
+    re-synth block, in [500, 1000). `week_in_phase` is 1-based. Asserts the
+    result stays inside the phase-seam-resynth band so it can never alias a
+    primary block (< 500) or the week-seam-resynth band directly above it
+    (>= _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE) under realistic phase counts/lengths."""
     idx = (
         _SEAM_RESYNTH_BLOCK_IDX_BASE
         + seam_idx * _SEAM_RESYNTH_BLOCK_IDX_STRIDE
         + (week_in_phase - 1)
     )
-    assert _SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE, (
+    assert _SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE, (
         f"seam-resynth phase_idx {idx} (seam={seam_idx}, week={week_in_phase}) "
         "escaped the [500, 1000) band"
+    )
+    return idx
+
+
+def _week_seam_resynth_block_phase_idx(
+    week_seam_index: int, *, downstream: bool = False
+) -> int:
+    """T-1.5 (#847) — disjoint per-week-seam cache `phase_idx` for a
+    week-seam-driven single-week re-synth block, in [1000, 1500).
+    `week_seam_index` is the global, monotonic intra-phase week-seam index
+    (same namespace `review_week_seam` iter-1 caching uses). `downstream=True`
+    selects the second slot in the pair, reserved for the CW-b bounded
+    (<=1-hop) downstream-rebuild block triggered by the SAME week-seam, so the
+    two never collide. Asserts the result stays inside the band so it can
+    never alias the phase-seam-resynth band below it or the (bumped)
+    seam-review base above it."""
+    idx = (
+        _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE
+        + week_seam_index * _WEEK_SEAM_RESYNTH_BLOCK_IDX_STRIDE
+        + (1 if downstream else 0)
+    )
+    assert _WEEK_SEAM_RESYNTH_BLOCK_IDX_BASE <= idx < _SEAM_CACHE_PHASE_IDX_BASE, (
+        f"week-seam-resynth phase_idx {idx} (week_seam={week_seam_index}, "
+        f"downstream={downstream}) escaped the [1000, 1500) band"
     )
     return idx
 
@@ -1396,15 +1532,17 @@ def _run_pattern_a_engine(
     # recovery week's dip is correct, only UNJUSTIFIED divergence is flagged
     # (ratified design §5.2 + `Layer4_WeekSeamReviewer_v1.md`).
     #
-    # v1 ships in REVIEW-AND-ESCALATE mode: a non-clean verdict surfaces a
-    # `notable_observation` (HITL-escalated for major). The β auto-resynth of a
-    # week-block is gated on the real-LLM walk (design §7 cascade-invalidation
-    # watch item + §14) and tracked as a fast-follow — the propose-patch
-    # direction is still emitted + recorded so that wiring is a later
-    # orchestrator-only change with no prompt revision. Only intra-phase seams of
-    # synthesized phases are reviewed (a phase is synthesized as a whole, so a
-    # week seam never straddles a synthesized + carryover boundary — that
-    # boundary is the PHASE seam, handled above).
+    # T-1.5 (#847): a `flagged_major`/`patched` verdict with a re-prompt
+    # direction now auto-resynthesizes the ONE targeted week-block (β
+    # propose-patch authority, mirroring the phase-seam path), re-reviews the
+    # same seam once at `seam_iteration=2` (per-seam cap 2 — same cap the
+    # phase-seam path uses), and only emits a `seam_unresolved` observation
+    # (HITL-escalated) when iter-2 still flags or the per-(phase, week) retry
+    # budget is exhausted. `accept_with_observation` still escalates directly
+    # (never auto-resynthesized — the reviewer itself judged it unfixable).
+    # Only intra-phase seams of synthesized phases are reviewed (a phase is
+    # synthesized as a whole, so a week seam never straddles a synthesized +
+    # carryover boundary — that boundary is the PHASE seam, handled above).
     @dataclass
     class _WeekSeam:
         phase_index: int
@@ -1542,6 +1680,19 @@ def _run_pattern_a_engine(
     ws_results.extend(ws_fresh)
     ws_results.sort(key=lambda t: t[0])
 
+    # T-1.5 (#847): per-(phase, week) retry budget for week-seam-driven
+    # resynth — a SEPARATE dimension from `retries_used_per_phase` (which
+    # tracks the validator + phase-seam shared pool). Two different week
+    # seams can target the same (phase, week) (e.g. `re_prompt_next` from
+    # week-seam g and `re_prompt_prior` from week-seam g+1), so this is keyed
+    # by the target, not the triggering seam. Reuses `capped_retries_per_phase`
+    # as the cap (no new config surface) but each individual resynth call
+    # itself gets a FRESH internal validator-retry budget
+    # (`retries_already_used=0`), mirroring the primary per-week-block loop's
+    # own convention (each week-block starts at 0), not the phase-seam path's
+    # shared-counter convention (which is specific to phase-level re-synth).
+    retries_used_per_week_seam: dict[tuple[int, int], int] = {}
+
     ws_by_index = {ws.global_index: ws for ws in week_seams}
     for ws_idx, res in ws_results:
         ws = ws_by_index[ws_idx]
@@ -1568,21 +1719,394 @@ def _run_pattern_a_engine(
         )
         if res.verdict == "approved":
             continue
-        # flagged_minor: record-only warning. flagged_major / patched (any
-        # direction) + accept_with_observation: escalate to HITL in v1
-        # review-and-escalate mode (no auto-resynth this slice).
-        elevates = res.verdict in ("flagged_major", "patched")
-        summary = "; ".join(res.seam_issues)[:240] or (
-            f"week seam {seam_label}: {res.verdict}"
-        )
-        notable_observations.append(
-            Observation(
-                category="warning" if not elevates else "seam_unresolved",
-                text=summary,
-                evidence_basis=[f"week_seam_review {seam_label}"],
-                elevates_to_hitl=elevates,
+        if res.verdict == "flagged_minor":
+            summary = "; ".join(res.seam_issues)[:240] or (
+                f"week seam {seam_label}: {res.verdict}"
             )
+            notable_observations.append(
+                Observation(
+                    category="warning",
+                    text=summary,
+                    evidence_basis=[f"week_seam_review {seam_label}"],
+                    elevates_to_hitl=False,
+                )
+            )
+            continue
+
+        # verdict in (flagged_major, patched).
+        direction = res.proposed_patch_direction
+        if direction == "accept_with_observation":
+            # The reviewer itself judged this unfixable by re-synthesis —
+            # escalate directly, no resynth attempt.
+            summary = "; ".join(res.seam_issues)[:240] or (
+                f"week seam {seam_label}: {res.verdict}"
+            )
+            notable_observations.append(
+                Observation(
+                    category="seam_unresolved",
+                    text=summary,
+                    evidence_basis=[f"week_seam_review {seam_label}"],
+                    elevates_to_hitl=True,
+                )
+            )
+            continue
+
+        assert direction in ("re_prompt_prior", "re_prompt_next")
+        target_week = ws.prior_week if direction == "re_prompt_prior" else ws.next_week
+        budget_key = (ws.phase_index, target_week)
+        budget_remaining = (
+            capped_retries_per_phase - retries_used_per_week_seam.get(budget_key, 0)
         )
+        if budget_remaining <= 0:
+            summary = "; ".join(res.seam_issues)[:240] or (
+                f"week seam {seam_label}: {res.verdict}"
+            )
+            notable_observations.append(
+                Observation(
+                    category="seam_unresolved",
+                    text=summary,
+                    evidence_basis=[
+                        f"week_seam_review {seam_label}; retry budget exhausted"
+                    ],
+                    elevates_to_hitl=True,
+                )
+            )
+            continue
+
+        # --- Auto-resynthesize the ONE targeted week-block ----------------
+        original_target_sessions = [
+            s
+            for s in results_by_index[ws.phase_index].sessions
+            if s.phase_metadata is not None
+            and s.phase_metadata.week_in_phase == target_week
+        ]
+        prior_sessions_for_target = _sessions_before_week(
+            ws.phase_index,
+            target_week,
+            results_by_index=results_by_index,
+            carryover_sessions_by_phase_index=carryover_sessions_by_phase_index,
+        )
+
+        def _synth_week_seam_block(
+            _phase: PhaseSpec = ws.phase,
+            _idx: int = ws.phase_index,
+            _prior: list[PlanSession] = prior_sessions_for_target,
+            _wk: int = target_week,
+            _issues: list[str] = res.seam_issues,
+            _dir: str = direction,
+            _ws_idx: int = ws.global_index,
+        ) -> PhaseSynthesisResult:
+            return synthesize_phase(
+                user_id=user_id,
+                phase_spec=_phase,
+                phase_structure=phase_structure,
+                phase_index_in_plan=_idx,
+                layer1_payload=layer1_payload,
+                layer2a_payload=layer2a_payload,
+                layer2b_payload=layer2b_payload,
+                layer2c_payloads=layer2c_payloads,
+                layer2d_payload=layer2d_payload,
+                layer2e_payload=layer2e_payload,
+                layer3a_payload=layer3a_payload,
+                layer3b_payload=layer3b_payload,
+                race_event_payload=race_event_payload,
+                prior_block_sessions=_prior,
+                plan_version_id=plan_version_id,
+                etl_version_set=etl_version_set,
+                mode=mode,
+                model=model_synthesizer,
+                temperature=temperature,
+                max_tokens=max_tokens_per_phase,
+                extended_thinking_budget=extended_thinking_budget,
+                capped_retries=capped_retries_per_phase,
+                seam_issues=_issues,
+                seam_direction=_dir,  # type: ignore[arg-type]
+                retries_already_used=0,
+                llm_caller=phase_caller,
+                session_id_prefix=(
+                    f"{session_id_prefix}-p{_idx}-weekseamretry-ws{_ws_idx}-w{_wk}"
+                ),
+                training_substitution_payload=training_substitution_payload,
+                terrain_feasibility=terrain_feasibility,
+                week_range=(_wk, _wk),
+            )
+
+        if cache is not None and call_cache_key is not None:
+            wsr_block_key = compute_week_seam_resynth_block_cache_key(
+                call_cache_key=call_cache_key,
+                phase_name=ws.phase.phase_name,
+                phase_index=ws.phase_index,
+                week_in_phase=target_week,
+                prior_week_sessions=prior_sessions_for_target,
+                week_seam_index=ws.global_index,
+                seam_issues=res.seam_issues,
+                seam_direction=direction,
+            )
+
+            def _serialize_week_seam_block(
+                _synth=_synth_week_seam_block,
+            ) -> dict[str, Any]:
+                # Same D-77 budget gate as every other per-block synthesizer:
+                # never gates the first synthesis of a pass, stops before
+                # starting one that can't finish in the function budget.
+                if synth_count[0] >= 1 and generation_deadline_passed():
+                    raise Layer4GenerationIncomplete(blocks_cached=u)
+                r = _synth()
+                synth_count[0] += 1
+                m = build_synthesis_metadata_from_result(
+                    r, model=model_synthesizer, temperature=temperature
+                )
+                return _serialize_phase_result_with_meta(r, m)
+
+            wsr_cached_dict = cache.get_phase_or_synthesize(
+                phase_key=wsr_block_key,
+                phase_idx=_week_seam_resynth_block_phase_idx(ws.global_index),
+                phase_name=(
+                    f"{ws.phase.phase_name}:weekseam{ws.global_index}:w{target_week}"
+                ),
+                user_id=user_id,
+                entry_point=cache_entry_point,
+                synthesizer=_serialize_week_seam_block,
+            )
+            week_result, week_meta = _hydrate_phase_result_with_meta(
+                wsr_cached_dict, plan_version_id=plan_version_id
+            )
+        else:
+            week_result = _synth_week_seam_block()
+            week_meta = build_synthesis_metadata_from_result(
+                week_result, model=model_synthesizer, temperature=temperature
+            )
+
+        retries_used_per_week_seam[budget_key] = (
+            retries_used_per_week_seam.get(budget_key, 0) + 1
+        )
+        # CW-c: splice the re-synthesized week's sessions into the phase's
+        # existing result, replacing only that week's sessions.
+        results_by_index[ws.phase_index] = _splice_week_into_phase_result(
+            results_by_index[ws.phase_index], week_result, target_week
+        )
+        synthesis_metadata_by_index[ws.phase_index] = _merge_week_resynth_meta(
+            synthesis_metadata_by_index[ws.phase_index], week_meta
+        )
+        validator_results.extend(week_result.validator_results)
+        total_input_tokens += week_result.input_tokens
+        total_output_tokens += week_result.output_tokens
+        total_latency_ms += week_result.latency_ms
+        llm_call_count += week_result.llm_call_count
+
+        # CW-b — cascade containment: only when the resynth actually CHANGED
+        # the week's session content (not just re-cost an identical result)
+        # AND the direction is `re_prompt_next` — for `re_prompt_prior`,
+        # target_week+1 IS ws.next_week, the OTHER side of THIS seam, already
+        # re-evaluated by the iter-2 re-review below, so a mechanical
+        # downstream rebuild there would be redundant with that judgment call.
+        # Bounded to exactly one hop — never chains a 2nd downstream rebuild.
+        content_changed = compute_sessions_content_hash(
+            original_target_sessions
+        ) != compute_sessions_content_hash(week_result.sessions)
+        if content_changed and direction == "re_prompt_next":
+            downstream_week = target_week + 1
+            downstream_target_sessions = (
+                [
+                    s
+                    for s in results_by_index[ws.phase_index].sessions
+                    if s.phase_metadata is not None
+                    and s.phase_metadata.week_in_phase == downstream_week
+                ]
+                if downstream_week <= ws.phase.weeks
+                else []
+            )
+            ds_budget_key = (ws.phase_index, downstream_week)
+            ds_remaining = (
+                capped_retries_per_phase
+                - retries_used_per_week_seam.get(ds_budget_key, 0)
+            )
+            if downstream_target_sessions and ds_remaining > 0:
+
+                def _synth_downstream_rebuild(
+                    _phase: PhaseSpec = ws.phase,
+                    _idx: int = ws.phase_index,
+                    _prior: list[PlanSession] = week_result.sessions,
+                    _wk: int = downstream_week,
+                    _ws_idx: int = ws.global_index,
+                ) -> PhaseSynthesisResult:
+                    return synthesize_phase(
+                        user_id=user_id,
+                        phase_spec=_phase,
+                        phase_structure=phase_structure,
+                        phase_index_in_plan=_idx,
+                        layer1_payload=layer1_payload,
+                        layer2a_payload=layer2a_payload,
+                        layer2b_payload=layer2b_payload,
+                        layer2c_payloads=layer2c_payloads,
+                        layer2d_payload=layer2d_payload,
+                        layer2e_payload=layer2e_payload,
+                        layer3a_payload=layer3a_payload,
+                        layer3b_payload=layer3b_payload,
+                        race_event_payload=race_event_payload,
+                        prior_block_sessions=_prior,
+                        plan_version_id=plan_version_id,
+                        etl_version_set=etl_version_set,
+                        mode=mode,
+                        model=model_synthesizer,
+                        temperature=temperature,
+                        max_tokens=max_tokens_per_phase,
+                        extended_thinking_budget=extended_thinking_budget,
+                        capped_retries=capped_retries_per_phase,
+                        retries_already_used=0,
+                        llm_caller=phase_caller,
+                        session_id_prefix=(
+                            f"{session_id_prefix}-p{_idx}-weekseamretry-"
+                            f"ws{_ws_idx}-w{_wk}-downstream"
+                        ),
+                        training_substitution_payload=training_substitution_payload,
+                        terrain_feasibility=terrain_feasibility,
+                        week_range=(_wk, _wk),
+                    )
+
+                if cache is not None and call_cache_key is not None:
+                    ds_block_key = compute_week_seam_resynth_block_cache_key(
+                        call_cache_key=call_cache_key,
+                        phase_name=ws.phase.phase_name,
+                        phase_index=ws.phase_index,
+                        week_in_phase=downstream_week,
+                        prior_week_sessions=week_result.sessions,
+                        week_seam_index=ws.global_index,
+                        seam_issues=[],
+                        seam_direction=None,
+                    )
+
+                    def _serialize_downstream_block(
+                        _synth=_synth_downstream_rebuild,
+                    ) -> dict[str, Any]:
+                        if synth_count[0] >= 1 and generation_deadline_passed():
+                            raise Layer4GenerationIncomplete(blocks_cached=u)
+                        r = _synth()
+                        synth_count[0] += 1
+                        m = build_synthesis_metadata_from_result(
+                            r, model=model_synthesizer, temperature=temperature
+                        )
+                        return _serialize_phase_result_with_meta(r, m)
+
+                    ds_cached_dict = cache.get_phase_or_synthesize(
+                        phase_key=ds_block_key,
+                        phase_idx=_week_seam_resynth_block_phase_idx(
+                            ws.global_index, downstream=True
+                        ),
+                        phase_name=(
+                            f"{ws.phase.phase_name}:weekseam{ws.global_index}:"
+                            f"w{downstream_week}:downstream"
+                        ),
+                        user_id=user_id,
+                        entry_point=cache_entry_point,
+                        synthesizer=_serialize_downstream_block,
+                    )
+                    downstream_result, downstream_meta = (
+                        _hydrate_phase_result_with_meta(
+                            ds_cached_dict, plan_version_id=plan_version_id
+                        )
+                    )
+                else:
+                    downstream_result = _synth_downstream_rebuild()
+                    downstream_meta = build_synthesis_metadata_from_result(
+                        downstream_result, model=model_synthesizer, temperature=temperature
+                    )
+
+                retries_used_per_week_seam[ds_budget_key] = (
+                    retries_used_per_week_seam.get(ds_budget_key, 0) + 1
+                )
+                results_by_index[ws.phase_index] = _splice_week_into_phase_result(
+                    results_by_index[ws.phase_index], downstream_result, downstream_week
+                )
+                synthesis_metadata_by_index[ws.phase_index] = _merge_week_resynth_meta(
+                    synthesis_metadata_by_index[ws.phase_index], downstream_meta
+                )
+                validator_results.extend(downstream_result.validator_results)
+                total_input_tokens += downstream_result.input_tokens
+                total_output_tokens += downstream_result.output_tokens
+                total_latency_ms += downstream_result.latency_ms
+                llm_call_count += downstream_result.llm_call_count
+                print(
+                    f"week_seam_review: {seam_label} CW-b downstream rebuild "
+                    f"fired for w{downstream_week} (w{target_week} content changed)"
+                )
+
+        # Step 6: re-review THIS seam once at seam_iteration=2 (per-seam cap
+        # 2, mirroring the phase-seam path). NOT cached (rare flagged path).
+        prior_sessions_iter2 = [
+            s
+            for s in results_by_index[ws.phase_index].sessions
+            if s.phase_metadata is not None
+            and s.phase_metadata.week_in_phase == ws.prior_week
+        ]
+        next_sessions_iter2 = [
+            s
+            for s in results_by_index[ws.phase_index].sessions
+            if s.phase_metadata is not None
+            and s.phase_metadata.week_in_phase == ws.next_week
+        ]
+        prior_mult2, prior_recovery2 = _week_planned(ws.phase.phase_name, ws.prior_week)
+        next_mult2, next_recovery2 = _week_planned(ws.phase.phase_name, ws.next_week)
+        call_2 = review_week_seam(
+            phase_name=ws.phase.phase_name,
+            prior_week_in_phase=ws.prior_week,
+            next_week_in_phase=ws.next_week,
+            prior_week_sessions=prior_sessions_iter2,
+            next_week_sessions=next_sessions_iter2,
+            prior_planned_multiplier=prior_mult2,
+            next_planned_multiplier=next_mult2,
+            prior_is_recovery=prior_recovery2,
+            next_is_recovery=next_recovery2,
+            phase_volume_band=ws.phase.intended_volume_band,
+            prior_intended_intensity=ws.phase.intended_intensity_distribution,
+            next_intended_intensity=ws.phase.intended_intensity_distribution,
+            layer2d_payload=layer2d_payload,
+            discipline_mix=discipline_mix,
+            mode=mode_str,
+            race_format=race_format_str,
+            event_date=event_date,
+            seam_iteration=2,
+            prior_seam_issues=res.seam_issues,
+            model=model_seam_reviewer,
+            temperature=0.15,
+            max_tokens=seam_max_tokens,
+            extended_thinking_budget=seam_thinking_budget,
+            caller=seam_caller,
+        )
+        total_input_tokens += call_2.input_tokens
+        total_output_tokens += call_2.output_tokens
+        total_latency_ms += call_2.latency_ms
+        llm_call_count += 1
+
+        print(
+            f"week_seam_review: {seam_label} iter-2 verdict={call_2.verdict} "
+            f"direction={call_2.proposed_patch_direction} "
+            f"issues={len(call_2.seam_issues)}"
+        )
+
+        # Per-seam cap = 2; if iteration 2 still flags, emit seam_unresolved.
+        if call_2.verdict in ("flagged_major", "patched") and call_2.seam_issues:
+            summary = "; ".join(call_2.seam_issues)[:240]
+            notable_observations.append(
+                Observation(
+                    category="seam_unresolved",
+                    text=summary,
+                    evidence_basis=[
+                        f"week_seam_review {seam_label}; iter-2 still flagged"
+                    ],
+                    elevates_to_hitl=True,
+                )
+            )
+        elif call_2.verdict == "flagged_minor" and call_2.seam_issues:
+            summary = "; ".join(call_2.seam_issues)[:240]
+            notable_observations.append(
+                Observation(
+                    category="warning",
+                    text=summary,
+                    evidence_basis=[f"week_seam_review {seam_label}; iter-2"],
+                    elevates_to_hitl=False,
+                )
+            )
 
     # --- Compose all_sessions (synthesized + carryover) sorted by date ---
     all_sessions: list[PlanSession] = []
