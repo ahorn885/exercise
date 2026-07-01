@@ -66,7 +66,6 @@ from layer4.context import (
     Layer2APayload,
     Layer2BDisciplineBlock,
     Layer2BPayload,
-    Layer2BSummaryBlock,
     Layer2Bundle,
     Layer2CPayload,
     Layer2DPayload,
@@ -371,21 +370,7 @@ def _fake_layer2a_payload() -> Layer2APayload:
 def _fake_layer2b_payload() -> Layer2BPayload:
     return Layer2BPayload(
         etl_version_set={"0A": "v7", "0B": "v7", "0C": "v7"},
-        race_terrain=[],
-        terrain_gaps=[],
         coaching_flags=[],
-        summary=Layer2BSummaryBlock(
-            total_race_terrain_count=0,
-            covered_count=0,
-            gap_count=0,
-            bridgeable_count=0,
-            unbridgeable_count=0,
-            min_adaptation_weeks_needed=0,
-            worst_fidelity=1.0,
-            pct_of_race_uncovered=0.0,
-            any_unbridgeable=False,
-            any_undefined=False,
-        ),
     )
 
 
@@ -2041,7 +2026,6 @@ class TestTrainingSubstitutionWireUp:
                 )
             ],
             terrain_gaps=[],
-            summary=_fake_layer2b_payload().summary,
         )
         l2b_with_block = _fake_layer2b_payload().model_copy(
             update={"terrain_by_discipline": [block]}

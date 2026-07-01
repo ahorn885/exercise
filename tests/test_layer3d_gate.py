@@ -40,7 +40,6 @@ from layer4.context import (
     Layer2APayload,
     Layer2BCoachingFlag,
     Layer2BPayload,
-    Layer2BSummaryBlock,
     Layer2CCoachingFlag,
     Layer2CPayload,
     Layer2DCoachingFlag,
@@ -1107,21 +1106,7 @@ def _2b_flag(*, flag_type="unbridgeable_terrain", target_terrain_id="T-scramble"
 
 def _2b_payload(*, coaching_flags=None):
     return Layer2BPayload(
-        race_terrain=[],
-        terrain_gaps=[],
         coaching_flags=coaching_flags or [],
-        summary=Layer2BSummaryBlock(
-            total_race_terrain_count=0,
-            covered_count=0,
-            gap_count=0,
-            bridgeable_count=0,
-            unbridgeable_count=0,
-            min_adaptation_weeks_needed=0,
-            worst_fidelity=0.0,
-            pct_of_race_uncovered=0.0,
-            any_unbridgeable=False,
-            any_undefined=False,
-        ),
         etl_version_set=dict(_EVS),
     )
 

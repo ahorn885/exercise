@@ -41,7 +41,6 @@ from layer4 import (
     Layer2ADiscipline,
     Layer2APayload,
     Layer2BPayload,
-    Layer2BSummaryBlock,
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
@@ -498,33 +497,6 @@ def test_layer2a_payload_happy_path():
     assert p.disciplines[0].phase_load.peak_high == 0.7
 
 
-def _layer2b_payload() -> Layer2BPayload:
-    return Layer2BPayload(
-        race_terrain=[],
-        terrain_gaps=[],
-        coaching_flags=[],
-        summary=Layer2BSummaryBlock(
-            total_race_terrain_count=0,
-            covered_count=0,
-            gap_count=0,
-            bridgeable_count=0,
-            unbridgeable_count=0,
-            min_adaptation_weeks_needed=0,
-            worst_fidelity=1.0,
-            pct_of_race_uncovered=0.0,
-            any_unbridgeable=False,
-            any_undefined=False,
-        ),
-        etl_version_set={"layer0": "v7"},
-    )
-
-
-def test_layer2b_payload_happy_path():
-    p = _layer2b_payload()
-    assert p.summary.worst_fidelity == 1.0
-    assert p.summary.any_unbridgeable is False
-
-
 def _layer2c_payload() -> Layer2CPayload:
     rx = _resolved_exercise(tier=1, accommodations=[])
     return Layer2CPayload(
@@ -780,21 +752,7 @@ def test_layer2b_payload_forbids_extra():
     with pytest.raises(ValidationError):
         Layer2BPayload.model_validate(
             {
-                "race_terrain": [],
-                "terrain_gaps": [],
                 "coaching_flags": [],
-                "summary": {
-                    "total_race_terrain_count": 0,
-                    "covered_count": 0,
-                    "gap_count": 0,
-                    "bridgeable_count": 0,
-                    "unbridgeable_count": 0,
-                    "min_adaptation_weeks_needed": 0,
-                    "worst_fidelity": 1.0,
-                    "pct_of_race_uncovered": 0.0,
-                    "any_unbridgeable": False,
-                    "any_undefined": False,
-                },
                 "etl_version_set": {},
                 "extra": "junk",
             }

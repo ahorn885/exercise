@@ -335,19 +335,6 @@ class RaceTerrainOutput(_Base):
     discipline_id: str | None = None
 
 
-class Layer2BSummaryBlock(_Base):
-    total_race_terrain_count: int = Field(ge=0)
-    covered_count: int = Field(ge=0)
-    gap_count: int = Field(ge=0)
-    bridgeable_count: int = Field(ge=0)
-    unbridgeable_count: int = Field(ge=0)
-    min_adaptation_weeks_needed: int = Field(ge=0)
-    worst_fidelity: float = Field(ge=0.0, le=1.0)
-    pct_of_race_uncovered: float = Field(ge=0.0, le=100.0)
-    any_unbridgeable: bool
-    any_undefined: bool
-
-
 class Layer2BCoachingFlag(_Base):
     flag_type: str
     target_terrain_id: str | None = None
@@ -359,22 +346,16 @@ class Layer2BDisciplineBlock(_Base):
     # Best-fit re-model Slice 4 (2026-05-25) — per-discipline view of the
     # terrain coverage/gap analysis. One block per included discipline; its
     # `race_terrain` carries that discipline's tagged entries plus any
-    # race-wide (discipline_id=None) entries folded in. `summary` is
-    # recomputed over the block's subset. The flat top-level fields on
-    # `Layer2BPayload` remain the deduped race-wide aggregate (no
-    # double-counting); these blocks are the first consumer of the captured
+    # race-wide (discipline_id=None) entries folded in, recomputed over the
+    # block's subset. These blocks are the first consumer of the captured
     # `discipline_id` and feed Slice 5's per-discipline resolver.
     discipline_id: str
     race_terrain: list[RaceTerrainOutput]
     terrain_gaps: list[TerrainGap]
-    summary: Layer2BSummaryBlock
 
 
 class Layer2BPayload(_Base):
-    race_terrain: list[RaceTerrainOutput]
-    terrain_gaps: list[TerrainGap]
     coaching_flags: list[Layer2BCoachingFlag]
-    summary: Layer2BSummaryBlock
     etl_version_set: dict[str, str]
     # Best-fit re-model Slice 4 (2026-05-25) — additive per-discipline
     # breakdown. Empty for the empty-race_terrain path. Default [] keeps

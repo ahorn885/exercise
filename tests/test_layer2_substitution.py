@@ -19,30 +19,12 @@ import pytest
 from layer4 import InMemoryCacheBackend  # noqa: F401  (forces layer4 init first)
 from layer4.context import (
     Layer2BDisciplineBlock,
-    Layer2BSummaryBlock,
     RaceTerrainOutput,
     TerrainGap,
 )
 from layer2_modality import Layer2ModalityInputError, resolve_training_substitution
 
 _ETL = {"0A": "0A-v1", "0B": "0B-v1", "0C": "0C-v2.0-r2"}
-
-
-def _summary() -> Layer2BSummaryBlock:
-    # Field values are irrelevant to the substitution resolver (it reads
-    # race_terrain rows, not the block summary); kept schema-valid.
-    return Layer2BSummaryBlock(
-        total_race_terrain_count=0,
-        covered_count=0,
-        gap_count=0,
-        bridgeable_count=0,
-        unbridgeable_count=0,
-        min_adaptation_weeks_needed=0,
-        worst_fidelity=1.0,
-        pct_of_race_uncovered=0.0,
-        any_unbridgeable=False,
-        any_undefined=False,
-    )
 
 
 def _gap(
@@ -95,7 +77,6 @@ def _block(discipline_id: str, race_terrain: list[RaceTerrainOutput]) -> Layer2B
         discipline_id=discipline_id,
         race_terrain=race_terrain,
         terrain_gaps=[],
-        summary=_summary(),
     )
 
 

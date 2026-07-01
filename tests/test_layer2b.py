@@ -249,22 +249,20 @@ class TestPGEBaseline:
         )
 
         assert isinstance(payload, Layer2BPayload)
-        assert payload.summary.total_race_terrain_count == 5
-        assert payload.summary.covered_count == 4
-        assert payload.summary.gap_count == 1
-        assert payload.summary.bridgeable_count == 1
-        assert payload.summary.unbridgeable_count == 0
-        assert payload.summary.pct_of_race_uncovered == 15.0
-        assert payload.summary.any_unbridgeable is False
-        assert payload.summary.worst_fidelity == 0.75
-        assert payload.summary.min_adaptation_weeks_needed == 4
         assert payload.coaching_flags == []
-        # The water gap surfaces on the right row only.
-        water_row = next(rt for rt in payload.race_terrain if rt.terrain_id == "TRN-009")
+        # The water gap surfaces on the right row only (via the per-discipline
+        # block, the surviving carrier of race_terrain/gap detail).
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        water_row = next(rt for rt in block.race_terrain if rt.terrain_id == "TRN-009")
         assert water_row.available_locally is False
         assert water_row.gap is not None
         assert water_row.gap.gap_severity == "low"
         assert water_row.gap.proxy_terrain_id == "TRN-008"
+        gap = next(g for g in block.terrain_gaps if g.target_terrain_id == "TRN-009")
+        assert gap.proxy_fidelity == 0.75
+        assert gap.adaptation_weeks_high == 4
 
 
 # ─── §13.2 Alpine race — unbridgeable ────────────────────────────────────────
@@ -302,13 +300,15 @@ class TestUnbridgeableAlpine:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert payload.summary.any_unbridgeable is True
-        assert payload.summary.unbridgeable_count == 1
-        assert payload.summary.bridgeable_count == 0
-        assert payload.summary.pct_of_race_uncovered == 30.0
         flag_types = [f.flag_type for f in payload.coaching_flags]
         assert flag_types == ["unbridgeable_terrain"]
         assert payload.coaching_flags[0].target_terrain_id == "TRN-012"
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        gap = next(g for g in block.terrain_gaps if g.target_terrain_id == "TRN-012")
+        assert gap.gap_severity == "unbridgeable"
+        assert gap.proxy_terrain_id is None
 
 
 # ─── §13.3 Empty locale degenerate ───────────────────────────────────────────
@@ -338,12 +338,14 @@ class TestEmptyLocale:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert payload.summary.gap_count == 2
-        assert payload.summary.pct_of_race_uncovered == 100.0
-        assert payload.summary.any_undefined is True
         # All flags are undefined_gap, no crashes
         assert {f.flag_type for f in payload.coaching_flags} == {"undefined_gap"}
         assert len(payload.coaching_flags) == 2
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        assert {g.target_terrain_id for g in block.terrain_gaps} == {"TRN-001", "TRN-016"}
+        assert all(g.gap_severity == "undefined" for g in block.terrain_gaps)
 
 
 # ─── §10 multiple gap rules — ORDER BY picks best ────────────────────────────
@@ -383,8 +385,11 @@ class TestMultipleProxyRules:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert payload.summary.bridgeable_count == 1
-        gap = payload.terrain_gaps[0]
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        assert len(block.terrain_gaps) == 1
+        gap = block.terrain_gaps[0]
         assert gap.proxy_terrain_id == "TRN-004"
         assert gap.proxy_fidelity == 0.60
         assert gap.gap_severity == "medium"
@@ -412,16 +417,16 @@ class TestUnknownTerrainId:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert len(payload.terrain_gaps) == 1
-        gap = payload.terrain_gaps[0]
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        assert len(block.terrain_gaps) == 1
+        gap = block.terrain_gaps[0]
         assert gap.gap_severity == "undefined"
         assert gap.target_terrain_id == "TRN-999"
         assert gap.proxy_terrain_id is None
-        assert payload.summary.any_undefined is True
-        # `any_unbridgeable` does NOT fire for undefined gaps per §5.5 split.
-        assert payload.summary.any_unbridgeable is False
         # race_terrain row carries terrain_name=None per §10.
-        assert payload.race_terrain[0].terrain_name is None
+        assert block.race_terrain[0].terrain_name is None
         assert {f.flag_type for f in payload.coaching_flags} == {"undefined_gap"}
 
 
@@ -655,13 +660,11 @@ class TestCleanBaseline:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert payload.summary.gap_count == 0
-        assert payload.summary.covered_count == 2
-        assert payload.summary.worst_fidelity == 1.0
-        assert payload.summary.pct_of_race_uncovered == 0.0
-        assert payload.summary.any_unbridgeable is False
-        assert payload.summary.any_undefined is False
-        assert payload.terrain_gaps == []
+        block = next(
+            b for b in payload.terrain_by_discipline if b.discipline_id == "D-001"
+        )
+        assert block.terrain_gaps == []
+        assert all(r.available_locally for r in block.race_terrain)
         assert payload.coaching_flags == []
 
 
@@ -690,18 +693,7 @@ class TestEmptyRaceTerrainLoosen:
             etl_version_set=_DEFAULT_ETL,
         )
 
-        assert payload.race_terrain == []
-        assert payload.terrain_gaps == []
-        assert payload.summary.total_race_terrain_count == 0
-        assert payload.summary.gap_count == 0
-        assert payload.summary.covered_count == 0
-        assert payload.summary.bridgeable_count == 0
-        assert payload.summary.unbridgeable_count == 0
-        assert payload.summary.min_adaptation_weeks_needed == 0
-        assert payload.summary.worst_fidelity == 1.0
-        assert payload.summary.pct_of_race_uncovered == 0.0
-        assert payload.summary.any_unbridgeable is False
-        assert payload.summary.any_undefined is False
+        assert payload.terrain_by_discipline == []
         assert len(payload.coaching_flags) == 1
         flag = payload.coaching_flags[0]
         assert flag.flag_type == "race_terrain_unset"
@@ -764,7 +756,7 @@ class TestPerDisciplineBlocks:
     """`terrain_by_discipline` keys the coverage/gap analysis by the captured
     `RaceTerrainEntry.discipline_id`. Race-wide (None) entries fold into every
     included discipline; a tagged entry wins over a race-wide entry for the
-    same terrain_id; the flat top-level aggregate is unchanged."""
+    same terrain_id."""
 
     def _block(self, payload: Layer2BPayload, discipline_id: str) -> Layer2BDisciplineBlock:
         return next(
@@ -797,9 +789,9 @@ class TestPerDisciplineBlocks:
             assert {r.terrain_id for r in block.race_terrain} == {"TRN-001", "TRN-002"}
             # Folded-in race-wide rows are stamped with the block discipline.
             assert all(r.discipline_id == did for r in block.race_terrain)
-            assert block.summary.total_race_terrain_count == 2
-            assert block.summary.covered_count == 2
-            assert block.summary.gap_count == 0
+            assert len(block.race_terrain) == 2
+            assert all(r.available_locally for r in block.race_terrain)
+            assert block.terrain_gaps == []
 
     def test_tagged_entries_route_to_their_discipline(self):
         conn = _FakeConn()
@@ -841,9 +833,6 @@ class TestPerDisciplineBlocks:
         b = self._block(payload, "D-006").race_terrain
         assert [(r.terrain_id, r.pct_of_race) for r in a] == [("TRN-003", 40.0)]
         assert [(r.terrain_id, r.pct_of_race) for r in b] == [("TRN-003", 60.0)]
-        # Flat aggregate still collapses by terrain_id (unchanged behavior).
-        assert payload.summary.total_race_terrain_count == 2
-        assert payload.summary.covered_count == 1
 
     def test_tagged_wins_over_race_wide_in_block(self):
         conn = _FakeConn()
@@ -868,7 +857,7 @@ class TestPerDisciplineBlocks:
             ("TRN-001", 30.0)
         ]
 
-    def test_single_discipline_untagged_block_matches_aggregate(self):
+    def test_single_discipline_untagged_block_covers_all_race_wide_terrain(self):
         conn = _FakeConn()
         entries = [
             RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0),
@@ -892,14 +881,14 @@ class TestPerDisciplineBlocks:
         )
         assert len(payload.terrain_by_discipline) == 1
         block = self._block(payload, "D-001")
-        assert block.summary.total_race_terrain_count == payload.summary.total_race_terrain_count
-        assert block.summary.covered_count == payload.summary.covered_count
-        assert block.summary.gap_count == payload.summary.gap_count
+        # Single included discipline + all-race-wide entries → the block
+        # covers every captured terrain row (no discipline tagging to split on).
+        assert {r.terrain_id for r in block.race_terrain} == {"TRN-001", "TRN-009"}
         assert {g.target_terrain_id for g in block.terrain_gaps} == {"TRN-009"}
 
     def test_orphan_tagged_discipline_excluded_from_blocks(self):
         """An entry tagged to a discipline outside `included_discipline_ids`
-        gets no block but stays in the flat aggregate."""
+        gets no block."""
         conn = _FakeConn()
         entries = [
             RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=50.0, discipline_id="D-001"),
@@ -918,9 +907,6 @@ class TestPerDisciplineBlocks:
         )
         assert [b.discipline_id for b in payload.terrain_by_discipline] == ["D-001"]
         assert {r.terrain_id for r in self._block(payload, "D-001").race_terrain} == {"TRN-001"}
-        # Flat aggregate keeps the orphan-tagged row.
-        assert len(payload.race_terrain) == 2
-        assert {r.terrain_id for r in payload.race_terrain} == {"TRN-001", "TRN-002"}
 
     def test_discipline_with_no_terrain_emits_no_block(self):
         conn = _FakeConn()
@@ -973,56 +959,9 @@ class TestPerDisciplineBlocks:
         )
         for did in ("D-001", "D-006"):
             block = self._block(payload, did)
-            assert block.summary.total_race_terrain_count == 2
-            assert block.summary.covered_count == 1
-            assert block.summary.gap_count == 1
+            assert len(block.race_terrain) == 2
             assert {g.target_terrain_id for g in block.terrain_gaps} == {"TRN-009"}
             gap_row = next(r for r in block.race_terrain if r.terrain_id == "TRN-009")
             assert gap_row.gap is not None
             assert gap_row.gap.proxy_terrain_id == "TRN-008"
             assert gap_row.available_locally is False
-
-    def test_tags_do_not_change_flat_aggregate(self):
-        """Same entries, once untagged + once tagged: the discipline-agnostic
-        flat summary + terrain_gaps are identical (additive contract)."""
-        base = [
-            ("TRN-001", 60.0),
-            ("TRN-009", 40.0),  # gap
-        ]
-        names = [
-            _name_row("TRN-001", "Road / Paved"),
-            _name_row("TRN-009", "Flat Water"),
-        ]
-        proxy = _proxy_row(
-            "TRN-009", "Flat Water",
-            proxy_terrain_id="TRN-008", proxy_terrain_name="Pool",
-            gap_severity="low", proxy_fidelity=0.75,
-        )
-
-        conn_a = _FakeConn()
-        conn_a.queue_name_rows(names)
-        conn_a.queue_proxy_row(proxy)
-        payload_a = q_layer2b_terrain_classifier_payload(
-            conn_a,
-            race_terrain=[RaceTerrainEntry(terrain_id=t, pct_of_race=p) for t, p in base],
-            locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001"],
-            etl_version_set=_DEFAULT_ETL,
-        )
-
-        conn_b = _FakeConn()
-        conn_b.queue_name_rows(names)
-        conn_b.queue_proxy_row(proxy)
-        payload_b = q_layer2b_terrain_classifier_payload(
-            conn_b,
-            race_terrain=[
-                RaceTerrainEntry(terrain_id="TRN-001", pct_of_race=60.0, discipline_id="D-001"),
-                RaceTerrainEntry(terrain_id="TRN-009", pct_of_race=40.0, discipline_id="D-006"),
-            ],
-            locale_terrain_ids=["TRN-001"],
-            included_discipline_ids=["D-001", "D-006"],
-            etl_version_set=_DEFAULT_ETL,
-        )
-
-        assert payload_a.summary == payload_b.summary
-        assert payload_a.terrain_gaps == payload_b.terrain_gaps

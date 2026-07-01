@@ -27,7 +27,6 @@ from layer4.context import (
     Layer2BCoachingFlag,
     Layer2BDisciplineBlock,
     Layer2BPayload,
-    Layer2BSummaryBlock,
     RaceTerrainEntry,
     RaceTerrainOutput,
     TerrainGap,
@@ -354,54 +353,6 @@ def _emit_coaching_flags(
     return flags
 
 
-def _build_summary(
-    race_terrain: list[RaceTerrainEntry],
-    covered_ids: set[str],
-    gap_ids: set[str],
-    gaps_by_target: dict[str, TerrainGap],
-) -> Layer2BSummaryBlock:
-    # Per spec §5.5: `gaps_only` excludes 'undefined' gaps because they
-    # have no rule-driven proxy_terrain_id or unbridgeable classification
-    # to count toward bridgeable/unbridgeable splits. The `gap_count` and
-    # `pct_of_race_uncovered` totals still include undefined entries.
-    gaps_only = [
-        g for g in gaps_by_target.values()
-        if g.proxy_terrain_id is not None or g.gap_severity == "unbridgeable"
-    ]
-    bridgeable = [g for g in gaps_only if g.proxy_terrain_id is not None]
-    unbridgeable = [g for g in gaps_only if g.proxy_terrain_id is None]
-
-    adapt_highs = [
-        g.adaptation_weeks_high
-        for g in gaps_only
-        if g.adaptation_weeks_high is not None
-    ]
-    fidelities = [
-        g.proxy_fidelity
-        for g in gaps_only
-        if g.proxy_fidelity is not None
-    ]
-
-    has_undefined = any(
-        g.gap_severity == "undefined" for g in gaps_by_target.values()
-    )
-
-    return Layer2BSummaryBlock(
-        total_race_terrain_count=len(race_terrain),
-        covered_count=len(covered_ids),
-        gap_count=len(gap_ids),
-        bridgeable_count=len(bridgeable),
-        unbridgeable_count=len(unbridgeable),
-        min_adaptation_weeks_needed=max(adapt_highs) if adapt_highs else 0,
-        worst_fidelity=min(fidelities) if fidelities else 1.0,
-        pct_of_race_uncovered=sum(
-            e.pct_of_race for e in race_terrain if e.terrain_id in gap_ids
-        ),
-        any_unbridgeable=len(unbridgeable) > 0,
-        any_undefined=has_undefined,
-    )
-
-
 def _build_discipline_blocks(
     race_terrain: list[RaceTerrainEntry],
     included_discipline_ids: list[str],
@@ -414,14 +365,13 @@ def _build_discipline_blocks(
     One block per included discipline. The discipline's terrain subset =
     entries tagged with that `discipline_id` PLUS race-wide (`discipline_id
     is None`) entries folded in (a tagged entry wins over a race-wide entry
-    for the same `terrain_id` — it's the more specific signal). Coverage,
-    gaps, and the summary are recomputed over the subset; proxy resolution
-    is reused verbatim from the already-computed `gaps_by_target` (the
-    proxy lookup is per terrain_id + locale set, independent of discipline,
-    so no extra SQL). Disciplines with no terrain (nothing tagged and no
-    race-wide rows) emit no block. Entries tagged to a discipline outside
-    `included_discipline_ids` are excluded here but remain in the flat
-    top-level aggregate.
+    for the same `terrain_id` — it's the more specific signal). Coverage +
+    gaps are recomputed over the subset; proxy resolution is reused
+    verbatim from the already-computed `gaps_by_target` (the proxy lookup
+    is per terrain_id + locale set, independent of discipline, so no extra
+    SQL). Disciplines with no terrain (nothing tagged and no race-wide
+    rows) emit no block. Entries tagged to a discipline outside
+    `included_discipline_ids` are excluded here — they get no block.
     """
     if not race_terrain:
         return []
@@ -472,9 +422,6 @@ def _build_discipline_blocks(
             discipline_id=discipline_id,
             race_terrain=block_outputs,
             terrain_gaps=list(block_gaps_by_target.values()),
-            summary=_build_summary(
-                subset, block_covered_ids, block_gap_ids, block_gaps_by_target
-            ),
         ))
 
     return blocks
@@ -523,7 +470,6 @@ def q_layer2b_terrain_classifier_payload(
     locale_id_set = set(locale_terrain_ids)
     pct_by_target = {e.terrain_id: e.pct_of_race for e in race_terrain}
 
-    covered_ids = race_id_set & locale_id_set
     gap_ids = race_id_set - locale_id_set
 
     name_map = _load_terrain_names(db, sorted(race_id_set))
@@ -543,20 +489,6 @@ def q_layer2b_terrain_classifier_payload(
                     name_map.get(gap_id) or gap_id
                 )
             gaps_by_target[gap_id] = _build_terrain_gap(proxy_row)
-
-    race_outputs: list[RaceTerrainOutput] = []
-    for entry in race_terrain:
-        race_outputs.append(RaceTerrainOutput(
-            terrain_id=entry.terrain_id,
-            terrain_name=name_map.get(entry.terrain_id),
-            pct_of_race=entry.pct_of_race,
-            available_locally=entry.terrain_id in covered_ids,
-            gap=gaps_by_target.get(entry.terrain_id),
-            # Top-level flat list preserves the captured tag verbatim
-            # (None = race-wide); the per-discipline blocks below stamp the
-            # block's discipline onto folded-in race-wide rows.
-            discipline_id=entry.discipline_id,
-        ))
 
     # D-73 Phase 5.2 Bucket C (l) — load skill-capability toggle defs
     # whenever race_terrain is non-empty (skip the SQL roundtrip on the
@@ -579,9 +511,6 @@ def q_layer2b_terrain_classifier_payload(
         skill_toggle_defs,
         skill_toggle_states,
     )
-    summary = _build_summary(
-        race_terrain, covered_ids, gap_ids, gaps_by_target
-    )
     terrain_by_discipline = _build_discipline_blocks(
         race_terrain,
         included_discipline_ids,
@@ -591,10 +520,7 @@ def q_layer2b_terrain_classifier_payload(
     )
 
     return Layer2BPayload(
-        race_terrain=race_outputs,
-        terrain_gaps=list(gaps_by_target.values()),
         coaching_flags=coaching_flags,
-        summary=summary,
         etl_version_set=dict(etl_version_set),
         terrain_by_discipline=terrain_by_discipline,
     )
