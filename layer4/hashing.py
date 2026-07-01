@@ -253,17 +253,14 @@ def compute_event_windows_hash(windows: list[Any]) -> str:
                     for d_, p_ in (getattr(w, "volume_by_date", None) or {}).items()
                 ),
                 # #237 — the per-DATE restrictions. Flattened per day to a sorted
-                # tuple so editing a locale-lock / exclusion / indoor / minutes cap
-                # invalidates the overlapping synthesis. Empty/absent → []; a window
-                # with no restrictions stays byte-identical to the pre-#237 key.
+                # tuple so editing a locale-lock / indoor flag invalidates the
+                # overlapping synthesis. Empty/absent → []; a window with no
+                # restrictions stays byte-identical to the pre-#237 key.
                 "restrictions_by_date": sorted(
                     (
                         d_.isoformat() if hasattr(d_, "isoformat") else str(d_),
                         r_.get("locale_lock") or "",
-                        tuple(sorted(r_.get("discipline_exclusions") or [])),
                         bool(r_.get("indoor_only")),
-                        r_.get("max_total_minutes")
-                        if r_.get("max_total_minutes") is not None else -1,
                     )
                     for d_, r_ in (getattr(w, "restrictions_by_date", None) or {}).items()
                 ),

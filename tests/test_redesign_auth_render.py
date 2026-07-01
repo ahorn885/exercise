@@ -41,6 +41,12 @@ class _Conn:
         s = ' '.join(sql.split())
         if 'COUNT(*) AS n FROM users' in s:
             return _Cursor(_FakeRow(n=self._n))
+        if 'FROM user_invites' in s:
+            # A valid, unaccepted, unexpired SMS-channel invite — exercises
+            # the invite_token-but-no-invited_email render branch (#272 follow-up).
+            return _Cursor(_FakeRow(token='TOK12345', email=None, phone='+15551234567',
+                                     channel='sms', accepted_at=None,
+                                     expires_at='2099-01-01T00:00:00'))
         if 'FROM password_resets' in s:
             return _Cursor(None)               # unknown token → error branch
         return _Cursor(None)
@@ -103,6 +109,24 @@ def test_register_normal_render(monkeypatch):
     _assert_on_app_shell(html)
     assert 'Create account.' in html
     assert '/auth/login' in html  # "Sign in" alt link
+    # Default (non-invite) OG copy — the site-wide tagline, not the invite one.
+    assert 'AI-driven training for the data-obsessed endurance athlete.' in html
+    assert "You're invited" not in html
+
+
+def test_register_invite_render(monkeypatch):
+    # A valid SMS-channel invite (no invited_email) — still hits the
+    # "you're invited" branch (keyed off invite_token, #272 follow-up) with
+    # on-brand OG title/description for the link-preview card.
+    resp = _client(monkeypatch, n_users=1).get('/auth/register?invite=TOK12345')
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    _assert_on_app_shell(html)
+    assert "You're invited" in html
+    assert 'Finish setting up your account.' in html  # no invited_email to name
+    assert 'og:title" content="You\'re invited to AIDSTATION"' in html
+    assert 'Time to hit the trail' in html
+    assert 'og-preview.png' in html
 
 
 def test_forgot_render(monkeypatch):

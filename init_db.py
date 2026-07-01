@@ -2649,12 +2649,16 @@ _PG_MIGRATIONS = [
     # (the pre-#889 behaviour). Dates/range validated in athlete_event_windows_repo.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS volume_by_date TEXT",
     # Event Windows per-date restrictions (#237) — restrictions_by_date: a JSON
-    # object {ISO date: {locale_lock, discipline_exclusions, indoor_only,
-    # max_total_minutes}} layering per-DAY constraints onto ANY window type, which
-    # the Layer 4 validator's D-67-aware branches (session_locale_not_in_cluster,
-    # discipline_exclusions, max_total_minutes, indoor_only) already enforce. Stored
-    # as TEXT (json.dumps, driver-agnostic — mirrors volume_by_date); NULL → no
+    # object {ISO date: {locale_lock, indoor_only}} layering per-DAY constraints
+    # onto ANY window type, which the Layer 4 validator's D-67-aware branches
+    # (session_locale_not_in_cluster, indoor_only) already enforce. Stored as
+    # TEXT (json.dumps, driver-agnostic — mirrors volume_by_date); NULL → no
     # per-date restrictions. Shapes/range validated in athlete_event_windows_repo.
+    # Originally also carried discipline_exclusions + max_total_minutes; both
+    # dropped (Andy, 2026-06-30) — disciplines are governed by gear/terrain
+    # availability rules, and volume_by_date's per-day percentage already
+    # supersedes a minutes cap. A legacy row with those keys stored is read fine
+    # (ignored at parse time); no migration needed.
     "ALTER TABLE athlete_event_windows ADD COLUMN IF NOT EXISTS restrictions_by_date TEXT",
     # #335 Phase 2b — key the strength-rx path off the layer0 EX-id (the single
     # source of truth the synthesizer emits on StrengthExercise.exercise_id)
@@ -3360,6 +3364,17 @@ _PG_MIGRATIONS = [
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     )""",
+    # #272 — SMS / WhatsApp invites, in addition to email. An invite now
+    # carries a `channel` ('email' | 'sms' | 'whatsapp') and is delivered to
+    # either `email` or the new `phone` column depending on it — so `email`
+    # drops its NOT NULL (a phone-channel invite has no email until the
+    # athlete enters one at registration). Existing rows are all
+    # channel='email' with email already set, so the column default needs no
+    # backfill.
+    "ALTER TABLE user_invites ALTER COLUMN email DROP NOT NULL",
+    "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS phone TEXT",
+    "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email' "
+    "CHECK (channel IN ('email', 'sms', 'whatsapp'))",
 ]
 
 _CLOTHING_SEEDS = [

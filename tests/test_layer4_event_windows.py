@@ -808,11 +808,11 @@ class TestCountsFollowAway:
         def _disc(did, name, lw):
             return Layer2ADiscipline(
                 discipline_id=did, discipline_name=name,
-                inclusion="included", role="Primary", is_conditional=False,
+                inclusion="included", role="Primary",
                 load_weight=WeightResult(
                     value=lw, source="system_default", system_default=lw,
                 ),
-                sleep_deprivation_relevant=False, rationale="t",
+                rationale="t",
                 phase_load=PhaseLoadBands(
                     base_low=20.0, base_high=30.0, build_low=20.0, build_high=30.0,
                     peak_low=40.0, peak_high=50.0, taper_low=20.0, taper_high=30.0,
@@ -824,11 +824,10 @@ class TestCountsFollowAway:
             disciplines=[_disc("D-001", "Trail Running", 3.0),
                          _disc("D-008", "Mountain Biking", 2.0)],
             training_gaps_summary=TrainingGapsSummary(
-                flagged_count=0, any_no_substitute=False,
-                any_multi_substitute_candidate=False),
+                flagged_count=0),
             hitl_required=False, unresolved_flags=[], coaching_flags=[],
             rationale_metadata=RationaleMetadata(
-                template_version="v1", generated_at="2026-06-06T00:00:00Z"),
+                generated_at="2026-06-06T00:00:00Z"),
             weekly_total_hours_by_phase={
                 "Base": (8.0, 10.0), "Build": (10.0, 14.0),
                 "Peak": (12.0, 16.0), "Taper": (5.0, 7.0)},
@@ -1463,15 +1462,24 @@ class TestPerDateRestrictionsRepo:
     def test_load_parses_restrictions_by_date_json(self):
         conn = _FakeConn()
         conn.queue_response(rows=[self._row(restrictions_by_date=json.dumps({
+            "2026-06-10": {"locale_lock": "home", "indoor_only": True},
+        }))])
+        w = load_event_window(conn, 7, 1)
+        assert w.restrictions_by_date == {
+            date(2026, 6, 10): {"locale_lock": "home", "indoor_only": True}
+        }
+
+    def test_load_ignores_legacy_discipline_exclusions_and_minutes(self):
+        # A pre-2026-06-30 stored row may still carry the dropped keys; they're
+        # silently ignored at parse time (no migration needed).
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row(restrictions_by_date=json.dumps({
             "2026-06-10": {"locale_lock": "home", "discipline_exclusions": ["D-012"],
                            "indoor_only": True, "max_total_minutes": 60},
         }))])
         w = load_event_window(conn, 7, 1)
         assert w.restrictions_by_date == {
-            date(2026, 6, 10): {
-                "locale_lock": "home", "discipline_exclusions": ["D-012"],
-                "indoor_only": True, "max_total_minutes": 60,
-            }
+            date(2026, 6, 10): {"locale_lock": "home", "indoor_only": True}
         }
 
     def test_load_absent_column_is_empty(self):
@@ -1485,24 +1493,35 @@ class TestPerDateRestrictionsRepo:
     def test_writer_serializes_sorted_and_normalized(self):
         conn = _FakeConn()
         conn.queue_response(rows=[self._row()])  # load_event_window SELECT
+        conn.queue_response(rows=[{"1": 1}])  # _locale_exists → found
         update_event_window_restrictions_by_date(conn, 7, 1, {
             date(2026, 6, 12): {"indoor_only": True},
-            date(2026, 6, 10): {"max_total_minutes": 45,
-                                "discipline_exclusions": ["D-012", "D-012"]},
+            date(2026, 6, 10): {"locale_lock": "home"},
         })
         sql, params = conn.calls[-1]
         assert "UPDATE athlete_event_windows" in sql
         stored = json.loads(params[0])
         assert list(stored.keys()) == ["2026-06-10", "2026-06-12"]  # sorted
-        assert stored["2026-06-10"]["max_total_minutes"] == 45
-        assert stored["2026-06-10"]["discipline_exclusions"] == ["D-012"]  # de-duped
+        assert stored["2026-06-10"]["locale_lock"] == "home"
         assert stored["2026-06-12"]["indoor_only"] is True
+
+    def test_writer_ignores_legacy_discipline_exclusions_and_minutes(self):
+        # A caller still passing the dropped keys (e.g. stale client) doesn't
+        # error; they're just not part of the stored shape.
+        conn = _FakeConn()
+        conn.queue_response(rows=[self._row()])
+        update_event_window_restrictions_by_date(conn, 7, 1, {
+            date(2026, 6, 10): {"max_total_minutes": 45,
+                                "discipline_exclusions": ["D-012", "D-012"]},
+        })
+        _sql, params = conn.calls[-1]
+        assert params[0] is None  # neither key is a real restriction → cleared
 
     def test_writer_drops_empty_day_and_clears_when_all_empty(self):
         conn = _FakeConn()
         conn.queue_response(rows=[self._row()])
         update_event_window_restrictions_by_date(conn, 7, 1, {
-            date(2026, 6, 11): {"indoor_only": False, "discipline_exclusions": []},
+            date(2026, 6, 11): {"indoor_only": False},
         })
         _sql, params = conn.calls[-1]
         assert params[0] is None  # no real restriction → cleared
@@ -1521,13 +1540,6 @@ class TestPerDateRestrictionsRepo:
         with pytest.raises(EventWindowError):
             update_event_window_restrictions_by_date(
                 conn, 7, 1, {date(2026, 6, 20): {"indoor_only": True}})
-
-    def test_writer_rejects_negative_minutes(self):
-        conn = _FakeConn()
-        conn.queue_response(rows=[self._row()])
-        with pytest.raises(EventWindowError):
-            update_event_window_restrictions_by_date(
-                conn, 7, 1, {date(2026, 6, 11): {"max_total_minutes": -5}})
 
 
 class TestVolumeHash:

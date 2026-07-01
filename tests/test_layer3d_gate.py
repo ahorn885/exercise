@@ -87,14 +87,12 @@ def _layer2a(
         disciplines=disciplines or [],
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=hitl_required,
         unresolved_flags=unresolved_flags or [],
         coaching_flags=coaching_flags or [],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-06-01T10:00:00Z"
+            generated_at="2026-06-01T10:00:00Z"
         ),
         weekly_total_hours_by_phase=weekly_total_hours_by_phase or {},
     )
@@ -111,9 +109,7 @@ def _discipline(
         discipline_name=name,
         inclusion=inclusion,  # type: ignore[arg-type]
         role="Primary",
-        is_conditional=False,
         load_weight=WeightResult(value=0.5, source="system_default", system_default=0.5),
-        sleep_deprivation_relevant=False,
         rationale="Listed in onboarding but ambiguous.",
         phase_load=PhaseLoadBands(
             base_low=5.0,

@@ -623,22 +623,17 @@ def test_climbing_no_gym_resolution_surfaces_in_rendered_prompt():
 
 def test_build_per_date_restrictions_flattens_windows():
     """#237 — each window's restrictions_by_date becomes one PerDateRestriction
-    per restricted date, carrying all four fields into the validator's shape."""
+    per restricted date, carrying both fields into the validator's shape."""
     from datetime import date as _date
     w = SimpleNamespace(restrictions_by_date={
-        _date(2026, 6, 10): {
-            "locale_lock": "home", "discipline_exclusions": ["D-012"],
-            "indoor_only": True, "max_total_minutes": 60,
-        },
+        _date(2026, 6, 10): {"locale_lock": "home", "indoor_only": True},
     })
     out = orchestrator._build_per_date_restrictions([w])
     assert len(out) == 1
     r = out[0]
     assert r.date.date() == _date(2026, 6, 10)
     assert r.locale_lock == "home"
-    assert r.discipline_exclusions == ["D-012"]
     assert r.indoor_only is True
-    assert r.max_total_minutes == 60
 
 
 def test_build_per_date_restrictions_empty():

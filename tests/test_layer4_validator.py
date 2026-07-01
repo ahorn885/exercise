@@ -366,9 +366,7 @@ def _layer2a_with_band(
         discipline_name=discipline_id,
         inclusion=inclusion,  # type: ignore[arg-type]
         role="Primary",
-        is_conditional=False,
         load_weight=WeightResult(value=0.5, source="system_default", system_default=0.5),
-        sleep_deprivation_relevant=False,
         rationale="r",
         phase_load=PhaseLoadBands(
             base_low=base_low,
@@ -398,13 +396,13 @@ def _layer2a_with_band(
             "Taper": (_base_mid - 2, _base_mid - 2),
         },
         training_gaps_summary=TrainingGapsSummary(
-            flagged_count=0, any_no_substitute=False, any_multi_substitute_candidate=False
+            flagged_count=0
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+            generated_at="2026-05-17T10:00:00Z"
         ),
     )
 
@@ -1921,20 +1919,6 @@ def test_discipline_excluded_by_2a_blocker():
     assert de[0].severity == "blocker"
 
 
-def test_discipline_excluded_d67_per_date_blocker():
-    payload = _minimal_layer4()
-    ctx = ValidatorContext(
-        layer2a_payload=_layer2a_with_band(),
-        per_date_restrictions=(
-            PerDateRestriction(date=datetime(2026, 6, 1), discipline_exclusions=["D-001"]),
-        ),
-    )
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    de = [f for f in failures if f.rule_name.startswith("discipline_excluded_per_date")]
-    assert de
-    assert de[0].severity == "blocker"
-
-
 # ─── Rule 12b: skill_capability_gate (#336) ────────────────────────────────
 
 
@@ -2464,22 +2448,6 @@ def test_daily_window_fit_exceeds_blocker():
     assert wf[0].severity == "blocker"
 
 
-def test_daily_window_fit_d67_max_total_minutes_blocker():
-    payload = _minimal_layer4(
-        sessions=[_cardio_session(duration_min=60)]
-    )
-    ctx = ValidatorContext(
-        daily_availability_windows=tuple(_full_week_windows(duration=120)),
-        per_date_restrictions=(
-            PerDateRestriction(date=datetime(2026, 6, 1), max_total_minutes=30),
-        ),
-    )
-    failures = validate_layer4_payload(payload, ctx).rule_failures
-    wf = [f for f in failures if f.rule_name.startswith("daily_window_fit_d67_max")]
-    assert wf
-    assert wf[0].severity == "blocker"
-
-
 # ─── Rule 21: indoor_only_violation ────────────────────────────────────────
 
 
@@ -2636,11 +2604,9 @@ def _layer2a_multi(
             discipline_name=did,
             inclusion="included",
             role="Primary",
-            is_conditional=False,
             load_weight=WeightResult(
                 value=None, source="system_default", system_default=None
             ),
-            sleep_deprivation_relevant=False,
             rationale="r",
             phase_load=PhaseLoadBands(
                 base_low=lo, base_high=hi,
@@ -2661,14 +2627,12 @@ def _layer2a_multi(
         },
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-05-17T10:00:00Z"
+            generated_at="2026-05-17T10:00:00Z"
         ),
     )
 

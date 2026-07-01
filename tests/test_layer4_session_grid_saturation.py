@@ -215,9 +215,7 @@ def _discipline(did: str, name: str, lw: float) -> Layer2ADiscipline:
         discipline_name=name,
         inclusion="included",  # type: ignore[arg-type]
         role="Primary",
-        is_conditional=False,
         load_weight=_weight(lw),
-        sleep_deprivation_relevant=False,
         rationale="test",
         phase_load=PhaseLoadBands(
             base_low=20.0, base_high=30.0,
@@ -263,14 +261,12 @@ def _l2a(disciplines: list[Layer2ADiscipline]) -> Layer2APayload:
         disciplines=disciplines,
         training_gaps_summary=TrainingGapsSummary(
             flagged_count=0,
-            any_no_substitute=False,
-            any_multi_substitute_candidate=False,
         ),
         hitl_required=False,
         unresolved_flags=[],
         coaching_flags=[],
         rationale_metadata=RationaleMetadata(
-            template_version="v1", generated_at="2026-06-06T00:00:00Z"
+            generated_at="2026-06-06T00:00:00Z"
         ),
         weekly_total_hours_by_phase={
             "Base": (8.0, 10.0),

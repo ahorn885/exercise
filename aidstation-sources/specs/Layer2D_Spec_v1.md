@@ -195,7 +195,15 @@ Set intersection on the canonical body-part vocab. Clean and deterministic.
 
 ```python
 def condition_verdict(exercise, current_conditions) -> tuple[Verdict, list[Evidence]]:
-    contra_conds = set(exercise.contraindicated_conditions or [])
+    # exercise.contraindicated_conditions stores the Title-Case
+    # health_condition_categories.category_name form ("Cardiac", "Cognitive");
+    # current_conditions[].system_category is the lowercase slug enum (#255).
+    # Normalize at the comparison boundary (bug fix, Phase 5 data-pipeline
+    # session 2026-06-30 — a direct set-intersect never matched before this).
+    contra_conds = {
+        CONDITION_CATEGORY_TO_SYSTEM_CATEGORY.get(c.strip().lower(), c.strip().lower())
+        for c in (exercise.contraindicated_conditions or [])
+    }
     if not contra_conds:
         return Verdict.CLEAN, []
     evidence = []
@@ -214,7 +222,7 @@ def condition_verdict(exercise, current_conditions) -> tuple[Verdict, list[Evide
     return verdict, evidence
 ```
 
-Same set-intersect pattern. Cardiac × high-intensity exercises is a special-case escalation handled in §5.3.4.
+Set-intersect pattern, with the category-name normalization above. Cardiac × high-intensity exercises is a special-case escalation handled in §5.3.4.
 
 #### 5.3.3 Movement-constraint match (set-intersect)
 
