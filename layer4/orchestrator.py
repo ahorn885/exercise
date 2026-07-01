@@ -1148,9 +1148,7 @@ def _build_per_date_restrictions(
                 PerDateRestriction(
                     date=datetime(d.year, d.month, d.day),
                     locale_lock=spec.get("locale_lock"),
-                    discipline_exclusions=list(spec.get("discipline_exclusions") or []),
                     indoor_only=bool(spec.get("indoor_only")),
-                    max_total_minutes=spec.get("max_total_minutes"),
                 )
             )
     return tuple(out)

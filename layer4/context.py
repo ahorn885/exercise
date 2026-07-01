@@ -193,8 +193,6 @@ class TrainingGap(_Base):
 
 class TrainingGapsSummary(_Base):
     flagged_count: int = Field(ge=0)
-    any_no_substitute: bool
-    any_multi_substitute_candidate: bool
 
 
 class UnresolvedFlag(_Base):
@@ -211,7 +209,6 @@ class Layer2ACoachingFlag(_Base):
 
 
 class RationaleMetadata(_Base):
-    template_version: str
     generated_at: str  # ISO timestamp string per spec
 
 
@@ -228,15 +225,8 @@ class Layer2ADiscipline(_Base):
     # profile + protein band. Both may be NULL for legacy rows.
     endurance_profile: str | None = None
     primary_movement: str | None = None
-    is_conditional: bool
-    conditional_resolution: Literal["athlete_opt_in"] | None = None
     load_weight: WeightResult
-    race_time_pct_low: float | None = None
-    race_time_pct_high: float | None = None
-    sport_specific_context: str | None = None
     phase_load: PhaseLoadBands | None = None
-    sleep_deprivation_relevant: bool
-    training_gap: TrainingGap | None = None
     rationale: str
 
 
@@ -1467,15 +1457,18 @@ class RaceEventPayload(_Base):
         return self
 
 
-# ─── PerDateRestriction (placeholder pending D-67; always-empty in v1) ───────
+# ─── PerDateRestriction (#237 — per-date athlete restrictions) ──────────────
+#
+# Originally specced with `discipline_exclusions` + `max_total_minutes` too;
+# both dropped (Andy, 2026-06-30) before any UI ever captured them — disciplines
+# are governed by gear/terrain availability rules instead, and the per-day
+# volume percentage (`volume_by_date`) already supersedes a minutes cap.
 
 
 class PerDateRestriction(_Base):
     date: datetime
     locale_lock: str | None = None
-    discipline_exclusions: list[str] = Field(default_factory=list)
     indoor_only: bool = False
-    max_total_minutes: int | None = Field(default=None, ge=0)
 
 
 # ─── Layer2Bundle (Layer4_Spec.md §3.2 plan_refresh signature) ───────────────
