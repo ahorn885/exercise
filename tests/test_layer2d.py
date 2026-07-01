@@ -613,6 +613,68 @@ class TestRespiratoryAccommodation:
         assert payload.hitl_required is False
 
 
+# ─── Title-Case contraindicated_conditions normalization (case-bug fix) ──────
+# Real `layer0.exercises.contraindicated_conditions` rows store the Title-Case
+# `health_condition_categories.category_name` form ("Cardiac", "Cognitive"),
+# not the lowercase `system_category` slug — a direct membership check never
+# matched. "Cognitive" (the most-used real value) also has no literal slug
+# match at all; it must map to `cognitive_mental_health`.
+
+
+class TestContraindicatedConditionTitleCaseNormalization:
+    def test_title_case_cardiac_matches_lowercase_system_category(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _exercise(
+                "E-001", "VO2 Max Intervals", "D-001",
+                contraindicated_conditions=["Cardiac"],
+            ),
+        ])
+        conn.queue_response(rows=[_discipline("D-001", "Trail Running")])
+        conn.queue_response(rows=[])
+        conditions = [_condition("cardiac", "Arrhythmia", status="Active")]
+        payload = q_layer2d_injury_risk_profile_payload(
+            conn, [], conditions, ["D-001"], etl_version_set=_PIN,
+        )
+        assert len(payload.accommodated_exercises) == 1
+        assert payload.accommodated_exercises[0].exercise_id == "E-001"
+
+    def test_title_case_cognitive_maps_to_cognitive_mental_health(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _exercise(
+                "E-001", "Whitewater Line Reading", "D-001",
+                contraindicated_conditions=["Cognitive"],
+            ),
+        ])
+        conn.queue_response(rows=[_discipline("D-001", "Trail Running")])
+        conn.queue_response(rows=[])
+        conditions = [
+            _condition("cognitive_mental_health", "ADHD", status="Active"),
+        ]
+        payload = q_layer2d_injury_risk_profile_payload(
+            conn, [], conditions, ["D-001"], etl_version_set=_PIN,
+        )
+        assert len(payload.accommodated_exercises) == 1
+        assert payload.accommodated_exercises[0].exercise_id == "E-001"
+
+    def test_unrelated_system_category_stays_clean(self):
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _exercise(
+                "E-001", "VO2 Max Intervals", "D-001",
+                contraindicated_conditions=["Cardiac"],
+            ),
+        ])
+        conn.queue_response(rows=[_discipline("D-001", "Trail Running")])
+        conn.queue_response(rows=[])
+        conditions = [_condition("gi", "Celiac", status="Active")]
+        payload = q_layer2d_injury_risk_profile_payload(
+            conn, [], conditions, ["D-001"], etl_version_set=_PIN,
+        )
+        assert payload.accommodated_exercises == []
+
+
 # ─── §13.6 Multi-injury cumulative load ──────────────────────────────────────
 
 

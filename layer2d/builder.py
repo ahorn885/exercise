@@ -22,12 +22,19 @@ Spec-vs-deployed reconciliations applied:
   spec §3 uses 'Current' | 'History'. Partition on `status == 'Active'` →
   current; else history.
 - HealthConditionRecord.system_category is the canonical 11-value lowercase
-  enum (cardiac, respiratory, endocrine_metabolic, gi, ...; #255) — the
-  slug form of spec §B.4.1's 11 capitalized values. The load-bearing match is
-  Layer 2E supplement screening (athlete system_category ∈ a supplement's
-  `contraindications` tokens); `layer0.exercises.contraindicated_conditions` is
-  currently unpopulated. Cardiac / Neurological / Concussion gates here key on
-  the lowercase values, all of which survive the #255 retag unchanged.
+  enum (cardiac, respiratory, endocrine_metabolic, gi, ...; #255) — the slug
+  form of `layer0.health_condition_categories.category_name`'s Title-Case
+  values. Cardiac / Neurological / Concussion gates here key on the lowercase
+  values, all of which survive the #255 retag unchanged.
+- `layer0.exercises.contraindicated_conditions` IS populated (~7% of rows;
+  prior notes here and in CURRENT_STATE.md calling it "unpopulated" were
+  stale) but stores the Title-Case `category_name` form (e.g. "Cardiac",
+  "Cognitive"), not the lowercase slug — and "Cognitive" alone (no
+  "/ Mental health") is the single most-used value, with no literal slug
+  match in the 11-value enum at all. `_condition_verdict` previously compared
+  these directly against `system_category` and could never match.
+  `_CONTRAINDICATED_CONDITION_TO_SYSTEM_CATEGORY` (below) normalizes at the
+  comparison boundary (Phase 5 data-pipeline session, 2026-06-30).
 - BODY_PARTS in `routes/injuries.py` (24 left/right-doubled) doesn't match
   the canonical `layer0.body_parts.canonical_name` 41-vocab. v1 boundary
   normalizer `_strip_side()` collapses "Left Wrist" → "Wrist" at the
@@ -621,6 +628,26 @@ def _body_part_verdict(
     return verdict, evidence
 
 
+# `layer0.exercises.contraindicated_conditions` stores the Title-Case
+# `layer0.health_condition_categories.category_name` form; HealthConditionRecord
+# .system_category is the lowercase slug enum (#255). "Cognitive" (no
+# "/ Mental health") is the data's actual usage and has no literal slug match.
+_CONTRAINDICATED_CONDITION_TO_SYSTEM_CATEGORY: dict[str, str] = {
+    "cardiac": "cardiac",
+    "respiratory": "respiratory",
+    "endocrine / metabolic": "endocrine_metabolic",
+    "gi": "gi",
+    "neurological": "neurological",
+    "cognitive": "cognitive_mental_health",
+    "cognitive / mental health": "cognitive_mental_health",
+    "musculoskeletal (chronic, non-injury)": "musculoskeletal",
+    "skin": "skin",
+    "thermoregulation": "thermoregulation",
+    "immune / autoimmune": "immune_autoimmune",
+    "other": "other",
+}
+
+
 def _condition_verdict(
     exercise: dict[str, Any],
     current_conditions: list[HealthConditionRecord],
@@ -631,7 +658,10 @@ def _condition_verdict(
     severity field). Cardiac × high-intensity is escalated to exclude at the
     HITL gate (§5.7 rule 2), not here.
     """
-    contra = set(exercise.get("contraindicated_conditions") or [])
+    contra = {
+        _CONTRAINDICATED_CONDITION_TO_SYSTEM_CATEGORY.get(c.strip().lower(), c.strip().lower())
+        for c in (exercise.get("contraindicated_conditions") or [])
+    }
     if not contra:
         return "clean", []
     evidence: list[Evidence] = []
