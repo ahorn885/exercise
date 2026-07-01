@@ -1260,6 +1260,9 @@ def _upstream_full_cone(
         # #447 §5 — fold the home sport in as low-weight cross-training when the
         # race sport differs from it.
         cross_training_sport=cross_training_sport,
+        # #559 (WS-3 T-3.3) — gate requires_team disciplines out of a solo
+        # athlete's set ahead of the race/athlete/curator precedence chain.
+        is_solo_athlete=layer1_payload.is_solo_athlete,
     )
     included_discipline_ids = [
         d.discipline_id
@@ -1781,6 +1784,9 @@ def orchestrate_single_session_synthesize(
             framework_sport=request.sport,
             etl_version_set=etl_version_set,
             athlete_discipline_overrides=_athlete_discipline_overrides(layer1_payload),
+            # #559 (WS-3 T-3.3) — gate requires_team disciplines out of a solo
+            # athlete's set ahead of the race/athlete/curator precedence chain.
+            is_solo_athlete=layer1_payload.is_solo_athlete,
         )
     except Layer2AInputError as exc:
         raise OrchestrationError(

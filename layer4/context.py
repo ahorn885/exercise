@@ -1974,6 +1974,17 @@ class Layer1Payload(_Base):
     # the athlete captures gear (slice 6); the slice-3 backfill seeds owned crafts.
     # Slice 4 reads this for the full feasibility cascade cutover.
     owned_gear: list[str] = Field(default_factory=list)
+    # #559 (WS-3 T-3.3) — "solo" is derived from existing data, not a new
+    # onboarding question: an athlete counts as on a team if they have at
+    # least one `network.network_links` row whose `relationship_types`
+    # contains `"race_teammate"`; no such link means solo. Surfaced top-level
+    # (same convenience-field pattern as `doubles_feasible` / `experience_level`
+    # / `owned_gear` above) so it rides into `layer1_hash` cache invalidation
+    # and is readable as `.get("is_solo_athlete")` by Layer 2A's discipline
+    # inclusion gate (`_resolve_inclusion`), which excludes `requires_team`
+    # disciplines for solo athletes ahead of race-demand/weighting/curator-
+    # default precedence.
+    is_solo_athlete: bool = True
 
     # Full §A-§L mirror.
     identity: Layer1Identity

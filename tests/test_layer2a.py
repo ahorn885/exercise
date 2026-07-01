@@ -100,6 +100,7 @@ def _row(
     multi_substitute_candidate: bool | None = None,
     endurance_profile: str | None = None,
     primary_movement: str | None = None,
+    requires_team: bool = False,
 ) -> dict:
     """Build a query-result row dict mirroring `_load_disciplines`'s
     SELECT list. PLA + DTG + disciplines columns default to None (LEFT
@@ -111,6 +112,7 @@ def _row(
         "role": role,
         "endurance_profile": endurance_profile,
         "primary_movement": primary_movement,
+        "requires_team": requires_team,
         "race_time_pct_low": race_time_pct_low,
         "race_time_pct_high": race_time_pct_high,
         "sport_specific_context": sport_specific_context,
@@ -652,6 +654,39 @@ class TestInclusionPrecedence:
         by_id = {d.discipline_id: d for d in payload.disciplines}
         assert by_id["D-010"].inclusion == "included"
         assert by_id["D-001"].inclusion == "included"
+
+    def test_solo_athlete_excludes_requires_team_discipline(self):
+        """#559 (WS-3 T-3.3) — a solo athlete's discipline set excludes a
+        `requires_team=True` discipline, full stop, even though the curator
+        default and the race terrain both name it. The hard gate outranks
+        every other tier in the precedence chain."""
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-011", "Canoeing", "Minor",
+                 default_inclusion="included", requires_team=True),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+            race_discipline_overrides={"D-011": 30.0},
+            athlete_discipline_overrides={"D-011": {"weight": 100.0}},
+            is_solo_athlete=True,
+        )
+        assert payload.disciplines[0].inclusion == "excluded"
+
+    def test_non_solo_athlete_does_not_exclude_requires_team_discipline(self):
+        """Same `requires_team=True` discipline, but the athlete is NOT solo
+        (has a race_teammate link) — the gate is inert and the normal
+        precedence chain resolves inclusion as usual."""
+        conn = _FakeConn()
+        conn.queue_response(rows=[
+            _row("D-011", "Canoeing", "Minor",
+                 default_inclusion="included", requires_team=True),
+        ])
+        payload = q_layer2a_discipline_classifier_payload(
+            conn, "Adventure Racing", etl_version_set=_DEFAULT_ETL,
+            is_solo_athlete=False,
+        )
+        assert payload.disciplines[0].inclusion == "included"
 
 
 # ─── §13.4 Triathlon D-17 strip logic ────────────────────────────────────────

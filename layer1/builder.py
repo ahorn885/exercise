@@ -106,6 +106,11 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
     strength_benchmarks = _load_strength_benchmarks(db, user_id)
     discipline_baselines = _load_discipline_baselines(db, user_id)
     network_links = _load_network_links(db, user_id)
+    # #559 (WS-3 T-3.3) — solo is derived from existing network-link data: no
+    # "race_teammate" relationship anywhere in the athlete's links means solo.
+    is_solo_athlete = not any(
+        "race_teammate" in link.relationship_types for link in network_links
+    )
     linked_partner_consents = _load_linked_partner_consents(db, user_id)
     skill_toggle_states = _load_skill_toggle_states(db, user_id)
     owned_gear = _load_owned_gear(db, user_id)
@@ -164,6 +169,7 @@ def build_layer1_payload(db, user_id: int) -> Layer1Payload:
         sleep_baseline=sleep_baseline_hours,
         daily_availability_windows=daily_windows,
         owned_gear=owned_gear,
+        is_solo_athlete=is_solo_athlete,
         # §G per-week capacity scalars (promoted from the retired
         # Layer1Availability wrapper) — read top-level by the session grid.
         doubles_feasible=availability_scalars["doubles_feasible"],

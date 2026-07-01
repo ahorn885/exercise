@@ -176,7 +176,8 @@ def _load_disciplines(
             dtg.notes AS gap_notes,
             dtg.multi_substitute_candidate,
             dl.endurance_profile,
-            dl.primary_movement
+            dl.primary_movement,
+            dl.requires_team
         FROM sport_disciplines sd
         LEFT JOIN layer0.phase_load_allocation pla
             ON pla.sport_name = ?
@@ -309,10 +310,19 @@ def _resolve_inclusion(
     row: dict[str, Any],
     race_overrides: dict[str, float] | None,
     athlete_overrides: dict[str, dict] | None,
+    is_solo_athlete: bool = False,
 ) -> str:
     """Resolve a discipline's inclusion via the #509 precedence chain
-    `race > athlete > curator-default`.
+    `race > athlete > curator-default`, gated ahead of all three by the #559
+    (WS-3 T-3.3) team-requirement check.
 
+    0. **Team requirement (hard gate)** — `layer0.disciplines.requires_team`
+       is true for this discipline AND the athlete is solo
+       (`Layer1Payload.is_solo_athlete`, derived from `network_links` having
+       no `race_teammate` relationship) → `excluded`, full stop. A solo
+       athlete's own weighting preference or a curator default cannot
+       override a hard team requirement, so this check runs before any of
+       the three tiers below.
     1. **Race demand** — the race terrain mix names this discipline
        (`race_discipline_overrides`, derived from per-row `discipline_id` by
        the X3 orchestrator helper) → `included`. Race wins over athlete.
@@ -326,6 +336,10 @@ def _resolve_inclusion(
 
     Race provenance rides on `load_weight.source == "race_override"`."""
     discipline_id = row["discipline_id"]
+
+    # 0. Hard team-requirement gate — outranks race/athlete/curator signals.
+    if is_solo_athlete and row.get("requires_team"):
+        return "excluded"
 
     # 1. Race demand wins (X3 terrain-derived mix).
     if race_overrides and discipline_id in race_overrides:
@@ -892,6 +906,7 @@ def q_layer2a_discipline_classifier_payload(
     race_discipline_overrides: dict[str, float] | None = None,
     estimated_race_duration_hours: float | None = None,
     team_format: str | None = None,
+    is_solo_athlete: bool = False,
     discipline_id_filter: list[str] | None = None,
     cross_training_sport: str | None = None,
     etl_version_set: dict[str, str],
@@ -909,6 +924,16 @@ def q_layer2a_discipline_classifier_payload(
     Validation per §4 raises `Layer2AInputError`. Empty sport (no SDM
     rows) returns an empty discipline list with `hitl_required=True` and
     a `no_disciplines_for_sport` unresolved flag per §10.
+
+    `is_solo_athlete` (#559 WS-3 T-3.3) is supplied by the caller from
+    `Layer1Payload.is_solo_athlete` (no per-athlete JOIN here, same pattern
+    as `athlete_discipline_overrides`) and gates any `requires_team`
+    discipline out of a solo athlete's set ahead of the #509 precedence
+    chain in `_resolve_inclusion`. Kept as its own explicit parameter rather
+    than overloaded onto `team_format` — `team_format` describes the race's
+    team format (Solo/Unified/Relay, currently unused downstream) while
+    `is_solo_athlete` describes the athlete's own team membership; the two
+    are conceptually distinct signals that happen to both be team-related.
     """
     # §4 input validation
     if not framework_sport or not isinstance(framework_sport, str):
@@ -951,6 +976,7 @@ def q_layer2a_discipline_classifier_payload(
             row,
             race_discipline_overrides,
             athlete_discipline_overrides,
+            is_solo_athlete,
         )
         load_weight = _compute_load_weight(row, athlete_discipline_overrides)
         rationale = _render_rationale(
