@@ -93,7 +93,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 
 ### WS-1 — Observations & seam correctness (self-contained; parallel to WS-2/3)
 
-**T-1.1 — Persist Layer-4 observations + render on the operator page (#418, part 1)**
+**T-1.1 — Persist Layer-4 observations + render on the operator page (#418, part 1)** — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), bundled with T-1.2.**
 - Preconditions: none.
 - Files: `init_db.py` (or a repo helper), `routes/plan_create.py`, `routes/admin.py` + its inspect
   template, `tests/`.
@@ -117,7 +117,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - Verify: a test that a plan with a forced `best_effort_plan` observation persists it and the admin
   view renders it. `tests/test_layer4_plan_create.py` for the persist round-trip.
 
-**T-1.2 — Remove `shape_override` dead code (#295-adjacent; bundle with T-1.1, same model touch)**
+**T-1.2 — Remove `shape_override` dead code (#295-adjacent; bundle with T-1.1, same model touch)** — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108).**
 - Preconditions: T-1.1 in the same PR (touch the `Observation`/`Layer4Payload` model once).
 - Files: `layer4/payload.py`, the 8 build sites, `tests/`.
 - Steps:
@@ -337,15 +337,18 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 
 ## 4. Global order
 
-1. T-4.1 (isolated quick win). — **DONE 2026-07-01.**
-2. WS-1: T-1.1+T-1.2 (one PR) → T-1.3 → T-1.4 (gated) → T-1.5. Parallel to WS-2/3.
+1. T-4.1 (isolated quick win). — **DONE 2026-07-01, PR #1104.**
+2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108)** → T-1.3 (next, ungated) → T-1.4 (gated) → T-1.5. Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4.
 5. WS-5: independent throughout — T-5.1 → T-5.2/T-5.3 → T-5.4 → T-5.5/T-5.6 → T-5.7.
 
 ## 5. Bookkeeping (after approval; outside plan mode)
 
-- File 2 new issues: `shape_override` dead code (→ T-1.2); persistence gap for `seam_reviews`/
-  `validator_results` (T-1.1 covers only `notable_observations`).
+- ~~File 2 new issues: `shape_override` dead code (→ T-1.2); persistence gap for `seam_reviews`/
+  `validator_results` (T-1.1 covers only `notable_observations`).~~ **DONE 2026-07-01** (T-1.1+T-1.2,
+  PR #1108): filed [#1107](https://github.com/ahorn885/exercise/issues/1107) for the
+  `seam_reviews`/`validator_results` persistence gap. Did not file a separate `shape_override` issue —
+  T-1.2 removed the dead code in the same PR, so there was nothing left to track.
 - Re-scope on GitHub: #302 → Layer-3B/sleep_quality only; #306 → race_url only; #284 → resolved by
   #249; #890/#747 → close after verify; update #1060 description.

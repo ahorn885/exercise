@@ -2,8 +2,9 @@
 
 **Session:** WS-1 T-1.1 (#418 part 1) + T-1.2 (dead `shape_override` removal), bundled as one PR per the execution plan's Global order §4.
 **Date:** 2026-07-01
-**Predecessor handoff:** `V5_Implementation_PlanNaming_1056_T41_2026_07_01_Closing_Handoff_v1.md`
-**Branch:** `claude/plan-mode-nested-wadler-4h6bzf` (pushed; **no PR opened** — project rule, waiting for Andy's go)
+**Plan doc:** [`plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md) §3 WS-1 (T-1.1, T-1.2)
+**Predecessor handoff:** [`V5_Implementation_PlanNaming_1056_T41_2026_07_01_Closing_Handoff_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/handoffs/V5_Implementation_PlanNaming_1056_T41_2026_07_01_Closing_Handoff_v1.md)
+**Branch:** `claude/plan-mode-nested-wadler-4h6bzf` · **PR:** [#1108](https://github.com/ahorn885/exercise/pull/1108), auto-merge armed (merge commit, Andy's go 2026-07-01)
 **Status:** 12 substantive files (over the nominal 5-file ceiling, but the plan itself pre-scoped T-1.1+T-1.2 as "one PR" touching `payload.py` + all 8-10 `shape_override=None` construction sites + the migration + repo helper + 2 route files — see plan §3 WS-1 file lists). Suite: **4093 passed / 30 skipped, 0 failed** (one pre-existing fixture in `tests/test_redesign_admin_render.py` needed a new key added — see §3).
 
 ---
@@ -109,6 +110,6 @@ Per the execution plan's §4 Global order, after T-1.1+T-1.2:
 | Suite | — | 4093 passed / 30 skipped |
 | Neon | — | No `layer0-apply` owed — public-schema, auto-applies on deploy |
 | GitHub | — | #1056 closed; #418 commented + checklist updated; #1107 filed |
-| Branch | — | `claude/plan-mode-nested-wadler-4h6bzf`, pushed, **no PR opened** (Andy's go pending) |
+| Branch | — | `claude/plan-mode-nested-wadler-4h6bzf`, pushed; PR [#1108](https://github.com/ahorn885/exercise/pull/1108), auto-merge armed (merge commit) |
 
 **End of handoff.**
