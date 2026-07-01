@@ -64,6 +64,9 @@ class TestInviteHelpers:
         db = _InviteHelperDB()
         token = auth.issue_invite(db, email='new@b.test', channel='email', created_by=1)
         assert token and isinstance(token, str)
+        # Short (8-char, 48-bit) token — reads cleanly in an SMS; see
+        # issue_invite's docstring for the entropy-vs-length tradeoff.
+        assert len(token) == 8
         ins = db.inserted[0]
         assert ins[0] == token and ins[1] == 'new@b.test' and ins[2] is None
         assert ins[3] == 'email' and ins[4] == 1
@@ -263,6 +266,28 @@ class TestAdminInvite:
         resp = app.test_client().post('/admin/invite/TOK123/revoke')
         assert resp.status_code == 302
         assert db.deletes and db.deletes[0][0] == 'TOK123'
+
+
+# ── short invite link (/i/<token>) + on-brand message copy ────────────────
+
+class TestInviteRedirect:
+    def test_redirects_to_register_with_invite_token(self):
+        import routes.auth as auth
+        app = Flask(__name__)
+        app.config['SECRET_KEY'] = 'test'
+        app.register_blueprint(auth.bp)
+        app.register_blueprint(auth.invite_link_bp)
+        resp = app.test_client().get('/i/TOK123')
+        assert resp.status_code == 302
+        assert resp.headers['Location'] == '/auth/register?invite=TOK123'
+
+
+class TestInviteMessageCopy:
+    def test_sms_text_includes_link_and_expiry(self):
+        from routes import auth
+        text = auth._invite_text('https://app.aidstation.pro/i/AbCdEfGh')
+        assert 'https://app.aidstation.pro/i/AbCdEfGh' in text
+        assert str(auth.INVITE_TTL_DAYS) in text
 
 
 # ── register: invite acceptance ───────────────────────────────────────────

@@ -272,7 +272,7 @@ from routes.onboarding import bp as onboarding_bp
 from routes.purchases import bp as purchases_bp
 from routes.wellness import bp as wellness_bp
 from routes.admin import bp as admin_bp
-from routes.auth import bp as auth_bp, current_user, verify_bearer_token
+from routes.auth import bp as auth_bp, invite_link_bp, current_user, verify_bearer_token
 from routes.oauth_callbacks import bp as oauth_callbacks_bp
 from routes.status import bp as status_bp
 from routes.coros import bp as coros_bp
@@ -314,6 +314,7 @@ app.register_blueprint(purchases_bp)
 app.register_blueprint(wellness_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(auth_bp)
+app.register_blueprint(invite_link_bp)
 app.register_blueprint(oauth_callbacks_bp)
 app.register_blueprint(status_bp)
 app.register_blueprint(coros_bp)

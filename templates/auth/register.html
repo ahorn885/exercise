@@ -1,5 +1,7 @@
 {% extends "auth/_shell.html" %}
 {% block title %}{% if is_bootstrap %}First-run setup{% else %}Create account{% endif %} — AIDSTATION{% endblock %}
+{% block og_title %}{% if invite_token %}You're invited to AIDSTATION{% else %}AIDSTATION{% endif %}{% endblock %}
+{% block og_description %}{% if invite_token %}Time to hit the trail. Set up your account and build a plan for the next start line.{% else %}AI-driven training for the data-obsessed endurance athlete.{% endif %}{% endblock %}
 
 {% block content %}
 {% if is_bootstrap %}
