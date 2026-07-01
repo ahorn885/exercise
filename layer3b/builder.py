@@ -12,11 +12,9 @@ Single LLM call orchestrator. Wraps:
    mode-discriminator hard error (§5.5 + D9 + §7; #217).
 7. `_enforce_hitl_auto_emit(...)` — validator appends missing-but-required
    §6.1 items (§5.5 step 3 + D12).
-8. `_apply_confidence_floors(...)` — §6.5 4 floor rules + auto-append
-   `confidence_clamped_by_data_signal` observation.
+8. `_apply_confidence_floors(...)` — §6.5 4 floor rules.
 9. `_enforce_periodization_sanity_loop(...)` — §5.5 step 4 (custom-mode
-   phase_weeks sum ±1 of timeline; single retry; fallback to standard +
-   `periodization_shape_fallback` observation).
+   phase_weeks sum ±1 of timeline; single retry; fallback to standard).
 10. Metadata stamping + D14 event-metadata population → `Layer3BPayload`.
 
 Companion prompt body: `aidstation-sources/prompts/Layer3B_v1.md` (system
@@ -42,7 +40,6 @@ from layer4.context import (
     Layer3APayload,
     Layer3BHITLItem,
     Layer3BPayload,
-    Layer3Observation,
     PackLoadRecord,
     PeriodizationShape,
     RaceEventPayload,
@@ -109,25 +106,6 @@ _COMPETITIVE_GOAL_OUTCOMES = frozenset({"Compete mid-pack", "Podium"})
 _VALID_NON_EVENT_GOAL_TYPES = frozenset({"endurance", "general_fitness", "strength", "mixed"})
 _VALID_PLAN_DURATION_WEEKS = frozenset({8, 12, 16, 20, 24})
 
-# `notable_observations` budget cap (Layer3_3B_Spec §8.2). Lock-step with
-# `Layer3BPayload.notable_observations` `max_length` in `layer4/context.py`:
-# used as the tool-schema `maxItems` hint, the `_trim_observations_to_budget`
-# default, and the pre-validation `_clamp_notable_observations` cap.
-_NOTABLE_OBSERVATIONS_MAX = 10
-# Mirrors `Layer3Observation.text` `Field(max_length=240)` in `layer4/context.py`
-# and the tool-schema `maxLength` on `notable_observations[].text`. The Anthropic
-# API treats string bounds as guidance, so a long observation walls the cone on
-# `schema_violation`; the pre-validation `_clamp_observation_text` truncates to
-# the cap instead.
-_OBSERVATION_TEXT_MAX_CHARS = 240
-# §8.2 drop order when over budget: warning > opportunity > data_gap >
-# data_hygiene. Lower rank = higher priority = kept first.
-_OBSERVATION_CATEGORY_PRIORITY = {
-    "warning": 0,
-    "opportunity": 1,
-    "data_gap": 2,
-    "data_hygiene": 3,
-}
 # Canonical periodization phase order (matches the Literal in
 # `PeriodizationShape.phase_weeks`); used by `_check_periodization_sanity` to
 # test the allocation at/after `start_phase`.
@@ -324,7 +302,6 @@ def build_emit_layer3b_payload_tool() -> dict[str, Any]:
                 "goal_viability",
                 "periodization_shape",
                 "hitl_surface",
-                "notable_observations",
             ],
             "properties": {
                 "mode": {"type": "string", "enum": ["event", "no-event"]},
@@ -333,27 +310,6 @@ def build_emit_layer3b_payload_tool() -> dict[str, Any]:
                 "hitl_surface": {
                     "type": "array",
                     "items": _HITL_ITEM_SCHEMA,
-                },
-                "notable_observations": {
-                    "type": "array",
-                    "maxItems": _NOTABLE_OBSERVATIONS_MAX,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["category", "text", "evidence_basis", "elevates_to_hitl"],
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "enum": ["warning", "opportunity", "data_gap", "data_hygiene"],
-                            },
-                            "text": {"type": "string", "maxLength": 240},
-                            "evidence_basis": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                            },
-                            "elevates_to_hitl": {"type": "boolean"},
-                        },
-                    },
                 },
                 # #826 — curated research/coaching sources the viability +
                 # periodization judgments rest on. Slugs from the provided
@@ -916,43 +872,14 @@ Hard rules:
    - non_event_goal_type == 'mixed' → shape based on weaker capacity.
    - non_event_goal_type == 'general_fitness' → almost always
      achievable, standard, minimal HITL.
-   - Cross-check Goal Type vs §C primary_sport: if 'strength' goal +
-     pure-endurance primary (Trail Running, Road Cycling, Swimming,
-     etc.), auto-emit observation goal_type_primary_sport_mismatch
-     (category=data_hygiene, elevates_to_hitl=False).
 
-8. Required observation auto-emit triggers:
-   - first_time_at_distance == True (event-mode) → category=warning;
-     elevates_to_hitl=True only when paired with §6.1 row 2 condition.
-   - previous_attempts contains DNF in same event → category=warning;
-     elevates_to_hitl per §6.1 row 3.
-   - event-mode AND time_to_event_weeks > 30 → category=opportunity;
-     elevates_to_hitl=False. Suggest intermediate-test-race scheduling.
-   - periodization_shape.mode == 'compressed' → category=warning;
-     elevates_to_hitl=False unless §6.1 row 4 condition.
-   - no-event mode AND Goal Type vs §C primary_sport mismatch →
-     category=data_hygiene; elevates_to_hitl=False.
+8. Race-date-in-past is fatal — validation catches before you see the
+   prompt; do NOT pivot to post-race-results mode.
 
-9. Observation budget: notable_observations is capped at 10 items.
-   Priority: warning > opportunity > data_gap > data_hygiene. Keep each
-   observation's `text` under 240 characters — one concise flag, not a
-   paragraph (it is hard-capped at 240 and truncated past that).
+9. Plan duration cap: §H.3 caps no-event Plan Duration at 24 weeks.
+   Event-mode can exceed (use 'extended' mode).
 
-10. Forbidden observations (never emit):
-    - Generic encouragement.
-    - State-assessment claims ("your aerobic capacity is low") —
-      Layer 3A's territory.
-    - Injury-risk statements — Layer 2D's territory.
-    - Exercise prescriptions / session designs / plan dates — Layer 4.
-    - Speculation beyond evidence.
-
-11. Race-date-in-past is fatal — validation catches before you see the
-    prompt; do NOT pivot to post-race-results mode.
-
-12. Plan duration cap: §H.3 caps no-event Plan Duration at 24 weeks.
-    Event-mode can exceed (use 'extended' mode).
-
-13. Research-source citations (`source_citations`): a catalog of curated
+10. Research-source citations (`source_citations`): a catalog of curated
     training-science sources is provided below. When your viability or
     periodization judgment rests on the principle in one of them, list its
     `slug` in the top-level `source_citations` array. Cite ONLY slugs that
@@ -1054,7 +981,7 @@ def _render_user_prompt(
 
 def _collect_evidence_basis_paths(payload_dict: dict[str, Any]) -> list[str]:
     """Walk the tool args + collect every `evidence_basis` entry across
-    goal_viability + periodization_shape + observations."""
+    goal_viability + periodization_shape."""
     paths: list[str] = []
     gv = payload_dict.get("goal_viability", {})
     if isinstance(gv, dict):
@@ -1062,9 +989,6 @@ def _collect_evidence_basis_paths(payload_dict: dict[str, Any]) -> list[str]:
     ps = payload_dict.get("periodization_shape", {})
     if isinstance(ps, dict):
         paths.extend(ps.get("evidence_basis", []))
-    for obs in payload_dict.get("notable_observations", []):
-        if isinstance(obs, dict):
-            paths.extend(obs.get("evidence_basis", []))
     return paths
 
 
@@ -1335,10 +1259,7 @@ def _apply_confidence_floors(
     previous_attempts: list[dict[str, Any]] | None,
 ) -> Layer3BPayload:
     """Per `Layer3_3B_Spec.md` §6.5 + D8 — 4 floor rules. Returns a clamped
-    copy. Signals that fire are recorded + surfaced via a single appended
-    `confidence_clamped_by_data_signal` observation (category=data_gap,
-    elevates_to_hitl=False)."""
-    signals: list[str] = []
+    copy."""
     gv = payload.goal_viability
 
     # Floor 1: first_time + competitive goal → ≤ medium
@@ -1348,13 +1269,11 @@ def _apply_confidence_floors(
     ):
         if _CONFIDENCE_RANK[gv.confidence] > _CONFIDENCE_RANK["medium"]:
             gv = gv.model_copy(update={"confidence": "medium"})
-        signals.append("first_time_competitive_goal")
 
     # Floor 2: 3A recent_trajectory.confidence == 'low' → ≤ medium
     if layer3a_payload.recent_trajectory.confidence == "low":
         if _CONFIDENCE_RANK[gv.confidence] > _CONFIDENCE_RANK["medium"]:
             gv = gv.model_copy(update={"confidence": "medium"})
-        signals.append("layer3a_trajectory_confidence_low")
 
     # Floor 3: no-event + no providers + stale self-report → ≤ low
     if (
@@ -1364,7 +1283,6 @@ def _apply_confidence_floors(
     ):
         if _CONFIDENCE_RANK[gv.confidence] > _CONFIDENCE_RANK["low"]:
             gv = gv.model_copy(update={"confidence": "low"})
-        signals.append("no_providers_stale_self_report")
 
     # Floor 4: event-mode + no previous_attempts + first_time → ≤ medium
     if (
@@ -1374,123 +1292,8 @@ def _apply_confidence_floors(
     ):
         if _CONFIDENCE_RANK[gv.confidence] > _CONFIDENCE_RANK["medium"]:
             gv = gv.model_copy(update={"confidence": "medium"})
-        signals.append("first_time_no_previous_attempts")
 
-    observations = list(payload.notable_observations)
-    if signals:
-        # Dedup signals while preserving stable order
-        unique_signals = sorted(set(signals))
-        observations.append(
-            Layer3Observation(
-                category="data_gap",
-                text=(
-                    f"Confidence clamped by data signal: "
-                    f"{', '.join(unique_signals)}."
-                ),
-                evidence_basis=[
-                    "h2.first_time_at_distance",
-                    "h2.previous_attempts",
-                    "3a.recent_trajectory.confidence",
-                    "3a.data_density.connected_providers",
-                ],
-                elevates_to_hitl=False,
-            )
-        )
-        # Honor §8.2 observation budget cap (max_length=6) — keep highest priority
-        observations = _trim_observations_to_budget(observations)
-
-    return payload.model_copy(
-        update={
-            "goal_viability": gv,
-            "notable_observations": observations,
-        }
-    )
-
-
-def _trim_observations_to_budget(
-    observations: list[Layer3Observation], max_items: int = _NOTABLE_OBSERVATIONS_MAX
-) -> list[Layer3Observation]:
-    """Per §8.2 — bound notable_observations to max_items via priority:
-    warning > opportunity > data_gap > data_hygiene. Preserves order within
-    category. Runs POST-validation (auto-emit additions); the pre-validation
-    `_clamp_notable_observations` guards the raw-over-emit path."""
-    if len(observations) <= max_items:
-        return observations
-    sorted_obs = sorted(
-        enumerate(observations),
-        key=lambda x: (_OBSERVATION_CATEGORY_PRIORITY.get(x[1].category, 9), x[0]),
-    )
-    kept = sorted([item[0] for item in sorted_obs[:max_items]])
-    return [observations[i] for i in kept]
-
-
-def _clamp_notable_observations(
-    candidate: dict[str, Any], max_items: int = _NOTABLE_OBSERVATIONS_MAX
-) -> None:
-    """Trim `notable_observations` to the §8.2 budget in place BEFORE schema
-    validation. The model field is `max_length`-bounded and the tool schema
-    carries the matching `maxItems`, but the Anthropic API treats array bounds
-    as guidance — an over-emit fails `Layer3BPayload` validation on both capped
-    attempts and walls the cone (the twin of the 3A weak_links wall). The
-    post-validation `_trim_observations_to_budget` cannot help — it never runs.
-    Drop lowest-priority items (warning > opportunity > data_gap >
-    data_hygiene; ties by emission order) so the surface degrades to the
-    budget instead of walling."""
-    obs = candidate.get("notable_observations")
-    if not isinstance(obs, list) or len(obs) <= max_items:
-        return
-    ranked = sorted(
-        enumerate(obs),
-        key=lambda x: (
-            _OBSERVATION_CATEGORY_PRIORITY.get(
-                (x[1] or {}).get("category") if isinstance(x[1], dict) else None, 9
-            ),
-            x[0],
-        ),
-    )
-    kept_idx = sorted(i for i, _ in ranked[:max_items])
-    print(
-        f"llm_layer3b_goal_timeline_viability: clamping notable_observations "
-        f"from {len(obs)} to {max_items} (Layer3BPayload §8.2 budget)"
-    )
-    candidate["notable_observations"] = [obs[i] for i in kept_idx]
-
-
-def _truncate_to_word_boundary(text: str, max_chars: int) -> str:
-    """Cut `text` to <= `max_chars`, snapping to the last word boundary near the
-    limit and appending a single-char ellipsis so it does not break mid-word."""
-    cut = text[: max_chars - 1].rstrip()
-    space = cut.rfind(" ")
-    if space >= max_chars - 40:
-        cut = cut[:space].rstrip()
-    return cut + "…"
-
-
-def _clamp_observation_text(
-    candidate: dict[str, Any], max_chars: int = _OBSERVATION_TEXT_MAX_CHARS
-) -> None:
-    """Truncate each `notable_observations[i].text` to the schema cap in place
-    before validation. `Layer3Observation.text` is `max_length=240` and the tool
-    schema carries the matching `maxLength`, but the Anthropic API treats string
-    bounds as guidance — a long observation fails `Layer3BPayload` validation and
-    walls the cone (same per-string class as the 3A fix). Only the human-readable
-    `text` is trimmed; category/evidence_basis/elevates_to_hitl are untouched, so
-    HITL gating is unaffected."""
-    obs = candidate.get("notable_observations")
-    if not isinstance(obs, list):
-        return
-    for item in obs:
-        if not isinstance(item, dict):
-            continue
-        text = item.get("text")
-        if isinstance(text, str) and len(text) > max_chars:
-            truncated = _truncate_to_word_boundary(text, max_chars)
-            print(
-                f"llm_layer3b_goal_timeline_viability: truncating a "
-                f"notable_observations text from {len(text)} to "
-                f"{len(truncated)} chars (Layer3Observation max_length={max_chars})"
-            )
-            item["text"] = truncated
+    return payload.model_copy(update={"goal_viability": gv})
 
 
 # ─── Periodization-sanity loop (§5.5 step 4 + D13) ───────────────────────────
@@ -1550,8 +1353,8 @@ def _periodization_fallback_to_standard(
     payload: Layer3BPayload, actual_sum: int, target_weeks: int | None
 ) -> Layer3BPayload:
     """Per §5.5 step 4 — rebuild payload with mode='standard' + phase_weeks=None.
-    Preserves start_phase + reasoning_text. Appends `periodization_shape_fallback`
-    observation (category=data_hygiene, elevates_to_hitl=False)."""
+    Preserves start_phase + reasoning_text (annotated with the fallback
+    reason)."""
     ps = payload.periodization_shape
     new_ps = ps.model_copy(
         update={
@@ -1565,26 +1368,7 @@ def _periodization_fallback_to_standard(
             ),
         }
     )
-    observations = list(payload.notable_observations) + [
-        Layer3Observation(
-            category="data_hygiene",
-            text=(
-                f"Periodization shape fell back from custom to standard: "
-                f"phase_weeks sum {actual_sum} vs target "
-                f"{target_weeks if target_weeks is not None else '?'} weeks "
-                "(±1 tolerance)."
-            ),
-            evidence_basis=["validator.periodization_sanity"],
-            elevates_to_hitl=False,
-        )
-    ]
-    observations = _trim_observations_to_budget(observations)
-    return payload.model_copy(
-        update={
-            "periodization_shape": new_ps,
-            "notable_observations": observations,
-        }
-    )
+    return payload.model_copy(update={"periodization_shape": new_ps})
 
 
 # ─── Prompt hash + driver entry point ────────────────────────────────────────
@@ -1671,7 +1455,7 @@ def llm_layer3b_goal_timeline_viability(
     6. `_check_evidence_basis(...)` — name-existence warn-log; mode-discriminator
        hard error per #217 (§5.5 + D9 + §7).
     7. `_enforce_hitl_auto_emit(...)` — §6.1 missing-but-required items.
-    8. `_apply_confidence_floors(...)` — §6.5 4 floor rules + auto-append.
+    8. `_apply_confidence_floors(...)` — §6.5 4 floor rules.
     9. `_enforce_periodization_sanity_loop(...)` — §5.5 step 4 (single
        retry + fallback-to-standard on persistent failure).
     10. Stamp metadata + D14 event-metadata population + return.
@@ -1769,11 +1553,6 @@ def llm_layer3b_goal_timeline_viability(
             etl_version_set=etl_version_set,
             race_event_payload=race_event_payload,
         )
-        # Honor the §8.2 budget + per-string cap deterministically before
-        # validation so an over-emit degrades gracefully instead of walling on
-        # schema_violation.
-        _clamp_notable_observations(candidate)
-        _clamp_observation_text(candidate)
         try:
             Layer3BPayload.model_validate(candidate)
             validated_candidate = candidate
@@ -1869,8 +1648,6 @@ def llm_layer3b_goal_timeline_viability(
                 etl_version_set=etl_version_set,
                 race_event_payload=race_event_payload,
             )
-            _clamp_notable_observations(retry_candidate)
-            _clamp_observation_text(retry_candidate)
             retry_payload = Layer3BPayload.model_validate(retry_candidate)
         except (ValidationError, Layer3BOutputError):
             retry_payload = None

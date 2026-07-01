@@ -69,6 +69,7 @@ from layer4.per_phase import (
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
     format_measured_physiology,
+    format_terrain_gap_detail,
     format_upstream_coaching_flags,
 )
 from layer4.payload import (
@@ -1151,6 +1152,14 @@ def llm_layer4_plan_refresh(
             user_prompt += (
                 "\n\n=== Upstream coaching flags ===\n"
                 + "\n".join(upstream_flag_lines)
+            )
+        # T-2.3 — surface the per-discipline terrain-gap uncoverable_stimulus /
+        # proxy_methods detail (suppress-on-empty); centralized append shared
+        # by T1/T2/T3.
+        terrain_gap_lines = format_terrain_gap_detail(layer2_bundle.b)
+        if terrain_gap_lines:
+            user_prompt += (
+                "\n\n=== Terrain-gap detail ===\n" + "\n".join(terrain_gap_lines)
             )
         # #339 — surface the durable Coaching Memory block on the refresh path
         # too (#690 rendered it on plan-create only), so a stated variety

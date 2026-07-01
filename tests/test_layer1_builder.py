@@ -171,6 +171,8 @@ class TestEmptyUser:
         assert payload.event_goal.plan_duration_weeks_no_event is None
         assert payload.lifestyle.sleep_baseline_hours is None
         assert payload.network.network_links == []
+        # #559 (WS-3 T-3.3) — no network links at all → solo by default.
+        assert payload.is_solo_athlete is True
 
     def test_27_selects_issued(self):
         conn = _FakeConn()
@@ -198,7 +200,9 @@ class TestEmptyUser:
 
 
 class TestFullyPopulated:
-    def _queue_andy(self, conn: _FakeConn) -> None:
+    def _queue_andy(
+        self, conn: _FakeConn, network_relationship_types: str = "race_teammate,training_partner"
+    ) -> None:
         # 1) athlete_profile
         conn.queue_response(row={
             "date_of_birth": date(1985, 6, 15),
@@ -366,7 +370,7 @@ class TestFullyPopulated:
         # 20) athlete_network_links
         conn.queue_response(rows=[
             {"id": 500, "partner_name": "Alex", "linked_account_user_id": None,
-             "relationship_types": "race_teammate,training_partner",
+             "relationship_types": network_relationship_types,
              "partner_specific_rules": None, "race_event_id": 99,
              "discipline_focus_on_team": "navigation"},
         ])
@@ -603,6 +607,18 @@ class TestFullyPopulated:
         assert link.race_event_id == 99
         assert len(payload.network.linked_partner_consents) == 1
         assert payload.network.linked_partner_consents[0].consent_scope == "activity_summaries"
+        # #559 (WS-3 T-3.3) — a `race_teammate` link present → not solo.
+        assert payload.is_solo_athlete is False
+
+    def test_is_solo_athlete_true_without_race_teammate_link(self):
+        # #559 (WS-3 T-3.3) — a network link exists, but none of its
+        # relationship_types is "race_teammate" (e.g. a pure training
+        # partner / coach / pacer / crew) → still solo.
+        conn = _FakeConn()
+        self._queue_andy(conn, network_relationship_types="training_partner,coach")
+        payload = build_layer1_payload(conn, user_id=1)
+        assert len(payload.network.network_links) == 1
+        assert payload.is_solo_athlete is True
 
     def test_disclosures_dropped_from_payload(self):
         # #304 Part B — `disclosures` was loaded-but-unused; removed from the

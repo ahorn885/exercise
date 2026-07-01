@@ -261,7 +261,6 @@ def _good_tool_args(
     start_phase: str = "Build",
     phase_weeks: dict[str, int] | None = None,
     hitl_surface: list[dict[str, Any]] | None = None,
-    observations: list[dict[str, Any]] | None = None,
     evidence_basis_h2: bool = True,
 ) -> dict[str, Any]:
     """A schema-valid tool args payload mimicking a well-behaved LLM."""
@@ -287,7 +286,6 @@ def _good_tool_args(
             "evidence_basis": ["2a.framework_sport"],
         },
         "hitl_surface": hitl_surface or [],
-        "notable_observations": observations or [],
     }
 
 
@@ -554,7 +552,6 @@ class TestToolSchema:
             "goal_viability",
             "periodization_shape",
             "hitl_surface",
-            "notable_observations",
         }
 
     def test_mode_enum(self):
@@ -584,17 +581,6 @@ class TestToolSchema:
         schema = build_emit_layer3b_payload_tool()["input_schema"]
         sev_enum = schema["properties"]["hitl_surface"]["items"]["properties"]["severity"]["enum"]
         assert set(sev_enum) == {"blocker", "warning", "informational"}
-
-    def test_observation_category_enum(self):
-        schema = build_emit_layer3b_payload_tool()["input_schema"]
-        cat_enum = schema["properties"]["notable_observations"]["items"]["properties"][
-            "category"
-        ]["enum"]
-        assert set(cat_enum) == {"warning", "opportunity", "data_gap", "data_hygiene"}
-
-    def test_observation_max_items(self):
-        schema = build_emit_layer3b_payload_tool()["input_schema"]
-        assert schema["properties"]["notable_observations"]["maxItems"] == 10
 
     def test_additional_properties_false_throughout(self):
         schema = build_emit_layer3b_payload_tool()["input_schema"]
@@ -759,9 +745,6 @@ class TestConfidenceFloors:
             ),
         )
         assert result.goal_viability.confidence == "medium"
-        clamped = [o for o in result.notable_observations if o.text.startswith("Confidence clamped")]
-        assert len(clamped) == 1
-        assert "first_time_competitive_goal" in clamped[0].text
 
     def test_floor2_layer3a_low_trajectory_clamps_to_medium(self):
         result = llm_layer3b_goal_timeline_viability(
@@ -817,7 +800,7 @@ class TestConfidenceFloors:
         )
         assert result.goal_viability.confidence == "medium"
 
-    def test_no_clamp_signal_no_observation(self):
+    def test_no_clamp_signal_confidence_unchanged(self):
         result = llm_layer3b_goal_timeline_viability(
             user_id=1,
             layer1_payload=_make_layer1(),
@@ -831,9 +814,7 @@ class TestConfidenceFloors:
             previous_attempts=[{"outcome": "Finished", "dnf_cause": ""}],
             llm_caller=_stub_caller(_good_tool_args(confidence="medium")),
         )
-        assert all(
-            "Confidence clamped" not in o.text for o in result.notable_observations
-        )
+        assert result.goal_viability.confidence == "medium"
 
     def test_clamp_does_not_upgrade_low_to_medium(self):
         result = llm_layer3b_goal_timeline_viability(
@@ -1073,13 +1054,8 @@ class TestPeriodizationSanity:
         # Fallback path: mode flipped to standard, phase_weeks=None
         assert result.periodization_shape.mode == "standard"
         assert result.periodization_shape.phase_weeks is None
-        # Auto-appended observation
-        fallback_obs = [
-            o for o in result.notable_observations
-            if "fell back from custom to standard" in o.text
-        ]
-        assert len(fallback_obs) == 1
-        assert fallback_obs[0].category == "data_hygiene"
+        # reasoning_text is annotated with the fallback reason
+        assert "Validator fallback" in result.periodization_shape.reasoning_text
 
     def test_custom_with_mismatched_sum_retry_succeeds(self):
         # First call bad sum; retry returns good sum → success without fallback
@@ -1106,10 +1082,8 @@ class TestPeriodizationSanity:
         )
         # Retry succeeded — mode stays custom
         assert result.periodization_shape.mode == "custom"
-        # No fallback observation
-        assert not any(
-            "fell back" in o.text for o in result.notable_observations
-        )
+        # No fallback annotation on reasoning_text
+        assert "Validator fallback" not in result.periodization_shape.reasoning_text
 
     def test_non_custom_modes_skip_sanity_check(self):
         # Sanity check only applies to custom mode
@@ -1158,7 +1132,6 @@ class TestPeriodizationSanity:
                 evidence_basis=["x"],
             ),
             hitl_surface=[],
-            notable_observations=[],
             event_date=date(2026, 7, 22),
             event_locale_id="x",
             race_format="single_day",
@@ -1200,7 +1173,6 @@ class TestPeriodizationSanity:
                 evidence_basis=["x"],
             ),
             hitl_surface=[],
-            notable_observations=[],
             event_date=date(2026, 8, 12),
             event_locale_id="x",
             race_format="single_day",
@@ -1231,92 +1203,6 @@ class TestPeriodizationSanity:
         )
         assert result.periodization_shape.mode == "standard"
         assert result.periodization_shape.phase_weeks is None
-
-
-# ─── §8.2 notable_observations budget (pre-validation clamp) ──────────────────
-
-
-class TestNotableObservationsBudget:
-    def test_over_budget_observations_clamped_not_schema_violation(self):
-        # 12 observations (> the 10 cap). max_length=10 + the API not hard-
-        # enforcing maxItems means without the pre-validation clamp this walls
-        # on schema_violation (the 3A weak_links twin). Lowest-priority
-        # data_hygiene items drop; the 4 warnings survive.
-        obs = (
-            [
-                {
-                    "category": "data_hygiene",
-                    "text": f"hygiene note {i}",
-                    "evidence_basis": ["x"],
-                    "elevates_to_hitl": False,
-                }
-                for i in range(8)
-            ]
-            + [
-                {
-                    "category": "warning",
-                    "text": f"warning note {i}",
-                    "evidence_basis": ["x"],
-                    "elevates_to_hitl": False,
-                }
-                for i in range(4)
-            ]
-        )
-        result = llm_layer3b_goal_timeline_viability(
-            user_id=1,
-            layer1_payload=_make_layer1(),
-            layer3a_payload=_make_layer3a(),
-            layer2a_payload=_make_layer2a(),
-            race_event_payload=_make_race_event(event_date=date(2026, 7, 22)),
-            current_date=date(2026, 5, 20),
-            etl_version_set=_DEFAULT_ETL,
-            goal_outcome="Finish",
-            llm_caller=_stub_caller(_good_tool_args(observations=obs)),
-        )
-        assert len(result.notable_observations) <= 10
-        warns = [o for o in result.notable_observations if o.category == "warning"]
-        assert len(warns) == 4
-
-    def test_over_length_observation_text_truncated_not_schema_violation(self):
-        # Per-string twin of the budget clamp: Layer3Observation.text is
-        # max_length=240 and the tool-schema maxLength is only an API hint, so a
-        # long observation walls the cone on schema_violation. The driver
-        # truncates to the cap before validation instead of failing.
-        long_text = (
-            "The requested finish target sits well outside the band the current "
-            "fitness trajectory supports given the compressed runway to race day, "
-            "and the volume ramp required to close that gap would push acute load "
-            "into the non-functional-overreach zone, so the timeline needs an "
-            "explicit viability conversation before the plan is generated."
-        )
-        assert len(long_text) > 240
-        result = llm_layer3b_goal_timeline_viability(
-            user_id=1,
-            layer1_payload=_make_layer1(),
-            layer3a_payload=_make_layer3a(),
-            layer2a_payload=_make_layer2a(),
-            race_event_payload=_make_race_event(event_date=date(2026, 7, 22)),
-            current_date=date(2026, 5, 20),
-            etl_version_set=_DEFAULT_ETL,
-            goal_outcome="Finish",
-            llm_caller=_stub_caller(
-                _good_tool_args(
-                    observations=[
-                        {
-                            "category": "warning",
-                            "text": long_text,
-                            "evidence_basis": ["x"],
-                            "elevates_to_hitl": True,
-                        }
-                    ]
-                )
-            ),
-        )
-        emitted = [o for o in result.notable_observations if o.text.endswith("…")]
-        assert len(emitted) == 1
-        assert len(emitted[0].text) <= 240
-        assert emitted[0].category == "warning"
-        assert emitted[0].elevates_to_hitl is True
 
 
 # ─── §5.5 step 1 schema violation retry ──────────────────────────────────────
@@ -1564,8 +1450,8 @@ class TestS13Scenarios:
         assert result.goal_viability.viability == "achievable"
         assert result.periodization_shape.mode == "standard"
 
-    def test_ts5_no_event_strength_mismatch_observation(self):
-        # No-event strength + low strength state — LLM observation, no HITL
+    def test_ts5_no_event_strength_mismatch(self):
+        # No-event strength + low strength state, primary sport mismatch
         result = llm_layer3b_goal_timeline_viability(
             user_id=1,
             layer1_payload=_make_layer1(primary_sport="Road Cycling"),
@@ -1584,24 +1470,10 @@ class TestS13Scenarios:
                     viability="achievable-with-adjustment",
                     periodization_mode="extended",
                     start_phase="Base",
-                    observations=[
-                        {
-                            "category": "data_hygiene",
-                            "text": "Strength goal vs Road Cycling primary — informational",
-                            "evidence_basis": ["c.primary_sport", "h3.non_event_goal_type"],
-                            "elevates_to_hitl": False,
-                        }
-                    ],
                 )
             ),
         )
         assert result.periodization_shape.mode == "extended"
-        # Observation present
-        mismatch_obs = [
-            o for o in result.notable_observations
-            if o.category == "data_hygiene"
-        ]
-        assert mismatch_obs
 
     def test_ts6_dnf_recurrence_warning(self):
         # 100-mile ultra, prior DNF (quad_failure), 12 weeks (=window) — emits warning

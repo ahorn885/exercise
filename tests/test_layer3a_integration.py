@@ -337,12 +337,14 @@ class TestRecentSelfReportSleep:
     def test_rows(self):
         conn = _FakeConn()
         conn.queue(
-            {"date": "2026-05-19", "sleep_hours": 7.5, "sleep_quality": 8},
-            {"date": "2026-05-18", "sleep_hours": 6.0, "sleep_quality": 5},
+            {"date": "2026-05-19", "sleep_hours": 7.5, "sleep_quality": 4},
+            {"date": "2026-05-18", "sleep_hours": 6.0, "sleep_quality": 3},
         )
         out = q_layer3A_recent_self_report_sleep(conn, 1, _AS_OF)
         assert len(out) == 2
         assert all(r.source == "wellness_self_report" for r in out)
+        # Raw 1-5 self-report value is doubled to the 1-10 scale the rest of
+        # the pipeline expects: 4 -> 8.
         assert out[0].sleep_quality == 8
         assert out[0].total_sleep_hours == 7.5
 
@@ -350,6 +352,30 @@ class TestRecentSelfReportSleep:
         conn = _FakeConn()
         q_layer3A_recent_self_report_sleep(conn, 1, _AS_OF)
         assert conn.calls[0][1] == (1, "2026-05-07")
+
+    def test_sleep_quality_scale_conversion(self):
+        # The `wellness_self_report.sleep_quality` column stores the athlete
+        # check-in form's raw 1-5 scale (`routes/wellness.py` parses it with
+        # `lo=1, hi=5`). `SleepRecord.sleep_quality` and downstream consumers
+        # (`layer3a/builder.py`'s `.../10` rendering, `layer4/context.py`'s
+        # `ge=1, le=10` validation) expect a 1-10 scale, so the reader must
+        # double the raw value: 5 (max of 1-5) -> 10, 1 (min) -> 2.
+        conn = _FakeConn()
+        conn.queue(
+            {"date": "2026-05-19", "sleep_hours": 8.0, "sleep_quality": 5},
+            {"date": "2026-05-18", "sleep_hours": 7.0, "sleep_quality": 1},
+        )
+        out = q_layer3A_recent_self_report_sleep(conn, 1, _AS_OF)
+        assert out[0].sleep_quality == 10
+        assert out[1].sleep_quality == 2
+
+    def test_sleep_quality_none_not_multiplied(self):
+        # A missing self-report sleep_quality must stay None, not become 0
+        # or raise, from `None * 2`.
+        conn = _FakeConn()
+        conn.queue({"date": "2026-05-19", "sleep_hours": 7.0, "sleep_quality": None})
+        out = q_layer3A_recent_self_report_sleep(conn, 1, _AS_OF)
+        assert out[0].sleep_quality is None
 
 
 # ─── q_layer3A_combined_load ─────────────────────────────────────────────────
@@ -639,7 +665,7 @@ class TestAssembleBundle:
             )
         )
         # q_layer3A_recent_self_report_sleep: 1 query
-        conn.queue({"date": "2026-05-19", "sleep_hours": 7.5, "sleep_quality": 8})
+        conn.queue({"date": "2026-05-19", "sleep_hours": 7.5, "sleep_quality": 4})
         # q_layer3A_combined_load: 2 queries
         conn.queue(
             {"date": "2026-05-19", "activity": "Run", "duration_min": 60.0, "moving_time_min": None}

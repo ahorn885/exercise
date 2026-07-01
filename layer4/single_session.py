@@ -60,6 +60,7 @@ from layer4.per_phase import (
     compute_cardio_drill_pool_ids,
     compute_feasible_pool_ids,
     format_measured_physiology,
+    format_terrain_gap_detail,
     format_upstream_coaching_flags,
 )
 from layer4.payload import (
@@ -626,6 +627,12 @@ def _render_user_prompt(
     )
     if upstream_flag_lines:
         parts.extend(upstream_flag_lines)
+    # T-2.3 — no Layer 2B payload is in scope for single-session requests (no
+    # terrain-gap analysis for an ad-hoc session), so this always suppresses
+    # here; called for consistency with the other three render paths.
+    terrain_gap_lines = format_terrain_gap_detail(None)
+    if terrain_gap_lines:
+        parts.extend(terrain_gap_lines)
     # #339 — surface the durable Coaching Memory block (#690 rendered it on
     # plan-create only); honors non-variety prefs (e.g. avoid-exercise notes)
     # for this ad-hoc session (suppress-on-empty).

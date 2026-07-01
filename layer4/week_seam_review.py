@@ -74,6 +74,7 @@ CALIBRATION ANCHORS (use coaching judgment around these, not as thresholds):
 - Intensity: the week's actual Z1-Z2 / Z3 / Z4-Z5 split should track its intended distribution; unexplained drift >~8pp → `flagged_minor`; a zone inversion breaking the phase intent → `flagged_major`.
 - Two consecutive hard weeks across the seam, neither a planned overreach → `flagged_minor` if there's a logical reason, `flagged_major` otherwise.
 - Intensity restricted by an active injury (see active_injury_summary): treat reduced intensity as expected, NOT as a missing element.
+- TAPER week: a volume drop steeper than the planned descent is acceptable for long/ultra events (better to under-load than over-load into a race) → `approved`. A taper that drops LESS than planned (under-taper) → `flagged_major` (the taper didn't happen).
 
 PATCH DIRECTION (re-synthesizes ONE WEEK-BLOCK, not a phase):
 

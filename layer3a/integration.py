@@ -230,11 +230,17 @@ def q_layer3A_recent_self_report_sleep(
     since_days: int = _DEFAULT_SLEEP_WINDOW_DAYS,
 ) -> list[SleepRecord]:
     """Recent self-report sleep from `wellness_self_report` (`sleep_hours` +
-    `sleep_quality`, 1-10), newest first. Kept separate from the device
-    coalesce in `q_layer3A_recent_wellness` so the §6.1 weighting can treat
-    subjective sleep_quality as self-report-dominant while objective sleep
-    duration stays integration-dominant. No normalization — the LLM is the
-    arbiter (Integration Spec §10)."""
+    `sleep_quality`), newest first. The stored `sleep_quality` column is on
+    the athlete-facing check-in form's 1-5 scale (`routes/wellness.py`
+    `_parse_int(..., lo=1, hi=5)`); it is doubled here to the 1-10 scale that
+    the rest of the pipeline expects (`SleepRecord.sleep_quality` is
+    `ge=1, le=10`, and `layer3a/builder.py` renders it as `.../10`). `None`
+    (no self-report submitted) is passed through unconverted. Kept separate
+    from the device coalesce in `q_layer3A_recent_wellness` so the §6.1
+    weighting can treat subjective sleep_quality as self-report-dominant
+    while objective sleep duration stays integration-dominant. No further
+    normalization beyond the scale conversion — the LLM is the arbiter
+    (Integration Spec §10)."""
     cutoff = _window_cutoff(as_of, since_days)
     cur = db.execute(
         """
@@ -247,11 +253,12 @@ def q_layer3A_recent_self_report_sleep(
     )
     out: list[SleepRecord] = []
     for row in cur.fetchall():
+        raw_quality = row["sleep_quality"]
         out.append(
             SleepRecord(
                 date=_as_date(row["date"]),
                 total_sleep_hours=row["sleep_hours"],
-                sleep_quality=row["sleep_quality"],
+                sleep_quality=raw_quality * 2 if raw_quality is not None else None,
                 source="wellness_self_report",
             )
         )

@@ -46,7 +46,6 @@ from layer4 import (
     Layer2ADiscipline,
     Layer2APayload,
     Layer2BPayload,
-    Layer2BSummaryBlock,
     Layer2CPayload,
     Layer2DPayload,
     Layer2EPayload,
@@ -143,20 +142,6 @@ def _layer2a() -> Layer2APayload:
 def _layer2b() -> Layer2BPayload:
     return Layer2BPayload(
         etl_version_set={"layer0": "v7"},
-        race_terrain=[],
-        summary=Layer2BSummaryBlock(
-            total_race_terrain_count=0,
-            covered_count=0,
-            gap_count=0,
-            bridgeable_count=0,
-            unbridgeable_count=0,
-            min_adaptation_weeks_needed=0,
-            worst_fidelity=1.0,
-            pct_of_race_uncovered=0.0,
-            any_unbridgeable=False,
-            any_undefined=False,
-        ),
-        terrain_gaps=[],
         coaching_flags=[],
     )
 
@@ -354,7 +339,6 @@ def _layer3b(
             evidence_basis=["e"],
         ),
         "hitl_surface": [],
-        "notable_observations": [],
     }
     if time_to_event_weeks is not None:
         fields["time_to_event_weeks"] = time_to_event_weeks

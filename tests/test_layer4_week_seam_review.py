@@ -19,6 +19,7 @@ from layer4.hashing import compute_week_seam_review_cache_key
 from layer4.payload import PlanSession
 from layer4.seam_review import _SeamReviewerOutput as _SeamOut
 from layer4.week_seam_review import (
+    SYSTEM_PROMPT,
     compute_week_rollup,
     render_week_seam_prompt,
     review_week_seam,
@@ -297,6 +298,59 @@ class TestRenderGridAnchors:
         assert "NOT expected to sum to the total" in prompt
         # 1.0 hr of strength surfaced explicitly.
         assert "1.0 hr" in prompt
+
+
+class TestTaperAnchor:
+    """#930/T-1.4 — one-sided taper tolerance. The reviewer's actual verdict is
+    LLM-judged (design §14; not mechanically testable here), so these pin the
+    two things that ARE mechanical: the anchor text tells the model the
+    direction is one-sided (steeper-than-planned = fine, shallower = not),
+    and the rendered prompt actually surfaces "Taper phase" so the model
+    knows to apply it."""
+
+    def test_anchor_is_one_sided_steeper_ok_shallower_flagged(self):
+        # A steeper-than-planned drop reads toward `approved`...
+        assert (
+            "steeper than the planned descent is acceptable" in SYSTEM_PROMPT
+        )
+        # ...while a shallower (under-) taper still reads toward `flagged_major`.
+        assert "drops LESS than planned" in SYSTEM_PROMPT
+        assert "under-taper" in SYSTEM_PROMPT
+        # Confirm the two clauses are conjoined in the SAME bullet (not two
+        # independent anchors that could drift apart), and that only the
+        # under-taper direction is tied to flagged_major.
+        taper_line = next(
+            line for line in SYSTEM_PROMPT.splitlines() if line.startswith("- TAPER week")
+        )
+        assert "`approved`" in taper_line
+        assert "`flagged_major`" in taper_line
+
+    def test_render_prompt_surfaces_taper_phase(self):
+        prompt = render_week_seam_prompt(
+            phase_name="Taper",
+            prior_week_in_phase=1,
+            next_week_in_phase=2,
+            prior_week_sessions=_week(1, n_sessions=3),
+            next_week_sessions=_week(2, n_sessions=1),
+            prior_planned_multiplier=0.60,
+            next_planned_multiplier=0.30,
+            prior_is_recovery=False,
+            next_is_recovery=False,
+            phase_volume_band=_BAND,
+            prior_intended_intensity=_INTENSITY,
+            next_intended_intensity=_INTENSITY,
+            layer2d_payload=None,
+            discipline_mix=["D-run"],
+            mode="standard",
+            race_format="open_ended",
+            event_date=None,
+            seam_iteration=1,
+            prior_seam_issues=[],
+        )
+        assert "Adjacent weeks within the Taper phase" in prompt
+        # The planned descent ratio (0.30/0.60 = 0.50) is the reference the
+        # anchor tells the model to judge a steeper-or-shallower actual against.
+        assert "×0.50" in prompt
 
 
 class TestReviewVerdict:

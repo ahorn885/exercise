@@ -2449,6 +2449,47 @@ def format_upstream_coaching_flags(
     ]
 
 
+def format_terrain_gap_detail(layer2b: Layer2BPayload | None) -> list[str]:
+    """T-2.3 — surface the per-discipline `TerrainGap.uncoverable_stimulus` /
+    `.proxy_methods` detail (Layer 2B `terrain_by_discipline[i].terrain_gaps`),
+    which no Layer 4 prompt previously rendered. Mirrors
+    `format_upstream_coaching_flags`: suppress-on-empty (returns `[]` when
+    `layer2b` is None or no discipline block has a gap carrying this detail),
+    self-contained lines, shared by per_phase + single_session + plan_refresh +
+    race_week_brief by import.
+
+    Distinct from the training-substitution section's own `untrainable_terrain`
+    line: this renders the *specific* stimulus that can't be replicated locally
+    and the proxy methods already chosen to compensate for it, so the
+    synthesizer can reflect that compensation in `coaching_intent` /
+    `session_notes` instead of re-deriving it.
+    """
+    if layer2b is None:
+        return []
+    lines: list[str] = []
+    for block in layer2b.terrain_by_discipline:
+        for gap in block.terrain_gaps:
+            if not gap.uncoverable_stimulus and not gap.proxy_methods:
+                continue
+            bits = [f"- {gap.target_terrain_name}"]
+            if gap.uncoverable_stimulus:
+                bits.append(
+                    f"can't replicate locally: {', '.join(gap.uncoverable_stimulus)}"
+                )
+            if gap.proxy_methods:
+                bits.append(f"compensate via: {', '.join(gap.proxy_methods)}")
+            lines.append(" — ".join(bits))
+    if not lines:
+        return []
+    return [
+        "Terrain-gap detail (Layer 2B — stimulus that can't be trained locally "
+        "and the proxy methods already selected to compensate; reflect the "
+        "compensation in `coaching_intent` / `session_notes` in natural "
+        "language, never the internal terrain ids):",
+        *lines,
+    ]
+
+
 def _format_daily_windows_schedule(layer1_payload: dict[str, Any]) -> list[str]:
     """Render the `=== Schedule ===` section: per-day availability windows +
     the derived long-session day. Shared by per_phase + plan_refresh T2/T3.
@@ -2625,6 +2666,11 @@ def render_user_prompt(
         f"Deload cadence anchor: "
         f"{_DELOAD_CADENCE.get(mode, 'judgment')}"  # type: ignore[arg-type]
         f" (mode={mode})"
+    )
+    parts.append(f"Goal viability: {layer3b_payload.goal_viability.viability}")
+    parts.append(
+        f"Goal viability reasoning: "
+        f"{layer3b_payload.goal_viability.reasoning_text}"
     )
     parts.append("")
     # #336 — skill-capability gate set (discipline_id → toggle_name), derived
@@ -2811,6 +2857,12 @@ def render_user_prompt(
     if upstream_flag_lines:
         parts.append("")
         parts.extend(upstream_flag_lines)
+    # T-2.3 — surface the per-discipline terrain-gap uncoverable_stimulus /
+    # proxy_methods detail (suppress-on-empty).
+    terrain_gap_lines = format_terrain_gap_detail(layer2b_payload)
+    if terrain_gap_lines:
+        parts.append("")
+        parts.extend(terrain_gap_lines)
     parts.append("")
 
     # === Race + locale + equipment ===

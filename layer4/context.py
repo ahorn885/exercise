@@ -335,19 +335,6 @@ class RaceTerrainOutput(_Base):
     discipline_id: str | None = None
 
 
-class Layer2BSummaryBlock(_Base):
-    total_race_terrain_count: int = Field(ge=0)
-    covered_count: int = Field(ge=0)
-    gap_count: int = Field(ge=0)
-    bridgeable_count: int = Field(ge=0)
-    unbridgeable_count: int = Field(ge=0)
-    min_adaptation_weeks_needed: int = Field(ge=0)
-    worst_fidelity: float = Field(ge=0.0, le=1.0)
-    pct_of_race_uncovered: float = Field(ge=0.0, le=100.0)
-    any_unbridgeable: bool
-    any_undefined: bool
-
-
 class Layer2BCoachingFlag(_Base):
     flag_type: str
     target_terrain_id: str | None = None
@@ -359,22 +346,16 @@ class Layer2BDisciplineBlock(_Base):
     # Best-fit re-model Slice 4 (2026-05-25) — per-discipline view of the
     # terrain coverage/gap analysis. One block per included discipline; its
     # `race_terrain` carries that discipline's tagged entries plus any
-    # race-wide (discipline_id=None) entries folded in. `summary` is
-    # recomputed over the block's subset. The flat top-level fields on
-    # `Layer2BPayload` remain the deduped race-wide aggregate (no
-    # double-counting); these blocks are the first consumer of the captured
+    # race-wide (discipline_id=None) entries folded in, recomputed over the
+    # block's subset. These blocks are the first consumer of the captured
     # `discipline_id` and feed Slice 5's per-discipline resolver.
     discipline_id: str
     race_terrain: list[RaceTerrainOutput]
     terrain_gaps: list[TerrainGap]
-    summary: Layer2BSummaryBlock
 
 
 class Layer2BPayload(_Base):
-    race_terrain: list[RaceTerrainOutput]
-    terrain_gaps: list[TerrainGap]
     coaching_flags: list[Layer2BCoachingFlag]
-    summary: Layer2BSummaryBlock
     etl_version_set: dict[str, str]
     # Best-fit re-model Slice 4 (2026-05-25) — additive per-discipline
     # breakdown. Empty for the empty-race_terrain path. Default [] keeps
@@ -1142,10 +1123,6 @@ class Layer3BPayload(_Base):
     goal_viability: GoalViability
     periodization_shape: PeriodizationShape
     hitl_surface: list[Layer3BHITLItem]
-    # Budget cap (Layer3_3B_Spec §8.2). Kept in lock-step with
-    # layer3b.builder._NOTABLE_OBSERVATIONS_MAX (tool-schema maxItems + the
-    # pre-validation priority clamp).
-    notable_observations: list[Layer3Observation] = Field(max_length=10)
     # #826 — curated evidence-source slugs the viability + periodization
     # judgments rest on, cited by the LLM from the `evidence_catalog` allowlist.
     # Distinct from the nested `evidence_basis` (internal input field paths).
@@ -1997,6 +1974,17 @@ class Layer1Payload(_Base):
     # the athlete captures gear (slice 6); the slice-3 backfill seeds owned crafts.
     # Slice 4 reads this for the full feasibility cascade cutover.
     owned_gear: list[str] = Field(default_factory=list)
+    # #559 (WS-3 T-3.3) — "solo" is derived from existing data, not a new
+    # onboarding question: an athlete counts as on a team if they have at
+    # least one `network.network_links` row whose `relationship_types`
+    # contains `"race_teammate"`; no such link means solo. Surfaced top-level
+    # (same convenience-field pattern as `doubles_feasible` / `experience_level`
+    # / `owned_gear` above) so it rides into `layer1_hash` cache invalidation
+    # and is readable as `.get("is_solo_athlete")` by Layer 2A's discipline
+    # inclusion gate (`_resolve_inclusion`), which excludes `requires_team`
+    # disciplines for solo athletes ahead of race-demand/weighting/curator-
+    # default precedence.
+    is_solo_athlete: bool = True
 
     # Full §A-§L mirror.
     identity: Layer1Identity
