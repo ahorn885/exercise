@@ -97,7 +97,8 @@ if uncertain — no downside.
 `<PROVIDER>` is the uppercase, underscore-separated form of the slug:
 `coros` → `COROS`, `ride-with-gps` → `RIDE_WITH_GPS`.
 
-**Split (provider issues separate API and OAuth pairs — RWGPS, Polar):**
+**Split (originally designed for providers that issue separate API and
+OAuth pairs):**
 
 ```
 <PROVIDER>_API_CLIENT_ID         # identifies us on outgoing API + matched against
@@ -107,6 +108,13 @@ if uncertain — no downside.
 <PROVIDER>_OAUTH_CLIENT_ID       # used in authorize URL + token exchange
 <PROVIDER>_OAUTH_CLIENT_SECRET   # used in token exchange to get user access tokens
 ```
+
+Neither shipped provider actually needed this split: RWGPS and Polar
+both ended up on the plain `<PROVIDER>_CLIENT_ID` / `<PROVIDER>_CLIENT_SECRET`
+pair (see `.env.example` and `routes/ride_with_gps.py` /
+`routes/polar.py`) — Polar's distinct piece is only the webhook HMAC
+key, covered below. Reach for the split form only if a future provider
+genuinely issues separate API and OAuth credential pairs.
 
 **Provider-specific webhook secrets (Polar's HMAC key):**
 
