@@ -4,7 +4,7 @@
 **Date:** 2026-07-01
 **Plan doc:** [`plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/plans/PlanGenReliability_OrphanedData_PartialWiring_ExecutionPlan_v1.md) §3 T-5.1
 **Predecessor handoff:** [`V5_Implementation_T13_HITLSpecFix_T34_573FailoverStrengthRefresh_2026_07_01_Closing_Handoff_v1.md`](https://github.com/ahorn885/exercise/blob/main/aidstation-sources/handoffs/V5_Implementation_T13_HITLSpecFix_T34_573FailoverStrengthRefresh_2026_07_01_Closing_Handoff_v1.md)
-**Branch:** `claude/v5-implementation-closing-m65gz8` — pushed; **no PR opened** (holding per the project's PR-gated operating flow; Andy hasn't said "open it" yet).
+**Branch:** `claude/v5-implementation-closing-m65gz8` — PR [#1122](https://github.com/ahorn885/exercise/pull/1122) opened per Andy's go; auto-merge armed (merge-commit method, lands once required checks pass).
 **Status:** T-5.1 shipped as one working-tree change (3 substantive code files: `garmin_connect.py`, `routes/garmin.py`, `routes/admin.py` — within the 5-file ceiling). Suite: **4137 passed / 30 skipped, 0 failed** (+8).
 
 ---
@@ -75,7 +75,7 @@ Per the execution plan's §4 Global order, WS-5 continues:
 - **T-5.2 (#1092) — TCX/GPX single-file ingest route.** Ungated. `tcx_gpx_parser.py` already returns the normalized cardio dict; add the upload route.
 - **T-5.3 (#1093) — Wahoo full FIT stream.** Ungated. Reuse `garmin_fit_parser.parse_fit()` directly (do not extract a shared parser).
 - Everything outside WS-5 stays exactly as the predecessor handoff left it: **T-1.4 (#930)** GATED on Andy ratifying taper anchor wording; **WS-2** GATED on the render-vs-trim table; **T-3.2/T-3.3** GATED (saturation-cap rule / Layer-0 migration).
-- **Not yet pushed as a PR** — branch is pushed; per the project's PR-gated flow, waiting for Andy's explicit go before opening one.
+- **PR [#1122](https://github.com/ahorn885/exercise/pull/1122) opened** per Andy's go; auto-merge armed (merge-commit method) — lands once required checks pass.
 - **Follow-up flagged, not built:** dropping the now-empty, now-unused `garmin_auth` table (a public-schema DDL that auto-applies with no gate — deserves an explicit go, not a ride-along).
 
 ### Operating notes (Rule #13)
@@ -101,6 +101,6 @@ Per the execution plan's §4 Global order, WS-5 continues:
 | Tests | `tests/test_garmin_provider_auth_migration.py` | `TestGarminConnectStorageMigration::test_two_users_garmin_sessions_never_cross` (the plan's stated verify) |
 | Suite | — | `/tmp/venv/bin/python -m pytest tests/ -q` → 4137 passed / 30 skipped |
 | GitHub | — | #249 closed `completed`; #284 commented (unaffected, left open); #757 commented (residual resolved); plan doc T-5.1 flipped to DONE in-place |
-| Branch | — | `claude/v5-implementation-closing-m65gz8`; pushed; no PR (Andy hasn't said go) |
+| Branch | — | `claude/v5-implementation-closing-m65gz8`; PR [#1122](https://github.com/ahorn885/exercise/pull/1122), auto-merge armed |
 
 **End of handoff.**
