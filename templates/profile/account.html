@@ -110,6 +110,32 @@
     {% endif %}
   </div>
 
+  <div class="card card-pad stack">
+    <p class="eyebrow">● Passkeys</p>
+    <p class="acct-hint">Sign in without a password using Face ID, Touch ID, Windows Hello, or a
+      security key. A passkey is an alternative way in alongside your password{% if totp_status == 'on' %} and two-factor{% endif %} — using one signs you straight in, no extra code needed.</p>
+    {% for pk in passkeys %}
+    <div class="pf-save">
+      <span class="pf-saved mono">{{ pk.nickname or 'Passkey' }} · added
+        {{ pk.created_at | string | truncate(10, True, '') }}{% if pk.last_used_at %} ·
+        last used {{ pk.last_used_at | string | truncate(10, True, '') }}{% endif %}</span>
+      <form method="post" action="{{ url_for('profile.webauthn_delete', credential_id=pk.id) }}"
+            data-confirm="Remove this passkey? You'll need another way to sign in if it's your only one.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-ghost btn-sm">Remove</button>
+      </form>
+    </div>
+    {% endfor %}
+    <div class="pf-save">
+      <button type="button" class="btn btn-primary" data-webauthn-register hidden
+              data-endpoint-options="{{ url_for('profile.webauthn_register_options') }}"
+              data-endpoint-verify="{{ url_for('profile.webauthn_register_verify') }}">
+        Add a passkey
+      </button>
+      <span class="acct-hint" data-webauthn-register-status hidden></span>
+    </div>
+  </div>
+
   {% if merge_enabled and merge_providers %}
   <div class="card card-pad stack">
     <p class="eyebrow">● Merge a duplicate account</p>
@@ -137,4 +163,8 @@
   </div>
 
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='webauthn.js') }}" nonce="{{ csp_nonce() }}"></script>
 {% endblock %}

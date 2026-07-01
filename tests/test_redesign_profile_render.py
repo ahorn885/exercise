@@ -289,6 +289,30 @@ def test_account_settings(monkeypatch):
     assert '/logout' in html
     assert 'name="current_password"' in html
     assert 'style="' not in html
+    # #267 — no passkeys registered: still offers "Add a passkey" (hidden by
+    # default; JS un-hides it only when the browser supports WebAuthn).
+    assert 'Passkeys' in html
+    assert 'data-webauthn-register hidden' in html
+    assert '/profile/webauthn/register/options' in html
+    assert 'webauthn.js' in html
+
+
+def test_account_settings_lists_registered_passkeys(monkeypatch):
+    import routes.profile as _profile
+    monkeypatch.setattr(
+        _profile.webauthn_helper, 'list_credentials',
+        lambda db, uid: [
+            {'id': 3, 'user_id': uid, 'credential_id': 'AQIDBA', 'nickname': 'iPhone',
+             'created_at': '2026-06-01 10:00:00', 'last_used_at': '2026-06-15 08:00:00'},
+        ],
+    )
+    client = _client(monkeypatch, _Conn())
+    resp = client.get('/profile/account')
+    html = resp.get_data(as_text=True)
+    assert 'iPhone' in html
+    assert '2026-06-01' in html and '2026-06-15' in html
+    assert '/profile/webauthn/3/delete' in html
+    assert 'style="' not in html
 
 
 # ── §20 Coach memory ─────────────────────────────────────────────────
