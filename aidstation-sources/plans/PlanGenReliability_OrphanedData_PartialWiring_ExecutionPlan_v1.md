@@ -142,7 +142,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 - GATE: none.
 - Verify: doc-only; no test.
 
-**T-1.4 — One-sided taper tolerance in the week-seam reviewer (#930)**
+**T-1.4 — One-sided taper tolerance in the week-seam reviewer (#930)** — **DONE 2026-07-01.**
 - Preconditions: none. **Must land before T-1.5 (R3).**
 - Files: `layer4/week_seam_review.py`, `aidstation-sources/prompts/Layer4_WeekSeamReviewer_v1.md`,
   `tests/`.
@@ -153,9 +153,22 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
      wording in the prompt-doc §4.
 - Do NOT: change `periodization._taper_multipliers`; change any other anchor; bump
   `LAYER4_PROMPT_REVISION` (the seam reviewer has its own content-hashed cache key).
-- GATE: **Trigger #1 (prompt change) — Andy ratifies the exact anchor wording before merge.**
+- GATE: **Trigger #1 (prompt change) — Andy ratifies the exact anchor wording before merge.** Andy
+  ratified the exact wording in chat (2026-07-01) before this landed.
 - Verify: `tests/test_layer4_week_seam_review.py` — add: a steeper-than-planned taper drop is NOT
   `flagged_major`; an under-taper still is.
+- **As-built:** the reviewer's actual verdict is LLM-judged (the module's own docstring: "Coherence
+  itself is only judged on a real-LLM run" — Andy's real-LLM walk, container can't run one), so the
+  new `tests/test_layer4_week_seam_review.py::TestTaperAnchor` pins the two mechanical things that
+  don't need a live LLM call: the anchor text states both directions (steeper-OK, shallower-flagged)
+  in one bullet (not two anchors that could drift apart), and `render_week_seam_prompt` actually
+  surfaces "Taper phase" + the planned descent ratio for a Taper-phase seam. **Also found:** the
+  design doc (`Layer4_WeekSeamReviewer_v1.md` §4) already carried a vaguer Taper bullet ("judge
+  against the descent, not a flat band") that had drifted out of sync with the runtime
+  `SYSTEM_PROMPT` — which had **no** Taper anchor at all before this session. Both are now in sync
+  with the ratified one-sided wording. Suite +2 (4171 passed / 49 skipped); `ruff check` on both
+  touched files — 0 new findings (2 pre-existing unused-`Any`-import findings confirmed unchanged via
+  `git stash` diff).
 
 **T-1.5 — Week-seam auto-resynth (#847)**
 - Preconditions: T-1.4 merged (R3).
@@ -479,7 +492,7 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 ## 4. Global order
 
 1. T-4.1 (isolated quick win). — **DONE 2026-07-01, PR #1104.**
-2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 (gated, next) → T-1.5. Parallel to WS-2/3.
+2. WS-1: T-1.1+T-1.2 (one PR) — **DONE 2026-07-01, PR [#1108](https://github.com/ahorn885/exercise/pull/1108), MERGED** → T-1.3 — **DONE 2026-07-01, commit `e87cd8d`** → T-1.4 — **DONE 2026-07-01, Andy-ratified wording** → T-1.5 (next, unbuilt — the plan's most complex task; not started this session). Parallel to WS-2/3.
 3. WS-2: after Andy ratifies the render/trim table → T-2.1…T-2.7 → **T-2.9 (single bump + walk)**.
 4. WS-3: T-3.1 (rides T-2.9 walk) → T-3.2 (gated) → T-3.3 (Layer-0 gated) → T-3.4 — **DONE 2026-07-01 (built independently of T-3.1–3.3, per its own "no preconditions").**
 5. WS-5: independent throughout — T-5.1 — **DONE 2026-07-01** → T-5.2/T-5.3 — **DONE 2026-07-01**

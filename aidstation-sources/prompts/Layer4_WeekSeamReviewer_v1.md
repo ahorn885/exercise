@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Date:** 2026-06-21
-**Status:** RATIFIED — calibration anchors signed off by Andy at an AskUserQuestion gate (anchor = "compare to the planned grid"; code home = "new separate file"; "build now"). This is the Trigger #1 prompt-design pass called for by `designs/Layer4_PerWeekDecomposition_D77_Design_v1.md` §11/§12.
+**Status:** RATIFIED — calibration anchors signed off by Andy at an AskUserQuestion gate (anchor = "compare to the planned grid"; code home = "new separate file"; "build now"). This is the Trigger #1 prompt-design pass called for by `designs/Layer4_PerWeekDecomposition_D77_Design_v1.md` §11/§12. **2026-07-01 addendum (#930/T-1.4):** added the one-sided Taper tolerance anchor (§4) — ratified by Andy in chat before this edit landed. The prior Taper bullet this doc carried had drifted out of sync with the runtime `SYSTEM_PROMPT` (which had no Taper anchor at all); this edit re-syncs both.
 **Runtime home:** `layer4/week_seam_review.py` (`SYSTEM_PROMPT` is the runtime source of truth; this doc is the design record — keep them in sync, mirroring the phase-seam `seam_review.py` ↔ `Layer4_SeamReviewer_v*.md` convention).
 
 ---
@@ -36,7 +36,7 @@ The week-seam reviewer instead keys on **deviation from the deterministic per-we
 - **Intensity continuity:** the week's actual Z1-Z2 / Z3 / Z4-Z5 split should track its intended distribution. Drift >~8pp unexplained → `flagged_minor`; a zone inversion that breaks the phase intent (e.g. a Base loading week going Z4-Z5-dominant) → `flagged_major`.
 - **Two consecutive hard weeks** across the seam, neither a planned overreach → `flagged_minor` with a logical reason, `flagged_major` otherwise.
 - **Injury-restricted intensity** (`active_injury_summary`): reduced intensity is expected, NOT a missing element. (Inherited verbatim from the phase reviewer.)
-- **Taper:** the grid is a net-negative descent there (non-renormalized); judge against the descent, not a flat band.
+- **Taper (one-sided tolerance, ratified 2026-07-01):** a volume drop *steeper* than the planned descent is acceptable for long/ultra events — better to under-load than over-load into a race → `approved`. A taper that drops *less* than planned (under-taper) → `flagged_major` (the taper didn't happen).
 
 ## 5. Verdict → authority (inherited from the phase reviewer)
 
