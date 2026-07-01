@@ -87,6 +87,12 @@ def test_login_render(monkeypatch):
     assert 'Forgot?' in html
     # ALLOW_REGISTRATION=1 → the create-account link shows.
     assert '/auth/register' in html
+    # #267 — passkey sign-in button: hidden by default (JS un-hides it only
+    # when the browser supports WebAuthn) and wired to both ceremony endpoints.
+    assert 'data-webauthn-login hidden' in html
+    assert 'data-endpoint-options="/auth/webauthn/login/options"' in html
+    assert 'data-endpoint-verify="/auth/webauthn/login/verify"' in html
+    assert 'webauthn.js' in html
 
 
 def test_register_bootstrap_render(monkeypatch):

@@ -84,6 +84,7 @@ def _delete_user_and_data(db, user_id):
     db.execute('DELETE FROM user_purchase_recommendations WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM api_tokens                    WHERE user_id = ?', (user_id,))
     db.execute('DELETE FROM user_totp                     WHERE user_id = ?', (user_id,))
+    db.execute('DELETE FROM user_webauthn_credentials     WHERE user_id = ?', (user_id,))
     # #274 — invites created by or accepted by this user (FK to users(id)).
     db.execute('DELETE FROM user_invites                  WHERE created_by = ? '
                'OR accepted_user_id = ?', (user_id, user_id))

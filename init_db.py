@@ -3375,6 +3375,30 @@ _PG_MIGRATIONS = [
     "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS phone TEXT",
     "ALTER TABLE user_invites ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email' "
     "CHECK (channel IN ('email', 'sms', 'whatsapp'))",
+    # #267 — passkey / WebAuthn sign-in. One row per registered authenticator
+    # (an athlete can add more than one, e.g. a phone + a hardware key), so
+    # unlike user_totp this is not PK'd on user_id. `credential_id` is the
+    # base64url credential id the browser reports on every ceremony (both
+    # registration and later authentication) — it's the lookup key for a
+    # passwordless sign-in, where the server doesn't know the user_id yet.
+    # `public_key` is the base64url COSE public key; `sign_count` is the
+    # authenticator's signature counter, used to detect a cloned credential
+    # (see webauthn_helper.verify_authentication). Registered as a
+    # discoverable/resident credential (webauthn_helper.build_registration_
+    # options) so the login page can offer passwordless sign-in without
+    # asking for a username first.
+    """CREATE TABLE IF NOT EXISTS user_webauthn_credentials (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        credential_id TEXT NOT NULL UNIQUE,
+        public_key TEXT NOT NULL,
+        sign_count INTEGER NOT NULL DEFAULT 0,
+        nickname TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_used_at TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS user_webauthn_credentials_user_id_idx "
+    "ON user_webauthn_credentials(user_id)",
 ]
 
 _CLOTHING_SEEDS = [
