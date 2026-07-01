@@ -702,7 +702,6 @@ def _layer3b_payload() -> Layer3BPayload:
             evidence_basis=["e1"],
         ),
         hitl_surface=[],
-        notable_observations=[],
     )
 
 
@@ -975,5 +974,4 @@ def test_layer3b_hitl_unique_labels_enforced():
                 evidence_basis=["e1"],
             ),
             hitl_surface=[duplicate, duplicate],  # same item_label twice → fail
-            notable_observations=[],
         )

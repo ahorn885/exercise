@@ -353,7 +353,6 @@ def _layer3b(
             evidence_basis=["e"],
         ),
         hitl_surface=[],
-        notable_observations=[],
         event_date=event_date,
         event_locale_id="L-finish" if mode == "event" else None,
         race_format=race_format,  # type: ignore[arg-type]
@@ -1942,7 +1941,6 @@ class TestLayer3BPayloadEventMetadata:
                     evidence_basis=["e"],
                 ),
                 hitl_surface=[],
-                notable_observations=[],
                 event_date=_EVENT_DATE,
             )
 

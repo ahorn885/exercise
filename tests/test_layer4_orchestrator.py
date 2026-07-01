@@ -543,7 +543,6 @@ def _fake_layer3b_payload(
             evidence_basis=["e"],
         ),
         hitl_surface=[],
-        notable_observations=[],
         event_date=event_date,
         event_locale_id="home",
         race_format="single_day",

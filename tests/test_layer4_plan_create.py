@@ -339,7 +339,6 @@ def _layer3b(
             evidence_basis=["e"],
         ),
         "hitl_surface": [],
-        "notable_observations": [],
     }
     if time_to_event_weeks is not None:
         fields["time_to_event_weeks"] = time_to_event_weeks

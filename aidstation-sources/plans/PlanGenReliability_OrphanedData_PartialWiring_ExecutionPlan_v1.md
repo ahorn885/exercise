@@ -209,15 +209,15 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
 > (table below) before ANY WS-2 code.** Executor must not decide render vs trim. Recommended defaults
 > are shown; Andy confirms/edits, then the executor implements exactly the ratified column.
 
-| Task | Issue | Field | Recommended disposition |
-|---|---|---|---|
-| T-2.1 | #297 | `Layer2BPayload.terrain_by_discipline` | TRIM (substitution payload already carries the terrain narrative) |
-| T-2.2 | #299 | `Layer2DPayload.discipline_risk_profiles` + evidence | RENDER a compact block via the #307 pattern |
-| T-2.3 | #301 | `TrainingSubstitution.uncoverable_stimulus` / `proxy_methods` | RENDER (most coaching-relevant) |
-| T-2.4 | #302 | `goal_viability.reasoning_text` (per_phase) | RENDER in per_phase (already in race_week_brief) |
-| T-2.5 | #302 | 3B `notable_observations`, `sleep_quality` scale | 3B: TRIM; `sleep_quality`: separate — see T-2.6 |
-| T-2.6 | #302 | `SleepRecord.sleep_quality` 1–5 vs 1–10 | reconcile scale in 3A sleep block (data fix, not prompt) |
-| T-2.7 | #306 | `RaceEventPayload.race_url` | RENDER in race-week brief |
+| Task | Issue | Field | Recommended disposition | Ratified 2026-07-01 |
+|---|---|---|---|---|
+| T-2.1 | #297 | `Layer2BPayload` unread surface (see as-built — NOT `terrain_by_discipline` itself, which is live) | TRIM (substitution payload already carries the terrain narrative) | TRIM — **DONE**, see as-built |
+| T-2.2 | #299 | `Layer2DPayload.discipline_risk_profiles` + evidence | RENDER a compact block via the #307 pattern | Andy said TRIM in chat, but verification found a real reader (`layer3d/gate.py`) outside Layer 4 — deleting the field breaks Layer 3D. **Resolution: no-op, left alone** (it was never rendered in a Layer 4 prompt to begin with; there's nothing to trim without breaking Layer 3D). Andy confirmed this reading. |
+| T-2.3 | #301 | ~~`TrainingSubstitution.uncoverable_stimulus`/`proxy_methods`~~ — **correction:** those fields don't exist on `TrainingSubstitution`; they live on `TerrainGap` (`layer4/context.py`), reachable via `Layer2BPayload.terrain_by_discipline[].terrain_gaps[]` | RENDER (most coaching-relevant) | RENDER, from the corrected location — Andy confirmed |
+| T-2.4 | #302 | `goal_viability.reasoning_text` (per_phase) | RENDER in per_phase (already in race_week_brief) | RENDER |
+| T-2.5 | #302 | 3B `notable_observations`, `sleep_quality` scale | 3B: TRIM; `sleep_quality`: separate — see T-2.6 | 3B: TRIM |
+| T-2.6 | #302 | `SleepRecord.sleep_quality` 1–5 vs 1–10 | reconcile scale in 3A sleep block (data fix, not prompt) | fix — **DONE** |
+| T-2.7 | #306 | `RaceEventPayload.race_url` | RENDER in race-week brief | RENDER |
 
 - Each **RENDER** task (T-2.2/2.3/2.4/2.7):
   - Files — the render helper + ALL FIVE render sites (the refresh renderer is split into three):

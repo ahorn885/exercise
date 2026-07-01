@@ -1123,10 +1123,6 @@ class Layer3BPayload(_Base):
     goal_viability: GoalViability
     periodization_shape: PeriodizationShape
     hitl_surface: list[Layer3BHITLItem]
-    # Budget cap (Layer3_3B_Spec §8.2). Kept in lock-step with
-    # layer3b.builder._NOTABLE_OBSERVATIONS_MAX (tool-schema maxItems + the
-    # pre-validation priority clamp).
-    notable_observations: list[Layer3Observation] = Field(max_length=10)
     # #826 — curated evidence-source slugs the viability + periodization
     # judgments rest on, cited by the LLM from the `evidence_catalog` allowlist.
     # Distinct from the nested `evidence_basis` (internal input field paths).

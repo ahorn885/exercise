@@ -264,7 +264,6 @@ def _layer3b(mode: str = "no-event", start_phase: str = "Build") -> Layer3BPaylo
             evidence_basis=["e"],
         ),
         hitl_surface=[],
-        notable_observations=[],
     )
 
 

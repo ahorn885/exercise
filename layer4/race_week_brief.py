@@ -73,6 +73,7 @@ from layer4.per_phase import (
     VARIETY_CARVEOUT_PROMPT_SECTION,
     compute_feasible_pool_ids,
     compute_recovery_pool_ids,
+    format_terrain_gap_detail,
     format_upstream_coaching_flags,
     _apply_strength_resolution,
     _format_coaching_memory,
@@ -1001,6 +1002,8 @@ def _render_user_prompt(
         parts.append(
             f"**Elevation gain:** {race_event_payload.total_elevation_gain_m} m"
         )
+    if race_event_payload.race_url:
+        parts.append(f"**Race URL:** {race_event_payload.race_url}")
     # #439 — the prior split "Race rules summary" / "Notes" form fields were
     # merged into the single `notes` field, and the brief now renders it in
     # full. The prior split left `notes` captured but never rendered into the
@@ -1168,6 +1171,15 @@ def _render_user_prompt(
         parts.append("# Upstream coaching flags")
         parts.append("")
         parts.extend(upstream_flag_lines)
+        parts.append("")
+
+    # T-2.3 — surface the per-discipline terrain-gap uncoverable_stimulus /
+    # proxy_methods detail (suppress-on-empty).
+    terrain_gap_lines = format_terrain_gap_detail(layer2b_payload)
+    if terrain_gap_lines:
+        parts.append("# Terrain-gap detail")
+        parts.append("")
+        parts.extend(terrain_gap_lines)
         parts.append("")
 
     # #339 — surface the durable Coaching Memory block (#690 rendered it on

@@ -15,6 +15,7 @@ from layer4.per_phase import (
     SYSTEM_PROMPT,
     _fmt_pace_mmss,
     format_measured_physiology,
+    format_terrain_gap_detail,
     format_upstream_coaching_flags,
 )
 
@@ -164,6 +165,82 @@ class TestFormatUpstreamCoachingFlags:
         )
         labels = [ln.split("]")[0] for ln in lines if ln.startswith("- ")]
         assert labels == ["- [discipline", "- [terrain", "- [equipment", "- [injury"]
+
+
+def _gap(target_terrain_name, uncoverable_stimulus=None, proxy_methods=None):
+    """Duck-typed stand-in for `TerrainGap` — the render helper only reads
+    `.target_terrain_name` / `.uncoverable_stimulus` / `.proxy_methods`."""
+    return SimpleNamespace(
+        target_terrain_name=target_terrain_name,
+        uncoverable_stimulus=uncoverable_stimulus or [],
+        proxy_methods=proxy_methods or [],
+    )
+
+
+def _discipline_block(*gaps):
+    return SimpleNamespace(terrain_gaps=list(gaps))
+
+
+def _layer2b(*blocks):
+    return SimpleNamespace(terrain_by_discipline=list(blocks))
+
+
+class TestFormatTerrainGapDetail:
+    """T-2.3 — surfaces `TerrainGap.uncoverable_stimulus` / `.proxy_methods`
+    (Layer 2B `terrain_by_discipline[i].terrain_gaps`). Suppress-on-empty."""
+
+    def test_none_payload_returns_empty(self):
+        assert format_terrain_gap_detail(None) == []
+
+    def test_no_discipline_blocks_returns_empty(self):
+        assert format_terrain_gap_detail(_layer2b()) == []
+
+    def test_gap_with_no_stimulus_or_proxy_suppressed(self):
+        payload = _layer2b(_discipline_block(_gap("Singletrack climb")))
+        assert format_terrain_gap_detail(payload) == []
+
+    def test_gap_with_data_renders_header_and_detail_line(self):
+        payload = _layer2b(
+            _discipline_block(
+                _gap(
+                    "Singletrack climb",
+                    uncoverable_stimulus=["technical descent handling"],
+                    proxy_methods=["hill repeats", "balance drills"],
+                )
+            )
+        )
+        lines = format_terrain_gap_detail(payload)
+        assert lines[0].startswith("Terrain-gap detail")
+        assert lines[1] == (
+            "- Singletrack climb — can't replicate locally: technical descent "
+            "handling — compensate via: hill repeats, balance drills"
+        )
+
+    def test_stimulus_only_no_proxy_methods(self):
+        payload = _layer2b(
+            _discipline_block(
+                _gap("Altitude", uncoverable_stimulus=["hypoxic stress"])
+            )
+        )
+        lines = format_terrain_gap_detail(payload)
+        assert lines[1] == "- Altitude — can't replicate locally: hypoxic stress"
+
+    def test_multiple_discipline_blocks_and_gaps(self):
+        payload = _layer2b(
+            _discipline_block(
+                _gap("Sand", uncoverable_stimulus=["sand traction loss"]),
+                _gap("Flat", uncoverable_stimulus=[], proxy_methods=[]),
+            ),
+            _discipline_block(
+                _gap("Cobbles", proxy_methods=["gravel rides"]),
+            ),
+        )
+        lines = format_terrain_gap_detail(payload)
+        detail_lines = [ln for ln in lines if ln.startswith("- ")]
+        assert detail_lines == [
+            "- Sand — can't replicate locally: sand traction loss",
+            "- Cobbles — compensate via: gravel rides",
+        ]
 
 
 class TestCardioProgrammingSection:

@@ -307,7 +307,6 @@ def _layer3b(
             evidence_basis=["e"],
         ),
         hitl_surface=hitl_surface or [],
-        notable_observations=[],
     )
 
 
