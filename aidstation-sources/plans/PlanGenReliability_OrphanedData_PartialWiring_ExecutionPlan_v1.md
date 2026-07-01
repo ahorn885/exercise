@@ -243,7 +243,9 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   any producer that sets it; confirm zero readers first (`grep`). Do NOT trim if any reader exists.
 - T-2.6 (sleep_quality): reconcile the 1–5 vs 1–10 scale where 3A reads sleep; data/mapping fix only.
 
-**T-2.9 — Single revision bump + walk (R1)** — **BUMP DONE 2026-07-01; walk owed to Andy.**
+**T-2.9 — Single revision bump + walk (R1)** — **BUMP DONE 2026-07-01; walk STILL OWED — Andy is
+deliberately deferring it (2026-07-01: wants to land more changes first, then do one walk covering
+everything rather than one per session).**
 - Preconditions: T-2.1…T-2.7 code merged to the branch.
 - Files: `layer4/hashing.py`.
 - Steps: bump `LAYER4_PROMPT_REVISION` "20" → "21" ONCE, with a comment listing the issues folded in.
@@ -310,9 +312,10 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   derivation catches any violation regardless of how the session counts arose upstream). **One
   non-code risk flagged, not fixed:** the normalizer and the validator are two separately-maintained
   implementations of "what's a valid day" — if a future edit changes one without the other, this exact
-  bug class (#831) could reopen. **Owed to Andy, not done here:** #831's own text says a "live-verify"
-  (regenerate plan #78 in prod, confirm via `/admin/logs`) is still outstanding — needs prod log
-  access. Issue left open pending that.
+  bug class (#831) could reopen. **Closed 2026-07-01:** #831's own text called for a formal live-verify
+  (regenerate plan #78 in prod, confirm via `/admin/logs`) — not formally done, but superseded: Andy is
+  now on plan #84 and hasn't hit this failure class since, which is the live-verify in practice. Closed
+  `completed` on that basis.
 
 **T-3.3 — Team-only sport gate for solo athletes (#559)** — **DONE 2026-07-01.**
 - Files: a Layer-0 migration (`etl/migrations/layer0/*.sql`), `layer1/builder.py`, `layer2a/builder.py`,
@@ -338,9 +341,11 @@ Format per task — **Issue · Preconditions · Files · Steps · Do NOT · GATE
   `layer2a/builder.py::_resolve_inclusion` gets a new tier-0 hard gate (outranks race/athlete/curator):
   `requires_team` + `is_solo_athlete` → excluded. Threaded as its own new `is_solo_athlete` parameter
   rather than overloading the existing-but-inert `team_format` parameter (race format vs. athlete's own
-  team membership — different signals). Migration not yet applied to prod — awaiting Andy's
-  `layer0-apply` one-tap approval; until then this gate is built but inert (no row is `requires_team`
-  yet regardless). Suite +3 (4176 passed / 49 skipped).
+  team membership — different signals). **Migration applied to prod 2026-07-01** — Andy one-tap
+  approved the `layer0-apply` run (workflow run 28533587192, `psql apply layer0 migrations -> prod
+  Neon`, success). `requires_team` now live on `layer0.disciplines` in prod, defaulted `false` on every
+  row — the gate is live but currently a no-op until a follow-up migration flags specific disciplines
+  `true` (open decision, see above). Suite +3 (4176 passed / 49 skipped).
 
 **T-3.4 — Terrain-substitute backup strength in refresh (#573)** — **DONE 2026-07-01, branch `claude/orphaned-data-partial-wiring-87rdt7`.**
 - Files: `layer4/plan_refresh.py`, `tests/`.
